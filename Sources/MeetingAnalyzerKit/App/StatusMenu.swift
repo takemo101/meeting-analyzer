@@ -67,6 +67,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(registrationItem())
         menu.addItem(commandItem())
+        menu.addItem(recordsItem())
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -118,6 +119,19 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleCommand() { controller.toggleCommand() }
+
+    /// 記録（文字起こし・画像）を残す日数と、記録のフォルダ。期限を過ぎた記録は、文字起こしも画像も、フォルダごと消える。
+    private func recordsItem() -> NSMenuItem {
+        submenuItem("記録の保持期間: " + RecordRetentionSetting.title(controller.retentionDays)) { submenu in
+            for days in RecordRetentionSetting.choices {
+                submenu.addItem(choice(RecordRetentionSetting.title(days), selected: days == controller.retentionDays) { [controller] in controller.setRetentionDays(days) })
+            }
+            submenu.addItem(.separator())
+            submenu.addItem(action("記録のフォルダを開く", #selector(openRecordsFolder)))
+        }
+    }
+
+    @objc private func openRecordsFolder() { controller.openRecordsFolder() }
 
     // MARK: 選択肢のサブメニュー
 

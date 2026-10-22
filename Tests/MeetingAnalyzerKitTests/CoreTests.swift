@@ -78,6 +78,39 @@ struct TranscriptTests {
         #expect(text.contains("誤変換"), "認識の自動出力であることを、読み手に伝える")
     }
 
+    @Test("画像は、時刻の順に、発話の間へ入る（相対パス）。同じ時刻なら、発話の前。最後の発話より後の画像は、末尾。発話・画像は、空行で区切る")
+    func markdownWithScreenshots() {
+        var transcript = make()   // 発話: 00:03 相手 / 00:09 本人 / 01:05 相手
+        transcript.recordScreenshot(at: 20, path: "screens/shot-0002.jpg")
+        transcript.recordScreenshot(at: 0, path: "screens/shot-0001.jpg")
+        transcript.recordScreenshot(at: 65, path: "screens/shot-0003.jpg")
+        transcript.recordScreenshot(at: 300, path: "screens/shot-0004.jpg")
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let text = transcript.markdown(title: "定例", startedAt: start, endedAt: start.addingTimeInterval(400))
+        let blocks = text.split(separator: "\n\n").map { $0.trimmingCharacters(in: .newlines) }
+        let body = Array(blocks.drop { !$0.hasPrefix("![") && !$0.hasPrefix("[") })
+        #expect(body == [
+            "![画面 00:00](screens/shot-0001.jpg)",
+            "[00:03] 相手: 来週のリリースの件ですが",
+            "[00:09] 本人: はい、確認します",
+            "![画面 00:20](screens/shot-0002.jpg)",
+            "![画面 01:05](screens/shot-0003.jpg)",
+            "[01:05] 相手: テスト環境はいつ使えますか",
+            "![画面 05:00](screens/shot-0004.jpg)",
+        ])
+        #expect(text.contains("- 画像: 4 枚"))
+        #expect(transcript.screenshotCount == 4)
+    }
+
+    @Test("会議の途中の書き足し（終了が無い）は、「会議の途中」と書き、終了・長さの行を持たない。画像が無ければ、画像の行も無い")
+    func markdownInProgress() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let text = make().markdown(title: "定例", startedAt: start, endedAt: nil)
+        #expect(text.contains("- 状態: 会議の途中"))
+        #expect(!text.contains("- 終了:") && !text.contains("- 長さ:") && !text.contains("- 画像:"))
+        #expect(text.contains("[00:09] 本人: はい、確認します"))
+    }
+
     @Test("時間の表示は、1 時間未満が mm:ss、以上が h:mm:ss。負の値は 0")
     func clock() {
         #expect(Transcript.clock(0) == "00:00")

@@ -46,7 +46,7 @@ flowchart TD
 | | `EchoDetector` | 相手の声のマイクへの回り込みの疑いを、文字起こしの重なり（文字の 2 つ組）で見つける純粋な規則。判断だけで、発話は変えない | 直近 10 秒の「相手」の発話 |
 | | `Batcher`、`BatchingPolicy` | 送るべき時を決める純粋な規則（SPEC §3.6）。`observe`（更新を受ける）・`isDue`・`takeBatch`・`flush`。**時計を持たず、`now`（秒）を引数で受ける**ので、時間を進めずにテストできる | 最新の発話・未送信の並び・最後の変化／送信の時刻・境界 |
 | | `SessionLifecycle`、`EndReason` | セッションの状態遷移（待機・実行中・一時停止・終了）。順序以外は `TransitionError`。終了後は開始し直せない | `phase` |
-| | `Transcript` | セッション全体の記録。upsert で溜め、開始時刻順に並べ、エージェントが読む Markdown にする | 発話の辞書 |
+| | `Transcript` | セッション全体の記録。upsert で溜め、開始時刻順に並べ、Markdown にする（撮った画像は、時刻の順に、発話の間へ相対パスで入れる。終了が `nil` なら、会議の途中の書き足し）。純粋な規則 | 発話の辞書、画像の（秒・相対パス）の並び |
 | | `TranscriptEvent`、`CaptionUpdate`、`EventSink` | エージェントへ渡す出来事（`started`・`captions`・`ended`）の JSON の形（`Codable`）と、それを受け取る口（`EventSink.publish`。**失敗しない**）。実機はハブ、テストは記録するだけの偽物 | なし |
 | `Transcription/` | `AppleSpeechTranscriber`、`TranscriptionUpdate`、`SpeechReadiness` | `SpeechTranscriber`（オンデバイス）で音声ファイルを解析し、更新（確定前を含む）を `AsyncThrowingStream` で返す。言語が使えるかの確認。モデルが無ければ OS の仕組みで取得する。失敗は `TranscriptionError` | なし（呼ぶたびに、解析器を作る） |
 | `Hub/` | `HubServer` | エージェントへ渡す窓口。アプリの中で、Unix ドメインソケット（ディレクトリ 0700・ソケット 0600・同じユーザーだけ。`getpeereid`）で待ち、出来事を、つながっている受け手すべてへ流す。直近の出来事（最大 2000 件）を、メモリ上だけに保持し、あとから接続した受け手へ先に渡す（`hello` → これまで → `sync` → 新しいもの）。新しいセッションの開始で、前のものを捨てる。受け手ごとの書き込みは、専用の待ち行列で行い、遅い・切れた受け手が、会議の処理を止めない。書き込みの失敗（EPIPE）で落ちないよう、SIGPIPE を無視する。**受け手が切れた直後の書き込みは、`SO_NOSIGPIPE` が設定できず、SIGPIPE でプロセスが終了する**（単体テストで再現し、直した） | 出来事のログ、受け手の一覧 |
@@ -54,7 +54,7 @@ flowchart TD
 | `MCP/` | `JSONText` | JSON の文章へ、**書式を保ったまま**（他のキー・並び・インデントそのまま）、オブジェクトのメンバーを足す・置き換える。文字列・括弧を数えて読み、コメントを見つけたら編集せず `nil`。編集後に、JSON として読み直して、意図した値になっているか確かめる | なし |
 | | `AgentRegistration` | エージェントへ登録するコマンド・設定の文（実行ファイルのパスをシェル用に引用して入れる）。メニューが、クリップボードへ入れる | なし |
 | | `MCPServer`、`MCPRunner` | エージェント向けの MCP サーバー（標準入出力の JSON-RPC）。窓口の出来事を保持し（最大 2000 件）、ツール `get_events`（カーソルより新しいもの）で返す。`--channel` では、接続後の新しい出来事を `notifications/claude/channel` で押し込む。ハブの識別子が変わったら、持っているものを捨てる。同じハブへのつなぎ直しでは、重複を入れない | 出来事のバッファ、カーソル、接続の状態 |
-| `Platform/` | `RuntimePaths`、`SessionStore`、`ScreenshotStore`、`PresetStore`、`CommandLineTool` | 置き場所（環境変数が優先。データの置き場所・窓口のソケット）、記録の書き込み（ディレクトリ 0700・ファイル 0600）、画面の JPEG の保存（0700／0600・会議中は最新 30 枚・終了後は 7 日間残し、過ぎたものを `deleteExpired` が消す。起動時・会議の開始と終了・6 時間ごと）。失敗は `Result` | なし |
+| `Platform/` | `RuntimePaths`、`SessionStore`、`ScreenshotStore`、`RecordRetention`、`PresetStore`、`CommandLineTool` | 置き場所（環境変数が優先。データの置き場所・窓口のソケット）、記録の書き込み（ディレクトリ 0700・ファイル 0600）、画面の JPEG の保存（記録のフォルダの `screens/`。0700／0600・枚数の上限なし）、記録の保持（`RecordRetention.deleteExpired`：期限を過ぎた記録を、文字起こしも画像も、フォルダごと消す。実行中は除く。以前の版の `screens/<id>/` も。日数は、利用者の設定 `RecordRetentionSetting`＝アプリの設定、既定 7 日・「消さない」あり。起動時・会議の開始と終了・設定の変更・6 時間ごと）。失敗は `Result` | なし |
 | | `CommandLineTool` | コマンド `meeting-analyzer`（`/usr/local/bin` からアプリの実行ファイルへのシンボリックリンク）の状態（`unavailable`・`notInstalled`・`installed`・`stale`・`other`）と、入れる・外す。書けなければ、管理者の実行（`do shell script … with administrator privileges`）へ回す。**このアプリのものでない同名のものは、触らない**。リンクの場所・リンク先・管理者の実行は、差し替えられる（試験用） | なし（ファイルシステムが持つ） |
 | | `PresetStore` | プリセットの置き場所と読み込み：同梱（`Contents/Resources/presets/`）と、自分のもの（`<データの置き場所>/presets/`）。同じ ID は自分のものが優先。`_`・`.` で始まるファイルと、読めないファイル（理由を持つ）は除く。自分のフォルダ（0700）とテンプレート（0600）を用意する | 同梱・自分のフォルダのファイル（読み取りのみ。テンプレートだけ書く） |
 | `Capture/` | `ScreenSnapshotter`、`ImageTools` | 画面の 1 枚撮り（ScreenCaptureKit。画面全体／アプリのいちばん大きいウィンドウ）と、画像の加工（48×27 の署名・1280 への縮小・JPEG）。画像はメモリ上だけで扱い、JPEG にするのは、渡す分だけ | なし |
