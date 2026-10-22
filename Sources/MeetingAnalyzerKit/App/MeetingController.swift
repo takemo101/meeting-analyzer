@@ -46,28 +46,39 @@ final class MeetingController {
             Task { @MainActor in self?.agentCount = count; self?.onChange?() }
         }
         do { try hub.start() } catch let error as HubError { notice = FailureText.hub(error) } catch { notice = "エージェントへ渡す窓口を開けません" }
-        scheduleScreenshotCleanup()
+        scheduleRecordCleanup()
     }
 
     func stopHub() {
         hub.stop()
-        screenshotCleanup?.invalidate()
+        recordCleanup?.invalidate()
     }
 
-    private var screenshotCleanup: Timer?
+    private var recordCleanup: Timer?
 
-    /// 終了から `ScreenshotStore.retentionDays` 日たった画面の画像を消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
-    func cleanScreenshots() {
+    /// 記録を残す日数（`nil` は、消さない）。メニューで選び、アプリの設定に保存する。
+    private(set) var retentionDays: Int? = RecordRetentionSetting.load()
+
+    func setRetentionDays(_ days: Int?) {
+        retentionDays = days
+        RecordRetentionSetting.save(days)
+        cleanRecords()
+        onChange?()
+    }
+
+    /// 期限（`retentionDays` 日）を過ぎた記録（文字起こしと画像）を、フォルダごと消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
+    func cleanRecords() {
+        guard let days = retentionDays else { return }
         let root = RuntimePaths.dataDirectory(environment: environment)
         let active = session?.sessionId
-        Task.detached(priority: .utility) { ScreenshotStore(root: root).deleteExpired(except: active) }
+        Task.detached(priority: .utility) { RecordRetention(root: root).deleteExpired(olderThanDays: days, except: active) }
     }
 
-    private func scheduleScreenshotCleanup() {
-        cleanScreenshots()
-        screenshotCleanup?.invalidate()
-        screenshotCleanup = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.cleanScreenshots() }
+    private func scheduleRecordCleanup() {
+        cleanRecords()
+        recordCleanup?.invalidate()
+        recordCleanup = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.cleanRecords() }
         }
     }
 
@@ -115,6 +126,18 @@ final class MeetingController {
         NSWorkspace.shared.open(folder)
     }
 
+    /// 記録（文字起こしと画像）のフォルダを開く（無ければ、作る）。
+    func openRecordsFolder() {
+        let folder = RuntimePaths.dataDirectory(environment: environment).appendingPathComponent("sessions", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        } catch {
+            notice = "記録のフォルダを作れません"
+            return
+        }
+        NSWorkspace.shared.open(folder)
+    }
+
     /// コマンド `meeting-analyzer` の状態（メニューの表示用）。
     var commandState: CommandLineTool.State { CommandLineTool().state }
 
@@ -153,7 +176,7 @@ final class MeetingController {
         guard !selection.isEmpty else { notice = "取り込む音声を選んでください"; return }
         notice = nil
         state = .working("開始処理中…")
-        cleanScreenshots()
+        cleanRecords()
         Task { await begin(selection) }
     }
 
@@ -189,7 +212,7 @@ final class MeetingController {
         defer { self.session = nil; state = .idle }
         do {
             let outcome = try await session.end(reason: reason)
-            defer { cleanScreenshots() }
+            defer { cleanRecords() }
             notice = "終了しました（発話 \(outcome.utterances) 件）"
         } catch {
             notice = "会議を終了できませんでした"

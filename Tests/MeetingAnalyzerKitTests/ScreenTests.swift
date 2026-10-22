@@ -94,20 +94,32 @@ struct ScreenshotFilesTests {
         #expect(big.prefix(2) == Data([0xFF, 0xD8]), "JPEG の先頭")
     }
 
-    @Test("保存は、ディレクトリ 0700・ファイル 0600。最新の keep 枚だけ残し、終了で全部消す")
+    @Test("保存は、記録のフォルダ（sessions/<id>/screens/）に、ディレクトリ 0700・ファイル 0600。枚数の上限は無く（長い会議でも、最後のほうだけにならない）、会議が始まらなかったときの削除は、記録（transcript.md）に触れない")
     func store() throws {
         let root = tempURL("shots")
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = ScreenshotStore(root: root, keep: 3)
+        let store = ScreenshotStore(root: root)
         let session = UUID()
         var urls: [URL] = []
-        for index in 1...5 { urls.append(try store.save(Data([0xFF, 0xD8, UInt8(index)]), sessionId: session, index: index).get()) }
-        #expect((try FileManager.default.attributesOfItem(atPath: urls[4].path)[.posixPermissions] as? Int) == 0o600)
-        #expect((try FileManager.default.attributesOfItem(atPath: urls[4].deletingLastPathComponent().path)[.posixPermissions] as? Int) == 0o700)
-        let remaining = try FileManager.default.contentsOfDirectory(atPath: urls[4].deletingLastPathComponent().path).sorted()
-        #expect(remaining == ["shot-0003.jpg", "shot-0004.jpg", "shot-0005.jpg"])
+        for index in 1...60 { urls.append(try store.save(Data([0xFF, 0xD8, UInt8(index)]), sessionId: session, index: index).get()) }
+        let screens = urls[0].deletingLastPathComponent()
+        #expect(screens.path.hasSuffix("/sessions/\(session.uuidString.lowercased())/screens"))
+        #expect((try FileManager.default.attributesOfItem(atPath: urls[59].path)[.posixPermissions] as? Int) == 0o600)
+        #expect((try FileManager.default.attributesOfItem(atPath: screens.path)[.posixPermissions] as? Int) == 0o700)
+        #expect((try FileManager.default.attributesOfItem(atPath: screens.deletingLastPathComponent().path)[.posixPermissions] as? Int) == 0o700)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: screens.path).count == 60, "古い画像を、間引かない")
+        #expect(ScreenshotStore.relativePath(index: 7) == "screens/shot-0007.jpg")
+
+        let transcript = screens.deletingLastPathComponent().appendingPathComponent("transcript.md")
+        try Data("x".utf8).write(to: transcript)
         store.deleteAll(sessionId: session)
-        #expect(!FileManager.default.fileExists(atPath: urls[4].deletingLastPathComponent().path))
+        #expect(!FileManager.default.fileExists(atPath: screens.path))
+        #expect(FileManager.default.fileExists(atPath: transcript.path), "記録は、残る")
+
+        let empty = UUID()
+        _ = try store.save(Data([1]), sessionId: empty, index: 1).get()
+        store.deleteAll(sessionId: empty)
+        #expect(!FileManager.default.fileExists(atPath: screens.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(empty.uuidString.lowercased()).path), "中が空になった記録のフォルダは、消える")
     }
 
     @Test("書けない場所は、失敗として返す")
@@ -267,48 +279,102 @@ struct LiveSessionScreenTests {
 }
 
 
-@Suite("ScreenshotStore: 終了後の保持（7 日）")
-struct ScreenshotRetentionTests {
-    private func makeStore() -> (ScreenshotStore, URL) {
-        let root = tempURL("retention")
-        return (ScreenshotStore(root: root), root)
-    }
-
-    private func seed(_ store: ScreenshotStore, daysAgo: Double, now: Date) throws -> UUID {
+@Suite("RecordRetention: 記録（文字起こしと画像）は、同じ寿命で、フォルダごと消える")
+struct RecordRetentionTests {
+    /// `sessions/<id>/` に、記録と画像を置き、最後に書いた時刻を `daysAgo` 日前にする。
+    private func seed(_ root: URL, daysAgo: Double, now: Date, withShot: Bool = true) throws -> UUID {
         let id = UUID()
-        let url = try store.save(Data([0xFF, 0xD8, 1]), sessionId: id, index: 1).get()
+        let directory = root.appendingPathComponent("sessions/\(id.uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("# 文字起こし".utf8).write(to: directory.appendingPathComponent("transcript.md"))
+        if withShot { _ = try ScreenshotStore(root: root).save(Data([0xFF, 0xD8, 1]), sessionId: id, index: 1).get() }
         let when = now.addingTimeInterval(-daysAgo * 86_400)
-        try FileManager.default.setAttributes([.modificationDate: when], ofItemAtPath: url.deletingLastPathComponent().path)
+        if withShot { try FileManager.default.setAttributes([.modificationDate: when], ofItemAtPath: directory.appendingPathComponent("screens").path) }
+        try FileManager.default.setAttributes([.modificationDate: when], ofItemAtPath: directory.path)
         return id
     }
 
-    @Test("7 日以上たったセッションの画像だけを消す。ちょうど 7 日は消し、6 日は残す。消した数を返す")
-    func deletesOnlyExpired() throws {
-        let (store, root) = makeStore()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let now = Date()
-        let old = try seed(store, daysAgo: 8, now: now), edge = try seed(store, daysAgo: 7, now: now), recent = try seed(store, daysAgo: 6, now: now), today = try seed(store, daysAgo: 0, now: now)
-        #expect(store.deleteExpired(now: now) == 2)
-        func exists(_ id: UUID) -> Bool { FileManager.default.fileExists(atPath: store.directory(sessionId: id).path) }
-        #expect(!exists(old) && !exists(edge) && exists(recent) && exists(today))
-        #expect(store.deleteExpired(now: now) == 0, "2 回目は、何も消さない")
+    private func exists(_ root: URL, _ id: UUID) -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("sessions/\(id.uuidString.lowercased())").path)
     }
 
-    @Test("実行中のセッションは、古くても消さない。screens/ の下の、UUID でない名前・ファイルには触れない。画像が無くても、失敗しない")
-    func skipsActiveAndForeign() throws {
-        let (store, root) = makeStore()
+    @Test("指定の日数以上たった記録を、文字起こしも画像も、フォルダごと消す。ちょうどの日数は消し、1 日手前は残す。消した数を返す")
+    func deletesOnlyExpired() throws {
+        let root = tempURL("retention")
         defer { try? FileManager.default.removeItem(at: root) }
-        #expect(store.deleteExpired() == 0, "screens/ が無くても、失敗しない")
         let now = Date()
-        let active = try seed(store, daysAgo: 30, now: now)
-        let screens = root.appendingPathComponent("screens", isDirectory: true)
-        let foreign = screens.appendingPathComponent("not-a-session", isDirectory: true)
+        let old = try seed(root, daysAgo: 8, now: now), edge = try seed(root, daysAgo: 7, now: now), recent = try seed(root, daysAgo: 6, now: now), today = try seed(root, daysAgo: 0, now: now)
+        let retention = RecordRetention(root: root)
+        #expect(retention.deleteExpired(now: now, olderThanDays: 7) == 2)
+        #expect(!exists(root, old) && !exists(root, edge) && exists(root, recent) && exists(root, today))
+        #expect(retention.deleteExpired(now: now, olderThanDays: 7) == 0, "2 回目は、何も消さない")
+        #expect(retention.deleteExpired(now: now, olderThanDays: 3) == 1, "日数を短くすると、6 日前のものも消える")
+    }
+
+    @Test("最後に書いた時刻は、記録のフォルダと screens/ の新しいほう：画像が最近まで増えていた記録は、残る")
+    func newestWriteCounts() throws {
+        let root = tempURL("retention-newest")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let id = try seed(root, daysAgo: 30, now: now)
+        let screens = root.appendingPathComponent("sessions/\(id.uuidString.lowercased())/screens")
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-3600)], ofItemAtPath: screens.path)
+        #expect(RecordRetention(root: root).deleteExpired(now: now, olderThanDays: 7) == 0)
+        #expect(exists(root, id))
+    }
+
+    @Test("実行中のセッションは、古くても消さない。UUID でない名前・ファイルには触れない。記録が無くても、失敗しない")
+    func skipsActiveAndForeign() throws {
+        let root = tempURL("retention-skip")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let retention = RecordRetention(root: root)
+        #expect(retention.deleteExpired(olderThanDays: 7) == 0, "sessions/ が無くても、失敗しない")
+        let now = Date()
+        let active = try seed(root, daysAgo: 30, now: now)
+        let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+        let foreign = sessions.appendingPathComponent("not-a-session", isDirectory: true)
         try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-30 * 86_400)], ofItemAtPath: foreign.path)
-        try Data([1]).write(to: screens.appendingPathComponent("loose.jpg"))
-        #expect(store.deleteExpired(now: now, except: active) == 0)
-        #expect(FileManager.default.fileExists(atPath: store.directory(sessionId: active).path) && FileManager.default.fileExists(atPath: foreign.path))
-        #expect(store.deleteExpired(now: now) == 1, "実行中でなければ、30 日前のものは消える")
+        try Data([1]).write(to: sessions.appendingPathComponent("loose.md"))
+        #expect(retention.deleteExpired(now: now, olderThanDays: 7, except: active) == 0)
+        #expect(exists(root, active) && FileManager.default.fileExists(atPath: foreign.path))
+        #expect(retention.deleteExpired(now: now, olderThanDays: 7) == 1, "実行中でなければ、30 日前のものは消える")
+    }
+
+    @Test("以前の版が画像だけを置いていた screens/<UUID>/ も、同じ日数で消える")
+    func legacyScreens() throws {
+        let root = tempURL("retention-legacy")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let legacy = root.appendingPathComponent("screens/\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-9 * 86_400)], ofItemAtPath: legacy.path)
+        #expect(RecordRetention(root: root).deleteExpired(now: now, olderThanDays: 7) == 1)
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    }
+}
+
+@Suite("RecordRetentionSetting: 保持日数の設定")
+struct RecordRetentionSettingTests {
+    private func defaults() -> UserDefaults {
+        let name = "ma-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test("未設定なら 7 日。保存した日数・「消さない」を読み戻す。選択肢に無い値（壊れた設定）は、7 日に戻す")
+    func roundTrip() {
+        let defaults = defaults()
+        #expect(RecordRetentionSetting.load(defaults) == 7)
+        RecordRetentionSetting.save(30, defaults)
+        #expect(RecordRetentionSetting.load(defaults) == 30)
+        RecordRetentionSetting.save(nil, defaults)
+        #expect(RecordRetentionSetting.load(defaults) == nil, "消さない")
+        defaults.set(11, forKey: RecordRetentionSetting.key)
+        #expect(RecordRetentionSetting.load(defaults) == 7)
+        defaults.set(-4, forKey: RecordRetentionSetting.key)
+        #expect(RecordRetentionSetting.load(defaults) == 7)
     }
 }
 

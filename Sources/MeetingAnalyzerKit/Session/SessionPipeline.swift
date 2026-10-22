@@ -17,6 +17,11 @@ public final class SessionPipeline: @unchecked Sendable {
     private var finished = false
     /// 次のバッチへ添える画面の画像（まだ渡していない最新の 1 枚）。
     private var pendingScreenshot: String?
+    /// 会議の途中の書き足し（SPEC §3.8）：書き直す間隔（秒）。`nil` は、書き足さない（ファイルの再生は、失敗したら記録を残さないため、終了のときだけ書く）。
+    /// 前に書いた時刻（会議の開始からの秒）と、その後に変わったか。
+    private let checkpointInterval: TimeInterval?
+    private var lastCheckpoint: TimeInterval?
+    private var dirty = false
 
     private struct Stream {
         var currentId = 0
@@ -27,7 +32,8 @@ public final class SessionPipeline: @unchecked Sendable {
     /// 選んだ分析のしかた。開始の出来事で、エージェントへ渡す。
     private let preset: PresetInfo?
 
-    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard, preset: PresetInfo? = nil) {
+    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, checkpointInterval: TimeInterval? = nil) {
+        self.checkpointInterval = checkpointInterval
         self.preset = preset
         self.sessionId = sessionId
         self.title = title
@@ -44,16 +50,20 @@ public final class SessionPipeline: @unchecked Sendable {
         sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset))
     }
 
-    /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。
-    public func attachScreenshot(path: String) {
+    /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。**記録には、すべての画像を入れる**
+    /// （`relativePath`：`transcript.md` のあるフォルダからの相対パス。`now`：会議の開始からの秒）。
+    public func attachScreenshot(path: String, relativePath: String, at now: TimeInterval) {
         guard !finished else { return }
         pendingScreenshot = path
+        transcript.recordScreenshot(at: now, path: relativePath)
+        dirty = true
     }
 
     /// 時間だけが進んだとき（更新が来ない間）の確認。静けさが十分なら、溜まった発話を送る。実際の取り込みでは、定期的に呼ぶ。
     public func tick(at now: TimeInterval) {
         guard !finished else { return }
         while let batch = batcher.takeBatch(at: now) { deliver(batch) }
+        checkpoint(at: now)
     }
 
     /// 更新を 1 つ受ける。確定した発話の次の更新は、新しい発話として扱う。送る時になっていれば、送る。
@@ -70,6 +80,7 @@ public final class SessionPipeline: @unchecked Sendable {
         streams[speaker] = stream
         let utterance = Utterance(id: stream.currentId, speaker: speaker, text: text, isFinal: update.isFinal, startedAt: update.start, version: stream.version)
         transcript.record(utterance)
+        dirty = true
         batcher.observe(utterance, at: update.end)
         while let batch = batcher.takeBatch(at: update.end) { deliver(batch) }
     }
@@ -78,6 +89,17 @@ public final class SessionPipeline: @unchecked Sendable {
     public func flushPending(at now: TimeInterval) {
         guard !finished else { return }
         while batcher.hasPending { deliver(batcher.flush(at: now)) }
+        checkpoint(at: now, force: true)
+    }
+
+    /// 会議の途中の書き足し：変わっていれば、`checkpointInterval` 秒に 1 回まで、記録を書き直す（終了の記録と同じ場所。終了で、整えて書き直す）。
+    /// 失敗しても、続ける（終了の記録の失敗は、`ended` の記録のパスが無いことで伝わる）。
+    private func checkpoint(at now: TimeInterval, force: Bool = false) {
+        guard let store, let checkpointInterval, dirty, !transcript.isEmpty else { return }
+        if !force, let last = lastCheckpoint, now - last < checkpointInterval { return }
+        lastCheckpoint = now
+        dirty = false
+        _ = store.writeTranscript(transcript.markdown(title: title, startedAt: startedAt, endedAt: nil), sessionId: sessionId)
     }
 
     /// セッションを終える。未送信の発話を出し切り、記録を書き、最後に終了の出来事を 1 回だけ出す。

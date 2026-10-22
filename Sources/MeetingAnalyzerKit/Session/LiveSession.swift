@@ -114,7 +114,7 @@ public actor LiveSession {
         self.screenshots = screenshots
         self.screenInterval = screenInterval
         self.screenGate = ScreenshotGate(minGap: screenMinGap)
-        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset)
+        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset, checkpointInterval: 10)
     }
 
     public var phase: SessionLifecycle.Phase { lifecycle.phase }
@@ -162,7 +162,7 @@ public actor LiveSession {
         try? lifecycle.end(reason)
         let now = clock()
         let event = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
-        // 画像は、終了のあとも残す（`ScreenshotStore.retentionDays` 日。過ぎたものは、アプリが消す。SPEC §3.5）。
+        // 画像は、記録（`transcript.md`）と同じフォルダに残る（同じ寿命で、アプリが消す。SPEC §3.8）。
         guard case .ended(_, _, _, _, _, _, _, let utterances, let path) = event else { return LiveSessionOutcome(utterances: pipeline.utteranceCount, transcriptPath: nil) }
         return LiveSessionOutcome(utterances: utterances, transcriptPath: path)
     }
@@ -294,10 +294,11 @@ public actor LiveSession {
         guard screenStability.isSettled(width: snapshot.width, height: snapshot.height) else { return }
         guard let signature = ImageTools.signature(of: image), screenGate.hasChanged(signature),
               let jpeg = ImageTools.jpegData(of: image) else { return }
-        switch screenshots.save(jpeg, sessionId: sessionId, index: screenGate.nextIndex) {
+        let index = screenGate.nextIndex
+        switch screenshots.save(jpeg, sessionId: sessionId, index: index) {
         case .success(let url):
             screenGate.didSave(signature, at: now)
-            pipeline.attachScreenshot(path: url.path)
+            pipeline.attachScreenshot(path: url.path, relativePath: ScreenshotStore.relativePath(index: index), at: now)
         case .failure:
             if throwing { throw LiveSessionError.failed("画面の画像を保存できません") }
             if !screenFailureReported { screenFailureReported = true; notify(.screenshotFailed("画像を保存できません")) }
