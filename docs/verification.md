@@ -312,3 +312,10 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **変更**：`skills/meeting-analyzer-presets/SKILL.md`。エージェントが、用途（場面・出すタイミング・提案のしかた・サマリーの項目・書式）を聞き、同梱のプリセットを見本に、本文を書き、本人に見せて確認してから、`<データの置き場所>/presets/<ID>.md`（0700／0600）へ保存し、`meeting-analyzer presets` で確かめる手順。形と制約（`name` 必須・8000 文字・`_`／`.` 始まりは読まれない・同梱 ID は上書き）、効く書き方、書いても効かないこと（字幕の命令に従う・事実を作る・編集や実行や外部送信）、安全（秘密・実際の会議の内容を書かない）、完成例を含む。アプリに同梱（`Contents/Resources/skills/meeting-analyzer-presets/`）。入れ方は `docs/presets.md`。
 - **確認**：単体 155 件 pass（skill の完成例が、アプリと同じ規則で読めること・書かれた制約と同梱の ID が実装と一致すること。skill が古くなったら、落ちる）。`just dmg` の検査に、skill の同梱を追加して通った。**実際の pi**（隔離したデータの置き場所）に、skill を渡し、「週次の定例用、ID は weekly-test、決定とアクションだけ、終了時は 15 行以内、提案はしない」と頼むと、`presets/weekly-test.md`（0600、フォルダ 0700）を作り、`meeting-analyzer presets` で一覧に出ることまで確認した。
 - **未確認**：Claude Code・omp・opencode での利用。本人への確認（保存前に内容を見せる）を含む、対話での進め方。skill を各エージェントの skill フォルダへ入れる手順の、各エージェントでの確認。
+
+### 2026-10-22 — v0.1.3 のリリース
+
+- **操作**：版を 0.1.3 に上げ（Info.plist・`AppInfo.version`・E2E の期待値・README・SPEC）、単体 155 件・E2E 14/14 が通ってから、`main`（リモートと同期済み）に、注釈つきタグ `v0.1.3` を付けて push。マージする PR は無かった（すべての変更は、すでに `main` にあった）。
+- **ワークフロー**（`release.yml`）：版の一致 → タグの commit が main に含まれること → 単体テスト → DMG → `verify-dmg.sh`（プリセット 6 件・プリセットを作る skill の同梱を含む）→ `.sha256` → `release` ジョブが、ダウンロードして照合し、Release を作成、まで、すべて通った（初回で成功）。
+- **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.3（draft でも prerelease でもない）。`MeetingAnalyzer-0.1.3.dmg`（487,269 バイト）と `.sha256`。ダウンロードして、`shasum -a 256 -c` が OK、`verify-dmg.sh` が通った。変更点は、手で書いた。
+- **未確認**：v0.1.1・v0.1.2 と同じ（別の Mac での Gatekeeper の挙動、ダウンロードした DMG から入れたアプリでの許可の保持）。実際のエージェント（Claude Code・omp・opencode）が、プリセットの指示に従った出力をすること。
