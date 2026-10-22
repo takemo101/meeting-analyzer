@@ -453,3 +453,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **変更**：メニューに「MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）」を追加（無ければ、0700 で作って開く）。直前に足した、保持期間のサブメニュー内の「記録のフォルダを開く」は、これに一本化して外した。「エージェントに登録（コピー）」の項目と、クリップボードへ入れる処理（`copyRegistration`）を削除した。`AgentRegistration`（手で足す文）は、`meeting-analyzer pi|omp|opencode` が自動で登録できないときの案内に使うので、残した。SPEC・README・構成説明の記述を直した。
 - **確認**：単体 186 件 pass、E2E 14/14 pass。隔離した複製（自分で起動した PID だけ）のメニューを AX で読むと、「エージェントに登録（コピー）」は無く、「MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）」がある。その項目を押すと、まだ無かったデータの置き場所が、`drwx------`（0700）で作られた（Finder が、そのフォルダを開く）。確認後、複製を終了し、一時ファイルを削除した。
 - **未確認（人間）**：実際の `~/Library/Application Support/MeetingAnalyzer` が、Finder で開くこと（利用者の実フォルダは、自動では開いていない）。
+
+### 2026-10-23 — v0.1.7 のリリース（MIK-004）
+
+- **内容**：画像つき Markdown の記録（会議中の書き足し・画像の上限なし・同じ寿命・保持期間の設定）、メニューの「MeetingAnalyzer のフォルダを開く」、「エージェントに登録（コピー）」の削除。
+- **操作**：GitButler の流れ（版の更新 → PR #5 → head に束縛して normal merge → `but pull`）で、版を 0.1.7 に上げた。単体 186 件・E2E 14/14 が通った。`main` の merge commit `f58c6de`（`origin/main` と同期済み）に、注釈つきタグ `v0.1.7` を付けて push（`but` にタグの機能が無いため、開発手順のとおり `git tag`・`git push origin`）。
+- **ワークフロー**（`release.yml`）：すべて通った（初回で成功）。
+- **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.7（draft でも prerelease でもない）。`MeetingAnalyzer-0.1.7.dmg`（1,074,398 バイト）と `.sha256`。ダウンロードして、`shasum -a 256 -c` が OK、`verify-dmg.sh`（arm64・`--version`・署名の整合）が通った。変更点と、「過去の記録が、更新後の最初の起動で消える」注意は、手で書いた。
+- **未確認**：実際の会議での、画像つき Markdown の見え方・長時間の容量・常駐での期限切れの削除（人間）。実際のデータの置き場所を Finder で開くこと。独立レビューは未実施。ほかは、v0.1.6 と同じ。
