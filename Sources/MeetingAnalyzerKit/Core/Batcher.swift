@@ -9,14 +9,18 @@ public struct BatchingPolicy: Sendable, Equatable {
     public var boundaryGap: TimeInterval
     /// 1 回に送る発話の最大数。
     public var maxUpdates: Int
+    /// 静けさで送るとき、未送信の本文が、この文字数以上たまっていること（たまるまでは、静かになっても送らない。`maxHold` が来たら、足りなくても送る）。
+    /// 相づちや短い言い直しだけで、エージェントを動かさないため。0 なら、文字数は問わない。
+    public var minCharacters: Int
     /// 一定の間隔で送るとき、その秒数（未送信があれば、前の送信からこの秒数たったら送る）。`nil` なら、静けさ・保持・境界で決める。
     public var cadence: TimeInterval?
 
-    public init(quiet: TimeInterval = 1.2, maxHold: TimeInterval = 10, boundaryGap: TimeInterval = 3, maxUpdates: Int = 64, cadence: TimeInterval? = nil) {
+    public init(quiet: TimeInterval = 1.2, maxHold: TimeInterval = 10, boundaryGap: TimeInterval = 3, maxUpdates: Int = 64, minCharacters: Int = 0, cadence: TimeInterval? = nil) {
         self.quiet = quiet
         self.maxHold = maxHold
         self.boundaryGap = boundaryGap
         self.maxUpdates = maxUpdates
+        self.minCharacters = minCharacters
         self.cadence = cadence
     }
 
@@ -54,11 +58,14 @@ public struct Batcher: Sendable {
         pendingSince = pendingSince ?? now
     }
 
+    /// 未送信の本文の文字数。
+    private var pendingCharacters: Int { pendingKeys.reduce(0) { $0 + (latest[$1]?.text.count ?? 0) } }
+
     /// 今、送るべきか。
     public func isDue(at now: TimeInterval) -> Bool {
         guard let since = pendingSince else { return false }
         if let cadence = policy.cadence { return now - lastSent >= cadence }
-        return now - lastChange >= policy.quiet
+        return (now - lastChange >= policy.quiet && pendingCharacters >= policy.minCharacters)
             || now - since >= policy.maxHold
             || (boundary && now - lastSent >= policy.boundaryGap)
     }

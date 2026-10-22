@@ -127,6 +127,39 @@ struct BatchModeTests {
         #expect(batcher.isDue(at: 30))
     }
 
+    @Test("まとまってから解説：5 秒静かになっても、本文が 80 字に満たなければ送らない（相づちだけでは、エージェントを動かさない）")
+    func digestHoldsShortTalk() {
+        var batcher = Batcher(policy: BatchMode.digest.policy)
+        batcher.observe(utterance("はい、そうですね"), at: 0)
+        #expect(!batcher.isDue(at: 6), "静かでも、短い")
+        #expect(!batcher.isDue(at: 59))
+        #expect(batcher.isDue(at: 60), "途切れた短い発話も、60 秒で送る（取りこぼさない）")
+        #expect(batcher.takeBatch(at: 60)?.map(\.text) == ["はい、そうですね"])
+    }
+
+    @Test("まとまってから解説：80 字以上たまって、5 秒静かになったら送る。切れ目や 1.2 秒の静けさでは送らない")
+    func digestSendsWhenEnoughAndQuiet() {
+        var batcher = Batcher(policy: BatchMode.digest.policy)
+        let sentence = String(repeating: "あ", count: 50)
+        batcher.observe(utterance(sentence), at: 0)
+        batcher.observe(utterance(sentence, id: 2), at: 2)
+        #expect(!batcher.isDue(at: 4.9), "100 字あるが、まだ 5 秒静かになっていない")
+        #expect(!batcher.isDue(at: 3.5), "新しい発話の境界でも、1.2 秒の静けさでも、送らない")
+        #expect(batcher.isDue(at: 7))
+        #expect(batcher.takeBatch(at: 7)?.count == 2, "2 つの発話を、まとめて渡す")
+    }
+
+    @Test("まとまってから解説：話が途切れず続くときは、60 秒で送る。短い発話が続いても、文字数がたまれば、静かになったときに送る")
+    func digestMaxHoldAndAccumulation() {
+        var batcher = Batcher(policy: BatchMode.digest.policy)
+        for t in 0...59 { batcher.observe(utterance("続く話 \(t)", id: 1), at: Double(t)) }
+        #expect(!batcher.isDue(at: 59.5))
+        #expect(batcher.isDue(at: 60))
+        _ = batcher.flush(at: 60)
+        for id in 1...12 { batcher.observe(utterance("短い発話です\(id)", id: id), at: 70 + Double(id) * 0.1) }
+        #expect(batcher.isDue(at: 76.3), "12 件で 80 字を超え、5 秒静かになった")
+    }
+
     @Test("一定の間隔：未送信があり、前の送信から指定の秒数たったときだけ。静かになっても、間隔まで待つ")
     func cadence() {
         var batcher = Batcher(policy: BatchMode.every30.policy)
