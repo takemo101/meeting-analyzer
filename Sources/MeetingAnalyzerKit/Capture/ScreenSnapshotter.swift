@@ -8,9 +8,16 @@ public struct ScreenSnapshotter: Sendable {
     public let selection: ScreenSelection
     /// 撮る画像の、長いほうの辺（これ以上は、撮る時に縮める）。
     private let maxEdge = 1280
+    /// 診断ログ（数値だけ。`CaptureDiagnostics`）。ウィンドウ・画面の位置と大きさ、撮れた画像の大きさ。タイトルは、書かない。
+    private let log: @Sendable (String) -> Void
 
-    public init(selection: ScreenSelection) {
+    public init(selection: ScreenSelection, log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.selection = selection
+        self.log = log
+    }
+
+    private static func describe(_ rect: CGRect) -> String {
+        String(format: "%.1fx%.1f@%.1f,%.1f", rect.width, rect.height, rect.origin.x, rect.origin.y)
     }
 
     public func snapshot() async throws -> CGImage {
@@ -26,8 +33,11 @@ public struct ScreenSnapshotter: Sendable {
             throw CaptureError.failed("画面の取り込みが選ばれていません")
         case .display:
             guard let display = content.displays.first else { throw CaptureError.targetNotFound("画面が見つかりません") }
+            log("display id=\(display.displayID) frame=\(Self.describe(display.frame)) size=\(display.width)x\(display.height) displays=\(content.displays.count)")
             do {
-                return try await capture(filter: SCContentFilter(display: display, excludingApplications: [], exceptingWindows: []), size: CGSize(width: display.width, height: display.height))
+                let image = try await capture(filter: SCContentFilter(display: display, excludingApplications: [], exceptingWindows: []), size: CGSize(width: display.width, height: display.height))
+                log("captured display image=\(image.width)x\(image.height)")
+                return image
             } catch {
                 throw CaptureError.failed("画面を撮れません: \(Self.describe(error))")
             }
@@ -38,6 +48,13 @@ public struct ScreenSnapshotter: Sendable {
                                 width: $0.frame.width, height: $0.frame.height, isOnScreen: $0.isOnScreen)
             }
             let ranked = WindowPicker.ranked(candidates, bundleID: bundleID, processIDs: processIDs)
+            // そのアプリの、すべてのウィンドウ（id:レイヤー:大きさ@位置:画面に出ているか）。選ばれ方を、あとから確かめるため。
+            let own = content.windows.indices.filter { candidates[$0].bundleID == bundleID || processIDs.contains(candidates[$0].processID) }
+            let listing = own.prefix(16).map { index -> String in
+                let window = content.windows[index]
+                return "\(window.windowID):L\(window.windowLayer):\(Self.describe(window.frame)):\(window.isOnScreen ? "on" : "off")"
+            }.joined(separator: " ")
+            log("app=\(bundleID) windows=\(own.count) [\(listing)] ranked=\(ranked.map { String(content.windows[$0].windowID) }.joined(separator: ","))")
             guard !ranked.isEmpty else {
                 throw CaptureError.targetNotFound("「\(name)」の撮れるウィンドウがありません（\(processIDs.isEmpty ? "起動していません" : "起動中")。通常のウィンドウ 0 件。最小化していないか、確認してください）")
             }
@@ -49,7 +66,15 @@ public struct ScreenSnapshotter: Sendable {
                 // 撮る範囲の大きさは、OS が教える `contentRect`（ウィンドウの枠と、見えている内容が違うとき、実際の内容の大きさ）。無ければ、枠の大きさ。
                 let rect = filter.contentRect
                 let size = rect.width > 0 && rect.height > 0 ? rect.size : window.frame.size
-                do { return try await capture(filter: filter, size: size) } catch { lastError = error }
+                log("try window=\(window.windowID) frame=\(Self.describe(window.frame)) contentRect=\(Self.describe(rect)) pointPixelScale=\(filter.pointPixelScale) basis=\(Self.describe(CGRect(origin: .zero, size: size)))")
+                do {
+                    let image = try await capture(filter: filter, size: size)
+                    log("captured window=\(window.windowID) image=\(image.width)x\(image.height)")
+                    return image
+                } catch {
+                    log("failed window=\(window.windowID) \(Self.describe(error))")
+                    lastError = error
+                }
             }
             let visible = ranked.filter { candidates[$0].isOnScreen }.count
             throw CaptureError.failed("「\(name)」のウィンドウを撮れません（候補 \(ranked.count) 件、うち画面に出ているもの \(visible) 件）: \(lastError.map(Self.describe) ?? "原因不明")")

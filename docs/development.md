@@ -61,6 +61,15 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 - 署名は ad-hoc（鍵・公証の認証情報は、ワークフローに渡さない）。Developer ID の署名・公証を足すときは、利用者の判断で、secrets と手順を決めてから。
 - ローカルで同じ DMG を作る：`just dmg`。
 
+## 画面の取り込みの診断ログ
+
+画面の取り込みで、撮れた画像が想定と違うとき（例：フルスクリーンの動画で、白い帯・切れ）に、原因を調べるための、数値だけのログ（SPEC §3.5）。
+
+- **場所**：`~/Library/Application Support/MeetingAnalyzer/logs/screen-capture.log`（`MEETING_ANALYZER_DATA_DIR` があれば、その下）。
+- **残るもの**：数値と ID だけ（ウィンドウ・画面の位置と大きさ、`contentRect`、撮れた画像の大きさ、切り落とし後の大きさ、保存した画像の名前、待った理由）。画像・ウィンドウのタイトル・字幕の本文は、残さない。
+- **使い方**：画面の取り込みを選んで会議を開始し、問題の場面を再現して、会議を終了する。ログの該当の行（`frame raw=… trimmed=…`、`try window=… frame=… contentRect=…`、`captured … image=…`）を見る。
+- 続けて同じ内容は書かれない（変化だけ残る）。200 KB を超えると、古い行から捨てる。
+
 ## mikan の Issue 進行
 
 **まだ初期化していない**。使うなら、ツール導入の権限を確認し、ルートから `mikan init --key MA --name meeting-analyzer` を実行する（既存のローカルボードを上書き・削除しない）。以下は、shortnote で使っている進め方を、そのまま使う想定である。

@@ -189,6 +189,16 @@ final class MeetingController {
 
     private func begin(_ selection: AudioSelection) async {
         let screenSelection = screen
+        let diagnostics = CaptureDiagnostics(root: RuntimePaths.dataDirectory(environment: environment))
+        if screenSelection != .off {
+            let target: String
+            switch screenSelection {
+            case .off: target = "off"
+            case .display: target = "display"
+            case .app(let bundleID, _): target = "app \(bundleID)"
+            }
+            diagnostics.write("session start version=\(AppInfo.version) screen=\(target)")
+        }
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
@@ -199,7 +209,7 @@ final class MeetingController {
             sink: hub,
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
             policy: batchMode.policy,
-            screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
+            screen: screenSelection == .off ? nil : ScreenFeed(snapshot: { try await ScreenSnapshotter(selection: screenSelection, log: diagnostics.write).snapshot() }, log: diagnostics.write),
             screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
             preset: presetStore.resolve(id: presetID)?.info,
             notify: notify
