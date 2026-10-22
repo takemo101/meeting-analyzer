@@ -16,6 +16,10 @@ build:
 run: build
     open "{{app}}"
 
+# ビルドして、開発用に ~/Applications へ入れる（INSTALL_DIR で変更）。実行中の同じアプリは、終了してから置き換える
+install: build
+    ./scripts/install.sh
+
 # ビルドして、実行ファイルを CLI として呼ぶ（例: just cli doctor / just cli replay sample.aiff --hold 60）
 cli *args: build
     "{{exe}}" "$@"
