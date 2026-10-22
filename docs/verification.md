@@ -426,3 +426,8 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **ワークフロー**（`release.yml`）：すべて通った（初回で成功）。
 - **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.6（draft でも prerelease でもない）。`MeetingAnalyzer-0.1.6.dmg` と `.sha256`。ダウンロードして、`shasum -a 256 -c` が OK、`verify-dmg.sh`（arm64・`--version`・署名の整合）が通った。変更点は、手で書いた。
 - **未確認**：管理者のパスワードでの、`/usr/local/bin` への実際のリンクの作成・削除（人間）。ほかは、v0.1.5 と同じ。
+
+### 2026-10-22 — GitButler の初期化
+
+- **操作**：利用者の指示で、ルートから `but setup`（`but` 0.22.3）を実行した。作業ツリーは `gitbutler/workspace`、target は `refs/remotes/origin/main`、push remote は `origin`（`gitbutler.project.*` で確認）。実行前は、`main`＝`origin/main`、作業ツリーはきれいだった。以後の Git の書込みは `but`（AGENTS.md・開発手順を更新）。
+- **これ以前の変更**は、ローカルの Git で `main` に直接 commit した（v0.1.0〜v0.1.6）。この変更から、branch → PR → normal merge → `but pull` の流れにする。

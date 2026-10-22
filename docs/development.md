@@ -82,10 +82,10 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 
 ## GitButler と PR
 
-**GitButler は、まだ設定していない**。GitHub のリポジトリ（https://github.com/takemo101/meeting-analyzer、公開）はある。GitButler を設定するまでは、ローカルの Git で `main` に commit し、ユーザーの依頼があれば `origin` へ push する。GitButler を初期化する（`but setup --init`）・target を `origin/main`、push remote を `origin` にする、は、ユーザーの依頼があるときだけ行う。設定後は、shortnote と同じ運用にする。
+**GitButler で進める**。GitHub のリポジトリ（https://github.com/takemo101/meeting-analyzer、公開）の `main` を target（`origin/main`）、push remote を `origin` にして、初期化してある（`but setup`。作業ツリーは `gitbutler/workspace` ブランチ。`main` へ直接 commit しない）。shortnote と同じ運用にする。target を変える・`but teardown` で通常の Git へ戻す、は、ユーザーの依頼があるときだけ。
 
 - Git の書込みは `but`。raw Git の add・commit・checkout・merge・rebase・push などで書き込まない（読取りは可）。feature・fix は Issue 単位の専用 branch／stack で扱い、無関係な変更を混ぜない。`develop` を作らない。target の変更を、PR の権限だけで勝手に行わない。
 - ユーザーが PR を依頼した場合の流れ：検証・独立レビュー → 必要な変更だけを `but commit -b <branch> -m <message> <ids...>` → `but pr new <branch> -F <message-file>`（push を含む） → PR の target・head・変更ファイル・required checks・reviews・mergeability の確認 → `main` へ normal merge → GitHub の実際の状態で `MERGED` を確認 → `but pull --check`・`but pull --status-after` で同期。
 - `but` の PR merge が使えず、auto-merge も使えない場合だけ、レビュー済みの head に束縛した `gh pr merge <number> --repo <owner>/<repo> --merge --match-head-commit <sha>` を例外として使う。admin・force・checks／reviews／保護の迂回・auto-merge 設定の変更・`but land` による PR 回避は禁止。
 - `but unapply <branch>` は、その stack のファイルを作業ツリーから外す。唯一の stack を unapply すると、ソースが一時的に消えたように見える（commit は残る）。target を切り替える前に、未 push の commit が無いことを確認する。conflict を reset・discard・強制同期で消さず、無関係な作業を保つ。
-- リリース（タグ・DMG・GitHub Release）は、ユーザーの依頼があるときだけ。手順は、依頼のときに shortnote を参考に決める（SPEC §9）。
+- リリース（タグ・DMG・GitHub Release）は、ユーザーの依頼があるときだけ。手順は [リリース](#リリース)。タグは、`main` が `origin/main` と同期している状態で付ける（`but pull` のあと）。
