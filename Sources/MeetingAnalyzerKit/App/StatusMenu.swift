@@ -45,16 +45,18 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         if let notice = controller.notice { menu.addItem(label(notice)) }
         menu.addItem(.separator())
 
+        // 上：会議の操作（開始・一時停止・再開・終了）。続けて、待機中だけ、この会議の取り込みの選択。
         switch controller.state {
         case .idle:
+            let start = action("開始", #selector(start))
+            start.isEnabled = !controller.selection.isEmpty
+            menu.addItem(start)
+            menu.addItem(.separator())
             menu.addItem(microphoneItem())
             menu.addItem(systemItem())
             menu.addItem(screenItem())
             menu.addItem(batchModeItem())
             menu.addItem(presetItem())
-            let start = action("開始", #selector(start))
-            start.isEnabled = !controller.selection.isEmpty
-            menu.addItem(start)
         case .running:
             menu.addItem(action("一時停止", #selector(pause)))
             menu.addItem(action("会議を終了", #selector(endMeeting)))
@@ -64,10 +66,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .working:
             break
         }
+        // 下：アプリの設定（会議ごとには選ばないもの）。
         menu.addItem(.separator())
-        menu.addItem(commandItem())
-        menu.addItem(recordsItem())
-        menu.addItem(action("MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）", #selector(openDataFolder)))
+        menu.addItem(settingsItem())
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -96,6 +97,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
         item.target = self
         return item
+    }
+
+    /// アプリの設定：記録を残す日数・コマンドのインストール・データの置き場所を開く。会議ごとには選ばないもの。
+    private func settingsItem() -> NSMenuItem {
+        submenuItem("設定") { submenu in
+            submenu.addItem(recordsItem())
+            submenu.addItem(commandItem())
+            submenu.addItem(.separator())
+            submenu.addItem(action("MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）", #selector(openDataFolder)))
+        }
     }
 
     /// コマンド `meeting-analyzer`（`/usr/local/bin` へのリンク）を、入れる・外す。入っていれば、チェック。
