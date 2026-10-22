@@ -294,3 +294,80 @@ struct ScreenshotRetentionTests {
         #expect(store.deleteExpired(now: now) == 1, "実行中でなければ、30 日前のものは消える")
     }
 }
+
+/// 内容（暗い灰色）の周りに、白（または透明）の帯を持つ画像。上＝画像の上端、右＝画像の右端。
+func makeBandedImage(width: Int = 1568, height: Int = 863, top: Int = 0, bottom: Int = 0, left: Int = 0, right: Int = 0, transparent: Bool = false) -> CGImage {
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    if !transparent {
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    // CoreGraphics は、左下が原点。画像の上端は、y の大きいほう。
+    context.setFillColor(red: 0.2, green: 0.3, blue: 0.5, alpha: 1)
+    context.fill(CGRect(x: left, y: bottom, width: width - left - right, height: height - top - bottom))
+    return context.makeImage()!
+}
+
+@Suite("描きかけの画像と、保存してよい状態の判断")
+struct ScreenStabilityTests {
+    @Test("片側だけの白い帯（フルスクリーンへの切り替え中のように、上と右）は、描きかけ。透明な帯も同じ")
+    func detectsOneSidedBand() {
+        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(top: 45, right: 83)))
+        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(top: 45, right: 83, transparent: true)), "透明も、空白")
+        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(bottom: 60)), "下だけ白い帯（上は内容）も、描きかけ")
+    }
+
+    @Test("四方が白い余白の画面（書類・スライド）や、内容が端まである画面は、描きかけではない")
+    func normalScreens() {
+        #expect(!ImageTools.hasUnrenderedBand(makeBandedImage(top: 70, bottom: 70, left: 90, right: 90)), "四方が白い余白")
+        #expect(!ImageTools.hasUnrenderedBand(makeBandedImage()), "端まで内容")
+        #expect(!ImageTools.hasUnrenderedBand(makeImage()), "単色の灰色")
+        #expect(!ImageTools.hasUnrenderedBand(makeBandedImage(top: 6)), "細い帯（1 行分に満たない）は、無視する")
+    }
+
+    @Test("大きさが変わった・描きかけのときは、待つ。続けて 2 回まで。そのあとは、保存する（いつまでも、保存しなくならない）")
+    func holdsThenSettles() {
+        var stability = ScreenStability()
+        func settled(_ width: Int, _ height: Int, band: Bool = false) -> Bool { stability.isSettled(width: width, height: height, hasUnrenderedBand: band) }
+        let results = [
+            settled(1000, 600), settled(1000, 600),
+            settled(1568, 863), settled(1568, 863),
+            settled(1568, 863, band: true), settled(1568, 863, band: true), settled(1568, 863, band: true), settled(1568, 863),
+        ]
+        // 最初・同じ大きさ：保存 → 大きさが変わった：待つ → 次で保存 → 帯：2 回待って、3 回目で保存 → 帯なし：保存
+        #expect(results == [true, true, false, true, false, false, true, true])
+    }
+}
+
+@Suite("LiveSession: 描きかけの画像は保存しない")
+struct LiveSessionStabilityTests {
+    @Test("大きさが変わった画像は、すぐには保存せず、次の確認で（同じ大きさなら）保存する。描きかけの画像は、待ったあと、保存する")
+    func waitsForTheWindowToSettle() async throws {
+        let root = tempURL("stability")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ScreenshotStore(root: root), screen = FakeScreen(), sink = RecordingSink(), fake = FakeInputs()
+        let live = LiveSession(
+            title: "t", speakers: [.others], inputs: fake.inputs, sink: sink, store: nil, tickInterval: .seconds(60),
+            screen: screen.feed, screenshots: store, screenInterval: .milliseconds(15), screenMinGap: 0, notify: { _ in }
+        )
+        func saved() -> Int { (try? FileManager.default.contentsOfDirectory(atPath: store.directory(sessionId: live.sessionId).path))?.count ?? 0 }
+        func waitFor(_ count: Int) async throws { for _ in 0..<300 where saved() < count { try await Task.sleep(for: .milliseconds(10)) } }
+
+        try await live.start()
+        #expect(saved() == 1, "最初の 1 枚")
+        // 大きさが変わる（フルスクリーンへ）。変化は、十分に大きい。
+        let before = screen.calls
+        screen.show(makeImage(width: 1568, height: 863, gray: 40, patch: (x: 100, y: 100, w: 800, h: 400, gray: 220)))
+        try await waitFor(2)
+        #expect(saved() == 2)
+        #expect(screen.calls - before >= 2, "大きさが変わった最初の確認では、保存せず、次の確認で保存した")
+
+        // 描きかけ（上と右が白い）。待ってから、保存する。
+        let beforeBand = screen.calls
+        screen.show(makeBandedImage(width: 1568, height: 863, top: 45, right: 83))
+        try await waitFor(3)
+        #expect(saved() == 3)
+        #expect(screen.calls - beforeBand >= 3, "描きかけは、2 回待ってから、保存した")
+        _ = try await live.end(reason: .user)
+    }
+}

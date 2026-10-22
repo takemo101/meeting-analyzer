@@ -81,6 +81,7 @@ public actor LiveSession {
     private let screenshots: ScreenshotStore?
     private let screenInterval: Duration
     private var screenGate: ScreenshotGate
+    private var screenStability = ScreenStability()
     private var screenTicker: Task<Void, Never>?
     private var screenFailureReported = false
     private var echo = EchoDetector()
@@ -285,6 +286,8 @@ public actor LiveSession {
         guard throwing || lifecycle.phase == .running else { return }
         let now = elapsed()
         guard screenGate.isOpen(at: now) else { return }
+        // ウィンドウが伸び縮みしている最中・描きかけの画像は、保存しない（次の確認まで待つ）。
+        guard screenStability.isSettled(width: image.width, height: image.height, hasUnrenderedBand: ImageTools.hasUnrenderedBand(image)) else { return }
         guard let signature = ImageTools.signature(of: image), screenGate.hasChanged(signature),
               let jpeg = ImageTools.jpegData(of: image) else { return }
         switch screenshots.save(jpeg, sessionId: sessionId, index: screenGate.nextIndex) {
