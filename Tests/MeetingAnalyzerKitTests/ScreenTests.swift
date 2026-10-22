@@ -137,16 +137,14 @@ final class FakeScreen: @unchecked Sendable {
 
     func show(_ image: CGImage) { lock.withLock { self.image = image } }
     func fail(_ error: Error?) { lock.withLock { self.error = error } }
-    private var logged: [String] = []
-    var logs: [String] { lock.withLock { logged } }
     var feed: ScreenFeed {
-        ScreenFeed(snapshot: { [self] in
+        ScreenFeed { [self] in
             try lock.withLock {
                 calls += 1
                 if let error { throw error }
                 return image
             }
-        }, log: { [self] message in lock.withLock { logged.append(message) } })
+        }
     }
 }
 
@@ -424,56 +422,5 @@ struct LiveSessionStabilityTests {
         let ratio = Double(width) / Double(height)
         #expect(abs(ratio - Double(1568 - 83) / Double(863 - 45)) < 0.02, "帯を切り落とした内容の比率（約 1.815）で、保存された: \(width)x\(height)")
         _ = try await live.end(reason: .user)
-    }
-}
-
-
-@Suite("CaptureDiagnostics: 画面の取り込みの診断ログ（数値だけ）")
-struct CaptureDiagnosticsTests {
-    @Test("行に時刻を付けて書く。ディレクトリは 0700・ファイルは 0600。続けて同じ内容は、書かない（変化だけ残る）")
-    func writesAndDeduplicates() throws {
-        let root = tempURL("diagnostics")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let log = CaptureDiagnostics(root: root, clock: { Date(timeIntervalSince1970: 1_800_000_000) })
-        log.write("frame raw=1568x863 trimmed=1485x818")
-        log.write("frame raw=1568x863 trimmed=1485x818")
-        log.write("saved shot-0001.jpg")
-        log.write("frame raw=1568x863 trimmed=1485x818")
-        let lines = try String(contentsOf: log.file, encoding: .utf8).split(separator: "\n").map(String.init)
-        #expect(lines.count == 3, "\(lines)")
-        #expect(lines[0].hasPrefix("2027-01-15T") && lines[0].hasSuffix(" frame raw=1568x863 trimmed=1485x818"))
-        func permissions(_ url: URL) -> Int { ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? Int) ?? -1 }
-        #expect(permissions(log.file) == 0o600 && permissions(log.file.deletingLastPathComponent()) == 0o700)
-    }
-
-    @Test("大きくなりすぎたら、古い行から捨てて、新しい行は残る。行の途中から始まらない")
-    func capsTheSize() throws {
-        let root = tempURL("diagnostics-cap")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let log = CaptureDiagnostics(root: root)
-        for index in 0..<4000 { log.write("window=\(index) frame=1568.0x863.0@0.0,0.0 contentRect=1485.0x818.0@0.0,0.0") }
-        let data = try Data(contentsOf: log.file)
-        #expect(data.count <= CaptureDiagnostics.maxBytes + 200)
-        let text = String(decoding: data, as: UTF8.self)
-        #expect(text.contains("window=3999 "), "新しい行は残る")
-        #expect(!text.contains("window=0 "), "古い行は捨てる")
-        #expect(text.split(separator: "\n").allSatisfy { $0.contains("T") && $0.contains(" window=") }, "どの行も、完全（途中から始まらない）")
-    }
-
-    @Test("LiveSession は、撮れた画像の大きさと、切り落としと、保存を、診断ログへ送る")
-    func liveSessionLogs() async throws {
-        let root = tempURL("diagnostics-live")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let screen = FakeScreen(), fake = FakeInputs()
-        screen.show(makeBandedImage(width: 1568, height: 863, top: 45, right: 83))
-        let live = LiveSession(
-            title: "t", speakers: [.others], inputs: fake.inputs, sink: RecordingSink(), store: nil, tickInterval: .seconds(60),
-            screen: screen.feed, screenshots: ScreenshotStore(root: root), screenInterval: .milliseconds(15), screenMinGap: 0, notify: { _ in }
-        )
-        try await live.start()
-        _ = try await live.end(reason: .user)
-        let logs = screen.logs
-        #expect(logs.contains("frame raw=1568x863 trimmed=1485x818"), "\(logs)")
-        #expect(logs.contains { $0.hasPrefix("saved shot-0001.jpg trimmed=1485x818") })
     }
 }

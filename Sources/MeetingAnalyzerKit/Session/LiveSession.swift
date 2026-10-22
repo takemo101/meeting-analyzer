@@ -24,12 +24,9 @@ public struct LiveInputs: Sendable {
 /// 画面の撮影の差し替え口。実機は `ScreenSnapshotter`、テストは偽の画像。
 public struct ScreenFeed: Sendable {
     public let snapshot: @Sendable () async throws -> CGImage
-    /// 診断ログ（数値だけ。`CaptureDiagnostics`）。
-    public let log: @Sendable (String) -> Void
 
-    public init(snapshot: @escaping @Sendable () async throws -> CGImage, log: @escaping @Sendable (String) -> Void = { _ in }) {
+    public init(snapshot: @escaping @Sendable () async throws -> CGImage) {
         self.snapshot = snapshot
-        self.log = log
     }
 }
 
@@ -292,19 +289,14 @@ public actor LiveSession {
         let now = elapsed()
         // フルスクリーンの動画などで、枠が、見えている内容より大きいとき、片側（上と右など）に空白が残る。その帯を、切り落とす。
         let image = ImageTools.trimmingUnrenderedBands(snapshot)
-        screen.log("frame raw=\(snapshot.width)x\(snapshot.height) trimmed=\(image.width)x\(image.height)")
         guard screenGate.isOpen(at: now) else { return }
         // ウィンドウが伸び縮みしている最中の画像は、保存しない（次の確認まで待つ）。
-        guard screenStability.isSettled(width: snapshot.width, height: snapshot.height) else {
-            screen.log("held: the size changed (\(snapshot.width)x\(snapshot.height))")
-            return
-        }
+        guard screenStability.isSettled(width: snapshot.width, height: snapshot.height) else { return }
         guard let signature = ImageTools.signature(of: image), screenGate.hasChanged(signature),
               let jpeg = ImageTools.jpegData(of: image) else { return }
         switch screenshots.save(jpeg, sessionId: sessionId, index: screenGate.nextIndex) {
         case .success(let url):
             screenGate.didSave(signature, at: now)
-            screen.log("saved \(url.lastPathComponent) trimmed=\(image.width)x\(image.height)")
             pipeline.attachScreenshot(path: url.path)
         case .failure:
             if throwing { throw LiveSessionError.failed("画面の画像を保存できません") }

@@ -184,7 +184,9 @@ public final class HubServer: EventSink, @unchecked Sendable {
             self.fd = fd
             source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
             source.setCancelHandler { Darwin.close(fd) }
-            source.setEventHandler { [unowned self] in
+            // 切れた受け手の読み取りは、切れたあとも、何度か呼ばれうる。そのとき、この受け手がもう解放されていても、落ちないように、弱い参照にする。
+            source.setEventHandler { [weak self] in
+                guard let self else { return }
                 var byte: UInt8 = 0
                 if read(fd, &byte, 1) <= 0 { onClose(self) }
             }
