@@ -17,6 +17,10 @@ dmg:
     ./scripts/dmg.sh
     ./scripts/verify-dmg.sh build/MeetingAnalyzer.dmg "${VERSION:-$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)}"
 
+# アプリのアイコン（Resources/AppIcon.icns）を、scripts/make-icon.swift から作り直す（生成物はコミットする。確認用の画像は build/AppIcon-preview.png）
+icon:
+    ./scripts/make-icon.sh
+
 # ビルドして、メニューバーのアプリとして起動する。Dock にもウィンドウにも出ない（終了はメニューバーの項目から）
 run: build
     open "{{app}}"

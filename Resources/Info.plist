@@ -2,27 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>dev.takemo101.meeting-analyzer</string>
-    <key>CFBundleName</key>
-    <string>meeting-analyzer</string>
-    <key>CFBundleDisplayName</key>
-    <string>meeting-analyzer</string>
-    <key>CFBundleExecutable</key>
-    <string>MeetingAnalyzer</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.3</string>
-    <key>CFBundleVersion</key>
-    <string>0.1.3</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>会議でのあなたの発言を、この Mac の中で文字にするために、マイクを使います。音声は保存も送信もしません。</string>
+	<key>CFBundleDisplayName</key>
+	<string>meeting-analyzer</string>
+	<key>CFBundleExecutable</key>
+	<string>MeetingAnalyzer</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.takemo101.meeting-analyzer</string>
+	<key>CFBundleName</key>
+	<string>meeting-analyzer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.3</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.3</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>会議でのあなたの発言を、この Mac の中で文字にするために、マイクを使います。音声は保存も送信もしません。</string>
 </dict>
 </plist>

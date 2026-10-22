@@ -40,6 +40,11 @@ checks() {
     ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン、プリセット、プリセットを作る skill）"
 
     local plist="${app}/Contents/Info.plist"
+    local icon_name
+    icon_name="$(plutil -extract CFBundleIconFile raw "${plist}" 2>/dev/null || true)"
+    [ -n "${icon_name}" ] || fail "Info.plist に CFBundleIconFile が無い"
+    [ -s "${app}/Contents/Resources/${icon_name}.icns" ] || fail "アイコン ${icon_name}.icns が無い"
+    ok "アイコン（${icon_name}.icns）"
     if [ -n "${EXPECTED_VERSION}" ]; then
         local short build
         short="$(plutil -extract CFBundleShortVersionString raw "${plist}")"

@@ -11,6 +11,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 BIN="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$BIN/MeetingAnalyzer" "$APP/Contents/MacOS/MeetingAnalyzer"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# アプリのアイコン（scripts/make-icon.sh で生成してコミットしたもの）。
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # エージェントへ渡す skill を、同梱する（`meeting-analyzer claude` が、システムプロンプトへ足す）。
 cp skills/meeting-analyzer/SKILL.md "$APP/Contents/Resources/SKILL.md"
 # pi・omp に、字幕を押し込む拡張（`meeting-analyzer pi|omp` が、-e で渡す）。
