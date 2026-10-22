@@ -65,9 +65,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             break
         }
         menu.addItem(.separator())
-        menu.addItem(registrationItem())
         menu.addItem(commandItem())
         menu.addItem(recordsItem())
+        menu.addItem(action("MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）", #selector(openDataFolder)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -120,18 +120,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func toggleCommand() { controller.toggleCommand() }
 
-    /// 記録（文字起こし・画像）を残す日数と、記録のフォルダ。期限を過ぎた記録は、文字起こしも画像も、フォルダごと消える。
+    /// 記録（文字起こし・画像）を残す日数。期限を過ぎた記録は、文字起こしも画像も、フォルダごと消える。
     private func recordsItem() -> NSMenuItem {
         submenuItem("記録の保持期間: " + RecordRetentionSetting.title(controller.retentionDays)) { submenu in
             for days in RecordRetentionSetting.choices {
                 submenu.addItem(choice(RecordRetentionSetting.title(days), selected: days == controller.retentionDays) { [controller] in controller.setRetentionDays(days) })
             }
-            submenu.addItem(.separator())
-            submenu.addItem(action("記録のフォルダを開く", #selector(openRecordsFolder)))
         }
     }
 
-    @objc private func openRecordsFolder() { controller.openRecordsFolder() }
+    @objc private func openDataFolder() { controller.openDataFolder() }
 
     // MARK: 選択肢のサブメニュー
 
@@ -170,15 +168,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let apps = controller.candidateApps()
         if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
         for app in apps { submenu.addItem(entry(app)) }
-    }
-
-    /// エージェントへの登録の文のコピー（MCP サーバー `mcp` を、エージェントに登録する）。
-    private func registrationItem() -> NSMenuItem {
-        submenuItem("エージェントに登録（コピー）") { submenu in
-            for registration in AgentRegistration.allCases {
-                submenu.addItem(choice(registration.title, selected: false) { [controller] in controller.copyRegistration(registration) })
-            }
-        }
     }
 
     /// 画面の取り込み：オフ・画面全体・起動中のアプリのウィンドウ。変化があったときだけ、縮小した画像を、字幕に添えて渡す。
