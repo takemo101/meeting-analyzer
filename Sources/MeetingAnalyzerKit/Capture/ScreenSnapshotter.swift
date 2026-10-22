@@ -45,7 +45,11 @@ public struct ScreenSnapshotter: Sendable {
             var lastError: Error?
             for index in ranked.prefix(5) {
                 let window = content.windows[index]
-                do { return try await capture(filter: SCContentFilter(desktopIndependentWindow: window), size: window.frame.size) } catch { lastError = error }
+                let filter = SCContentFilter(desktopIndependentWindow: window)
+                // 撮る範囲の大きさは、OS が教える `contentRect`（ウィンドウの枠と、見えている内容が違うとき、実際の内容の大きさ）。無ければ、枠の大きさ。
+                let rect = filter.contentRect
+                let size = rect.width > 0 && rect.height > 0 ? rect.size : window.frame.size
+                do { return try await capture(filter: filter, size: size) } catch { lastError = error }
             }
             let visible = ranked.filter { candidates[$0].isOnScreen }.count
             throw CaptureError.failed("「\(name)」のウィンドウを撮れません（候補 \(ranked.count) 件、うち画面に出ているもの \(visible) 件）: \(lastError.map(Self.describe) ?? "原因不明")")

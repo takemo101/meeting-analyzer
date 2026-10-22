@@ -272,9 +272,9 @@ public actor LiveSession {
     /// `throwing`：開始のときだけ true。撮れなければ、失敗として返す。実行中は、失敗を 1 回だけ知らせて、続ける（字幕の転送を止めない）。
     private func captureScreen(throwing: Bool) async throws {
         guard let screen, let screenshots else { return }
-        let image: CGImage
+        let snapshot: CGImage
         do {
-            image = try await screen.snapshot()
+            snapshot = try await screen.snapshot()
         } catch {
             if throwing { throw Self.map(error) }
             if !screenFailureReported && !Task.isCancelled {
@@ -285,9 +285,11 @@ public actor LiveSession {
         }
         guard throwing || lifecycle.phase == .running else { return }
         let now = elapsed()
+        // フルスクリーンの動画などで、枠が、見えている内容より大きいとき、片側（上と右など）に空白が残る。その帯を、切り落とす。
+        let image = ImageTools.trimmingUnrenderedBands(snapshot)
         guard screenGate.isOpen(at: now) else { return }
-        // ウィンドウが伸び縮みしている最中・描きかけの画像は、保存しない（次の確認まで待つ）。
-        guard screenStability.isSettled(width: image.width, height: image.height, hasUnrenderedBand: ImageTools.hasUnrenderedBand(image)) else { return }
+        // ウィンドウが伸び縮みしている最中の画像は、保存しない（次の確認まで待つ）。
+        guard screenStability.isSettled(width: snapshot.width, height: snapshot.height) else { return }
         guard let signature = ImageTools.signature(of: image), screenGate.hasChanged(signature),
               let jpeg = ImageTools.jpegData(of: image) else { return }
         switch screenshots.save(jpeg, sessionId: sessionId, index: screenGate.nextIndex) {

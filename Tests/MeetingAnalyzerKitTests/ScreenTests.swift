@@ -308,16 +308,17 @@ func makeBandedImage(width: Int = 1568, height: Int = 863, top: Int = 0, bottom:
     return context.makeImage()!
 }
 
-@Suite("描きかけの画像と、保存してよい状態の判断")
+@Suite("描きかけの画像の帯の切り落としと、保存してよい状態の判断")
 struct ScreenStabilityTests {
-    @Test("片側だけの白い帯（フルスクリーンへの切り替え中のように、上と右）は、描きかけ。透明な帯も同じ")
+    @Test("片側だけの白い帯（フルスクリーンの動画の、上と右）は、描きかけの帯。透明な帯も同じ。反対側が内容の、下だけ・左だけの帯も")
     func detectsOneSidedBand() {
         #expect(ImageTools.hasUnrenderedBand(makeBandedImage(top: 45, right: 83)))
         #expect(ImageTools.hasUnrenderedBand(makeBandedImage(top: 45, right: 83, transparent: true)), "透明も、空白")
-        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(bottom: 60)), "下だけ白い帯（上は内容）も、描きかけ")
+        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(bottom: 60)))
+        #expect(ImageTools.hasUnrenderedBand(makeBandedImage(left: 90)))
     }
 
-    @Test("四方が白い余白の画面（書類・スライド）や、内容が端まである画面は、描きかけではない")
+    @Test("四方が白い余白の画面（書類・スライド）や、内容が端まである画面は、帯ではない")
     func normalScreens() {
         #expect(!ImageTools.hasUnrenderedBand(makeBandedImage(top: 70, bottom: 70, left: 90, right: 90)), "四方が白い余白")
         #expect(!ImageTools.hasUnrenderedBand(makeBandedImage()), "端まで内容")
@@ -325,24 +326,55 @@ struct ScreenStabilityTests {
         #expect(!ImageTools.hasUnrenderedBand(makeBandedImage(top: 6)), "細い帯（1 行分に満たない）は、無視する")
     }
 
-    @Test("大きさが変わった・描きかけのときは、待つ。続けて 2 回まで。そのあとは、保存する（いつまでも、保存しなくならない）")
+    @Test("実際の画面の比率（上が高さの 5.2%、右が幅の 5.3%。格子の 1 マスより少し太いだけ）でも、帯を見つけて切り落とす")
+    func findsBandsAtRealProportions() {
+        let image = makeBandedImage(width: 2562, height: 1410, top: 73, right: 136)
+        #expect(ImageTools.hasUnrenderedBand(image))
+        let trimmed = ImageTools.trimmingUnrenderedBands(image)
+        #expect(trimmed.width == 2562 - 136 && trimmed.height == 1410 - 73, "\(trimmed.width)x\(trimmed.height)")
+    }
+
+    @Test("帯だけを切り落とす：上 45・右 83 の帯が付いた画像は、内容の大きさ（1485×818）になり、内容の色は残る。透明な帯も、同じ")
+    func trimsTheBands() throws {
+        for transparent in [false, true] {
+            let trimmed = ImageTools.trimmingUnrenderedBands(makeBandedImage(top: 45, right: 83, transparent: transparent))
+            #expect(trimmed.width == 1568 - 83 && trimmed.height == 863 - 45, "transparent=\(transparent): \(trimmed.width)x\(trimmed.height)")
+            // 切り落とし後の中央の画素は、内容の色（0.2, 0.3, 0.5 付近）。
+            var pixel = [UInt8](repeating: 0, count: 4)
+            let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(trimmed, in: CGRect(x: -trimmed.width / 2, y: -trimmed.height / 2, width: trimmed.width, height: trimmed.height))
+            #expect(abs(Int(pixel[0]) - 51) <= 3 && abs(Int(pixel[2]) - 128) <= 3, "\(pixel)")
+        }
+        let bottomLeft = ImageTools.trimmingUnrenderedBands(makeBandedImage(bottom: 60, left: 90))
+        #expect(bottomLeft.width == 1568 - 90 && bottomLeft.height == 863 - 60, "下と左の帯も、同じ")
+    }
+
+    @Test("帯でない画像は、そのまま（四方が白い余白・端まで内容）。内容を失う誤判定は、元の画像に戻す（切り落とすと半分に満たない）")
+    func leavesOtherImagesAlone() {
+        let margins = makeBandedImage(top: 70, bottom: 70, left: 90, right: 90)
+        #expect(ImageTools.trimmingUnrenderedBands(margins).width == margins.width && ImageTools.trimmingUnrenderedBands(margins).height == margins.height)
+        let full = makeBandedImage()
+        #expect(ImageTools.trimmingUnrenderedBands(full).width == full.width)
+        let mostlyBlank = makeBandedImage(width: 400, height: 400, top: 250)
+        #expect(ImageTools.trimmingUnrenderedBands(mostlyBlank).height == 400, "切り落とすと、高さが半分に満たない：元のまま")
+        let whiteHeader = makeBandedImage(width: 1000, height: 800, top: 200)
+        #expect(ImageTools.trimmingUnrenderedBands(whiteHeader).height == 800, "辺の 15% を超える空白（白い書類の上部など）は、帯でなく内容：切り落とさない")
+    }
+
+    @Test("大きさが変わったときは、待つ。続けて 2 回まで。そのあとは、保存する（大きさが変わり続ける窓でも、いつまでも、保存しなくならない）")
     func holdsThenSettles() {
         var stability = ScreenStability()
-        func settled(_ width: Int, _ height: Int, band: Bool = false) -> Bool { stability.isSettled(width: width, height: height, hasUnrenderedBand: band) }
-        let results = [
-            settled(1000, 600), settled(1000, 600),
-            settled(1568, 863), settled(1568, 863),
-            settled(1568, 863, band: true), settled(1568, 863, band: true), settled(1568, 863, band: true), settled(1568, 863),
-        ]
-        // 最初・同じ大きさ：保存 → 大きさが変わった：待つ → 次で保存 → 帯：2 回待って、3 回目で保存 → 帯なし：保存
-        #expect(results == [true, true, false, true, false, false, true, true])
+        func settled(_ width: Int, _ height: Int) -> Bool { stability.isSettled(width: width, height: height) }
+        let results = [settled(1000, 600), settled(1000, 600), settled(1568, 863), settled(1568, 863), settled(1000, 600), settled(1568, 863), settled(1000, 600), settled(1568, 863)]
+        // 最初・同じ：保存 → 変わった：待つ → 同じ：保存 → 変わり続ける：2 回待って、3 回目で保存 → また変わった：待つ
+        #expect(results == [true, true, false, true, false, false, true, false])
     }
 }
 
-@Suite("LiveSession: 描きかけの画像は保存しない")
+@Suite("LiveSession: フルスクリーンの動画の画像")
 struct LiveSessionStabilityTests {
-    @Test("大きさが変わった画像は、すぐには保存せず、次の確認で（同じ大きさなら）保存する。描きかけの画像は、待ったあと、保存する")
-    func waitsForTheWindowToSettle() async throws {
+    @Test("大きさが変わった画像は、すぐには保存せず、次の確認で保存する。上と右に空白の帯がある画像は、帯を切り落として、保存する")
+    func waitsAndTrims() async throws {
         let root = tempURL("stability")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ScreenshotStore(root: root), screen = FakeScreen(), sink = RecordingSink(), fake = FakeInputs()
@@ -350,24 +382,28 @@ struct LiveSessionStabilityTests {
             title: "t", speakers: [.others], inputs: fake.inputs, sink: sink, store: nil, tickInterval: .seconds(60),
             screen: screen.feed, screenshots: store, screenInterval: .milliseconds(15), screenMinGap: 0, notify: { _ in }
         )
-        func saved() -> Int { (try? FileManager.default.contentsOfDirectory(atPath: store.directory(sessionId: live.sessionId).path))?.count ?? 0 }
+        func directory() -> String { store.directory(sessionId: live.sessionId).path }
+        func saved() -> Int { (try? FileManager.default.contentsOfDirectory(atPath: directory()))?.count ?? 0 }
         func waitFor(_ count: Int) async throws { for _ in 0..<300 where saved() < count { try await Task.sleep(for: .milliseconds(10)) } }
+        func pixelSize(_ name: String) throws -> (Int, Int) {
+            let source = try #require(CGImageSourceCreateWithURL(URL(fileURLWithPath: directory() + "/" + name) as CFURL, nil))
+            let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+            return (properties[kCGImagePropertyPixelWidth] as? Int ?? 0, properties[kCGImagePropertyPixelHeight] as? Int ?? 0)
+        }
 
         try await live.start()
         #expect(saved() == 1, "最初の 1 枚")
-        // 大きさが変わる（フルスクリーンへ）。変化は、十分に大きい。
         let before = screen.calls
         screen.show(makeImage(width: 1568, height: 863, gray: 40, patch: (x: 100, y: 100, w: 800, h: 400, gray: 220)))
         try await waitFor(2)
-        #expect(saved() == 2)
-        #expect(screen.calls - before >= 2, "大きさが変わった最初の確認では、保存せず、次の確認で保存した")
+        #expect(saved() == 2 && screen.calls - before >= 2, "大きさが変わった最初の確認では保存せず、次の確認で保存した")
 
-        // 描きかけ（上と右が白い）。待ってから、保存する。
-        let beforeBand = screen.calls
         screen.show(makeBandedImage(width: 1568, height: 863, top: 45, right: 83))
         try await waitFor(3)
         #expect(saved() == 3)
-        #expect(screen.calls - beforeBand >= 3, "描きかけは、2 回待ってから、保存した")
+        let (width, height) = try pixelSize("shot-0003.jpg")
+        let ratio = Double(width) / Double(height)
+        #expect(abs(ratio - Double(1568 - 83) / Double(863 - 45)) < 0.02, "帯を切り落とした内容の比率（約 1.815）で、保存された: \(width)x\(height)")
         _ = try await live.end(reason: .user)
     }
 }

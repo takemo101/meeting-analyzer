@@ -84,9 +84,9 @@ public struct ScreenshotGate: Sendable, Equatable {
 }
 
 
-/// 保存してよい状態の画面か（SPEC §3.5）：ウィンドウの大きさが変わっている最中（フルスクリーンへの切り替えなど）や、描きかけ（片側だけ白い帯が残っている）の画像を、保存しない。
-/// 前回と画像の大きさが違う、または、描きかけの帯があるときは、**待つ**（次の確認まで）。待つのは、続けて `maxHolds` 回まで（そのあとは、保存する。
-/// 本当に、白い余白のある画面を、いつまでも保存しなくならないように）。
+/// 保存してよい状態の画面か（SPEC §3.5）：ウィンドウの大きさが変わっている最中（フルスクリーンへの切り替えなど）の画像を、保存しない。
+/// 前回と画像の大きさが違うときは、**待つ**（次の確認まで）。待つのは、続けて `maxHolds` 回まで（そのあとは、保存する。大きさが変わり続ける窓でも、
+/// いつまでも保存しなくならないように）。
 public struct ScreenStability: Sendable, Equatable {
     public static let maxHolds = 2
     private var lastSize: [Int]?
@@ -95,11 +95,11 @@ public struct ScreenStability: Sendable, Equatable {
     public init() {}
 
     /// この画像を、保存してよいか。待つときは false（回数を数える）。
-    public mutating func isSettled(width: Int, height: Int, hasUnrenderedBand: Bool) -> Bool {
+    public mutating func isSettled(width: Int, height: Int) -> Bool {
         let size = [width, height]
         let resized = lastSize.map { $0 != size } ?? false
         lastSize = size
-        if (resized || hasUnrenderedBand) && holds < Self.maxHolds {
+        if resized && holds < Self.maxHolds {
             holds += 1
             return false
         }
