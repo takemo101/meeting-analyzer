@@ -32,9 +32,9 @@
 - 小さく一貫した Issue サイズの変更に、実装・必要な検証・独立レビュー・文書更新をまとめる。
 - YAGNI を優先する。依頼されていない機能・抽象化・互換経路・将来への備えを追加しない。プロトコルは、差し替えが実際に要る箇所（ブリッジへの送信・文字起こしの更新）だけに置く。
 
-## mikan flow（未設定）
+## mikan flow
 
-作業状態は、ユーザーの依頼があれば mikan で管理する（プロジェクト `meeting-analyzer`、Issue prefix `MA`）。**まだ初期化していない**。初期化は、ツール導入の権限を確認し、ルートから `mikan init --key MA --name meeting-analyzer` を実行する。`.mikan/` は Git 対象外で、配下を直接参照・編集せず、文書のリンク対象にしない。Issue の読取り・Status 遷移・Report 追加は MCP だけで行う。運用は [開発手順](docs/development.md#mikan-の-issue-進行) に従う（`backlog → ready → active → completed`、active の実装 Issue は最大 1 件、Report に対象・検証・レビュー・PR・同期・未実施を残す）。
+作業状態は **mikan で管理する**（初期化済み。Issue の ID は `MIK-NNN`）。`.mikan/` は Git 対象外で、配下を直接参照・編集せず、文書のリンク対象にしない。Issue の作成・読取り・Status 遷移・Report 追加は MCP だけで行う。運用は [開発手順](docs/development.md#mikan-の-issue-進行) に従う（`backlog → ready → active → completed`、active の実装 Issue は最大 1 件、Report に対象・検証・レビュー・PR・同期・未実施を残す）。
 
 ## GitButler と PR
 
