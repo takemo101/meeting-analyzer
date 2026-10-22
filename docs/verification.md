@@ -216,3 +216,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **変更**：出力先で形を決める。標準出力・標準エラーが端末（`isatty`）なら、人が読む形（見出し、全角を 2 桁で揃えた表、`✔`/`!`/`✖`、失敗には次にすること `→`）。パイプ・ファイルなら、従来どおりの JSON。色は、端末で `NO_COLOR` が無く `TERM` が dumb でないときだけ。エージェントの起動前の状態表（アプリ・MCP 登録・字幕の届き方）を、標準エラーへ。
 - **確認**：単体 132 件 pass（色の条件、色なしにエスケープが混ざらないこと、桁の揃い、起動表示がエージェントごとに正しいこと、端末とパイプで形が変わること）、E2E 13/13 pass（パイプ経由なので、JSON の契約は不変）。実機の端末（`script` の疑似端末）で、`--help`・知らないコマンド・`doctor`・`transcribe`・`replay`・`pi`・`agy`（スタブ。設定は隔離）の表示を目視、色あり（ESC を確認）・`NO_COLOR` なし（ESC なし）・パイプ（JSON）を確認した。
 - **未確認**：利用者の実際の端末（テーマ・フォント）での見え方（`✔`/`✖` の幅、色の読みやすさ）。
+
+### 2026-10-22 — 公開リポジトリと、タグ → DMG のリリース
+
+- **公開**：https://github.com/takemo101/meeting-analyzer（public、既定ブランチ `main`）を作り、`main` を push した。公開の前に、追跡ファイルと履歴を点検した：トークン・API キー・秘密鍵の形は無し（履歴の全差分を検索）。追跡されていた開発ツールの状態（`.omc/`）は、追跡から外して `.gitignore` に足した（中身は、セッション ID と作業ディレクトリのパスだけ）。作業用に `HOME` を変えたシェルで作られた 2 件のコミットの作者（実名・ホスト名の形）を、`takemo101` に直した（push の前。履歴は、すべて `takemo101 <takemo101@gmail.com>`）。
+- **リリースの仕組み**：`.github/workflows/release.yml`（タグ `vX.Y.Z` の push → Info.plist の版とタグの一致・タグの commit が main に含まれること → 単体テスト → `scripts/dmg.sh` → `scripts/verify-dmg.sh` → `MeetingAnalyzer-X.Y.Z.dmg` と `.sha256` を、GitHub Release に添付）。署名は ad-hoc。権限は、Release の作成だけ `contents: write`。
+- **確認（ローカル）**：`just dmg` で DMG を作り、`verify-dmg.sh` が通る（DMG の整合、アプリと /Applications へのリンク、同梱の skill と拡張、版、arm64、マウントしたアプリの `--version`、`codesign --verify --deep --strict`）。
+- **確認（GitHub Actions、ドライラン）**：Actions の手動実行（`workflow_dispatch`、`macos-26`）で、単体テスト → DMG の作成 → 検査 → `.sha256` → アーティファクトのアップロード → 別ジョブでのダウンロードと SHA-256 照合が、すべて通った（所要 約 1 分 20 秒）。Release のジョブは、タグでないので、想定どおり、動かなかった。
+- **未確認**：**タグの push による Release の作成**（`release` ジョブの `gh release create`）は、まだ一度も動かしていない。最初のタグで確かめる。DMG を、別の Mac で開いたときの Gatekeeper の挙動と、ダウンロードした DMG から入れたアプリでの権限（マイク・画面収録）の保持。
