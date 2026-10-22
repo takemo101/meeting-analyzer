@@ -126,13 +126,13 @@ final class MeetingController {
         NSWorkspace.shared.open(folder)
     }
 
-    /// 記録（文字起こしと画像）のフォルダを開く（無ければ、作る）。
-    func openRecordsFolder() {
-        let folder = RuntimePaths.dataDirectory(environment: environment).appendingPathComponent("sessions", isDirectory: true)
+    /// このアプリのデータの置き場所（記録 `sessions/`・画像・自分のプリセット `presets/`）を、Finder で開く（無ければ、作る）。
+    func openDataFolder() {
+        let folder = RuntimePaths.dataDirectory(environment: environment)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
-            notice = "記録のフォルダを作れません"
+            notice = "フォルダを作れません"
             return
         }
         NSWorkspace.shared.open(folder)
@@ -162,14 +162,6 @@ final class MeetingController {
     }
 
     // MARK: 操作
-
-    /// エージェントへの登録の文を、クリップボードへ入れる（エージェントの設定は、自動では書き換えない）。
-    func copyRegistration(_ registration: AgentRegistration) {
-        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(registration.text(executable: executable), forType: .string)
-        notice = "コピーしました: \(registration.title)。ターミナルで実行してください"
-    }
 
     func start() {
         guard state == .idle else { return }

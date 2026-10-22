@@ -73,7 +73,7 @@ meeting-analyzer claude "今日の打ち合わせを聞いて、気になる点�
 
 ### 1. エージェントに、MCP サーバーを手で登録する（`meeting-analyzer <名前>` を使うなら不要）
 
-メニューの「エージェントに登録（コピー）」から、実行ファイルのパスを入れたコマンドをコピーして、ターミナルで実行できる（Claude Code・pi・opencode・omp）。手で書くときは、次のとおり。
+手で書くときは、次のとおり（登録の項目は、メニューにない）。
 
 実行ファイルは `build/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer`（以下 `$EXE`。絶対パスで登録する）。MCP サーバーは、標準入出力で話す stdio のサーバーで、コマンドは `$EXE mcp`。
 

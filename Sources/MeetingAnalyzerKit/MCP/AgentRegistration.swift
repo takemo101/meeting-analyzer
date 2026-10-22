@@ -1,7 +1,7 @@
 import Foundation
 
 /// エージェントへ、このアプリの MCP サーバー（`mcp`）を登録するための文（コマンド・設定）。実行ファイルのパスは、入れた場所によって変わるので、アプリがその場で作る。
-/// エージェントの設定ファイルは、自動では書き換えない（利用者が、コピーして実行する）。
+/// `meeting-analyzer pi|omp|opencode` が、設定へ自動で登録できないときに、手で足す文として見せる（エージェントの設定ファイルは、勝手には書き換えない）。
 public enum AgentRegistration: CaseIterable, Sendable {
     case claudeCode
     case claudeCodeChannel
