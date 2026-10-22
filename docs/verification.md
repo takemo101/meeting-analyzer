@@ -137,3 +137,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **native E2E**：`./scripts/e2e.sh` — **12 件すべて pass**（C1 を追加）。**変異による確認**：利用者の引数を、`--mcp-config` の後ろへ移すと、C1 が fail した（変更は元に戻した）。
 - **実際の Claude Code（合成音声のみ）**：`say` の音声を `replay`（窓口を保持。窓口の場所は環境変数で隔離）で流し、**シンボリックリンク経由の** `meeting-analyzer claude -p "…" --allowedTools mcp__meeting-analyzer-channel__get_events` を実行した。Claude Code は、`--mcp-config`・チャンネルの指定を受けて起動し、`get_events` で `started`・`captions`・`ended` と相手の発話を報告した（終了コード 0）。ユーザーの Claude Code の設定は、変えていない。
 - **未確認**：Channels の押し込み（対話の起動で、字幕が自動で届くこと。開発用の許可の確認の画面を含む）、アプリが動いていないときに `open -b` でアプリが起動すること（実際の `~/Applications` のアプリでは、試していない）。
+
+### 2026-10-22 — Claude Code の Channels の押し込み（実機の Claude Code・疑似端末・合成音声）と、`just uninstall`
+
+- **報告**：利用者の `meeting-analyzer claude` で、「`server:meeting-analyzer-channel · no MCP server configured with that name`」と表示された。
+- **再現**：疑似端末（Python の `pty`）で、本物の `claude`（v2.1.307）を、`meeting-analyzer claude` と同じ引数で起動し、開発用チャンネルの警告で「1. I am using this for local development」を選ぶと、同じ表示が出た。`--strict-mcp-config` を付けても、設定を JSON ファイルで渡しても、同じだった。
+- **動作の確認**：`replay --wait --hold`（窓口を開け、`mcp --channel` がつながってから、`say` の合成音声を再生）と同時に、疑似端末で `claude --mcp-config <JSON> --dangerously-load-development-channels server:meeting-analyzer-channel` を起動した。表示は出たままだが、Claude Code の画面に、字幕と終了の出来事が `← meeting-analyzer-channel: {…}` として**自動で届き**、終了の出来事を受けて、Claude Code が自分でプロジェクトの要約の手順と記録を読み始めた。**押し込みは、実機の Claude Code で動く**。表示は、`--mcp-config` で渡した設定を、Claude Code の起動時の確認が数えないための、見かけ上の警告と判断した（`claude mcp add` で登録した場合に消えるかは、確認していない：利用者の設定を変えない、新しいフォルダの信頼の確認が操作しにくい、のため）。
+- **`just uninstall`**：検証用の `INSTALL_DIR`・`BIN_DIR` で確認した。実行中のアプリ（隔離して起動した自分のプロセス）が SIGTERM で終了し、アプリとコマンドのリンクが消え、エージェントが起動した `mcp` は残った。入っていなければ「入っていません」。別のものを指すリンクは残した。`install.sh` との共通部分（`install-lib.sh`）に切り出したあとも、`install`（起動・置き換え）が動くことを再確認した。
+- **未確認**：利用者の環境（`~/Applications`・`~/.local/bin`）での install・uninstall、`claude mcp add` で登録した場合に警告が消えるか。

@@ -19,7 +19,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 | できる | まだ |
 |---|---|
 | メニューバーのアプリから、取り込む音声（マイク・システム音声の全体またはアプリ）を選び、同意を確認して、開始・一時停止・再開・終了する。オンデバイスで文字にし、エージェントへ渡す窓口（Unix ドメインソケット）へ流し、記録を書く | **画面の取り込み**（SPEC §3.5）、自動終了。エコーの疑いは、メニューでヘッドホンを案内する（検出の当たりは未確認） |
-| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。実機では未確認）。メニューから、登録コマンドをコピー | omp・agy・opencode での確認（pi は接続まで確認済み） |
+| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。合成音声で、字幕の自動の到着と、終了の出来事でのエージェントの反応を確認済み）。メニューから、登録コマンドをコピー | omp・agy・opencode での確認（pi は接続まで確認済み） |
 | 音声ファイルの文字起こし（`transcribe`）・再生（`replay`）・この Mac で使えるかの確認（`doctor`） | |
 
 マイク・システム音声の実取り込み（権限を含む）と、メニューからの開始〜終了の操作は、実機での人間の確認がまだ済んでいない（[検証手順と記録](docs/verification.md)）。
@@ -52,7 +52,8 @@ meeting-analyzer claude "今日の打ち合わせを聞いて、気になる点�
 ```
 
 - MCP の設定は、その起動だけに渡す（Claude Code の設定ファイルは、書き換えない）。字幕は、チャンネルで自動で届く。
-- Channels には、開発用の許可（`--dangerously-load-development-channels`）が付く。Claude Code の確認が出たら、内容を見て承認する。
+- Channels には、開発用の許可（`--dangerously-load-development-channels`）が付く。起動時に「Loading development channels」の警告が出たら、「1. I am using this for local development」を選ぶ。
+- 起動後に `server:meeting-analyzer-channel · no MCP server configured with that name` と表示されても、字幕の自動の到着は動く（`--mcp-config` で、その起動だけに渡した設定を、Claude Code の起動時の確認が、設定済みの一覧に数えないための表示。実機で、字幕と終了の出来事が `← meeting-analyzer-channel: …` として届き、Claude Code が反応することを確認した）。
 - 他のエージェント（pi・agy・opencode・omp）は、下の「登録」を使う。
 
 ### 1. エージェントに、MCP サーバーを登録する（一度だけ。`meeting-analyzer claude` を使うなら不要）

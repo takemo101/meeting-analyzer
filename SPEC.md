@@ -102,7 +102,7 @@ meeting-analyzer は、Mac の**音声**（マイクと、Mac から出ている
 
 | エージェント | 方式 | 状況 |
 |---|---|---|
-| Claude Code | MCP（`claude mcp add`）。`--channel` で push | `get_events` は実機で確認済み（合成音声）。`--channel` の押し込みは**未確認** |
+| Claude Code | MCP（`claude mcp add`、または `meeting-analyzer claude`）。`--channel` で push | `get_events`・`--channel` の押し込み（字幕と終了の出来事が自動で届き、Claude Code が反応する）とも、実機の Claude Code で確認済み（合成音声）。起動時に「no MCP server configured with that name」と表示されるが、動作には影響しない |
 | pi | MCP（`pi mcp add`） | `pi mcp list` で接続・ツール `get_events` を確認済み。モデルを使った動作は未確認 |
 | omp・agy・opencode v2 | MCP（ツール `get_events` の pull）。登録の文は、メニューの「エージェントに登録（コピー）」 | **未確認**（opencode は、`opencode mcp add` で書いた設定が、`opencode mcp list` に出なかった） |
 
@@ -191,7 +191,7 @@ meeting-analyzer は、Mac の**音声**（マイクと、Mac から出ている
 | A13 | 画面を字幕の渡す直前に撮り、変化があるときだけ、縮小して渡す。画面の一部の変化も検知する。撮影の失敗・遅れは、字幕を止めない。保存は 0700／0600・最新の一定数・終了時に削除 | 未実装 | 単体（変化検知・失敗時）・人間（実画面） |
 | A14 | メニューから、開始（同意の確認つき）・一時停止・再開・終了ができる。終了で、A06 の手順が走る | 実装済み・要人間確認 | 単体（状態・順序・失敗）・自動の実機観測（同意と開始の失敗のダイアログ）・人間（実際の取り込みを伴う開始〜終了の操作） |
 | A15 | 窓口とエージェント側の MCP（§3.7）：窓口は同じユーザーだけを受け付け（ソケット 0600）、複数の受け手へ同じ出来事を流し、後から接続した受け手へ、現在のセッションの出来事を先頭から渡す。`mcp` は、`get_events`（pull）と、`--channel` の押し込みで、出来事を渡す。切れた受け手・アプリの不在・アプリの再起動に耐える | 実装済み | 単体（窓口・MCP）・E2E（R1〜R5・A1） |
-| A18 | `meeting-analyzer claude` が、利用者の引数 → MCP の設定（`--channel`・窓口の場所）→ チャンネルの指定の順で、`claude` に置き換わる。`claude` が無ければ終了コード 5 | 実装済み・要人間確認 | 単体・E2E（C1）・実際の Claude Code（`-p`、合成音声）。Channels の押し込みは、対話の起動が要るので人間 |
+| A18 | `meeting-analyzer claude` が、利用者の引数 → MCP の設定（`--channel`・窓口の場所）→ チャンネルの指定の順で、`claude` に置き換わる。`claude` が無ければ終了コード 5 | 実装済み・要人間確認 | 単体・E2E（C1）・実際の Claude Code（`-p`、合成音声）。Channels の押し込みも、実際の Claude Code（対話の起動を、疑似端末で操作）で確認 |
 | A16 | 実際のエージェントでの連携：Claude Code・omp・pi・agy（と調査後の opencode v2）に、`mcp` を登録して、字幕が届き、終了の出来事で詳細なサマリーが出る | 実装済み・要人間確認 | 人間（各エージェントで実際に） |
 | A17 | サマリー（§3.8）：記録の全文とプロジェクトの内容を元に、決定事項・未決事項・アクション・プロジェクトへの影響・認識の不確かさを含む。記録・字幕内の命令は実行しない | 未確認 | 人間（エージェントの出力の判断） |
 
