@@ -346,3 +346,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **変更**：`scripts/make-icon.swift`（CoreGraphics で描く。外部の素材なし）と `scripts/make-icon.sh`（`iconutil` で `Resources/AppIcon.icns` にする。`just icon`）。図柄：紫がかった青の角丸の四角（macOS のアイコンの形。余白・影・上端の光つき）に、白い吹き出し（会話）と、その中の波形（音声）。`Info.plist` に `CFBundleIconFile`、ビルドで `Contents/Resources/AppIcon.icns` へ。`verify-dmg.sh` に、アイコンの検査を追加した。メニューバーのアイコンは、従来どおり、システムの記号（`waveform`）。
 - **確認**：生成した 1024px の画像を目視した（吹き出しと波形が、はっきり読める）。`icns` を `iconutil` で戻すと、10 サイズ（16〜1024、1x と 2x）が入っている。`just dmg` の検査（アイコンを含む）が通る。
 - **未確認**：Finder・Dock・「アプリケーション」での、実際の見え方（小さいサイズでの読みやすさ、ダーク／ライトの背景）。
+
+### 2026-10-22 — v0.1.4 のリリース
+
+- **内容**：画面の画像の 7 日間の保持、アプリのアイコン、リファクタリング（動作は変えない）。
+- **操作**：版を 0.1.4 に上げ（Info.plist・`AppInfo.version`・E2E の期待値・README・SPEC）、単体 161 件・E2E 14/14 が通ってから、`main`（リモートと同期済み）に、注釈つきタグ `v0.1.4` を push。
+- **ワークフロー**（`release.yml`）：版の一致 → タグの commit が main に含まれること → 単体テスト → DMG → `verify-dmg.sh`（アイコンの検査を含む）→ `.sha256` → `release` ジョブが、ダウンロードして照合し、Release を作成、まで、すべて通った（初回で成功）。
+- **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.4（draft でも prerelease でもない）。`MeetingAnalyzer-0.1.4.dmg`（1,053,460 バイト。アイコンが入り、前の版より大きい）と `.sha256`。ダウンロードして、`shasum -a 256 -c` が OK、`verify-dmg.sh` が通った。変更点は、手で書いた。
+- **未確認**：v0.1.3 と同じ（別の Mac での Gatekeeper の挙動、ダウンロードした DMG から入れたアプリでの許可の保持、プリセットが Claude Code・omp・opencode で効くこと）。加えて、アイコンの Finder・Dock での見え方、7 日後の画像の自動削除（実機の常駐）。
