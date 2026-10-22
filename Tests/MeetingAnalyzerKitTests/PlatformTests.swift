@@ -1,0 +1,63 @@
+import Foundation
+import Testing
+@testable import MeetingAnalyzerKit
+
+private func makeDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ma-platform-" + UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+@Suite("RuntimePaths / TokenStore / SessionStore")
+struct PlatformTests {
+    @Test("置き場所は、環境変数が優先で、なければ既定の場所")
+    func paths() {
+        let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
+        #expect(RuntimePaths.liveSupportDirectory(environment: [:], home: home).path == "/Users/someone/.live-support")
+        #expect(RuntimePaths.liveSupportDirectory(environment: ["LIVE_SUPPORT_RUNTIME_DIR": "/tmp/rt"], home: home).path == "/tmp/rt")
+        #expect(RuntimePaths.liveSupportDirectory(environment: ["LIVE_SUPPORT_RUNTIME_DIR": ""], home: home).path == "/Users/someone/.live-support", "空は無視する")
+        #expect(RuntimePaths.dataDirectory(environment: [:], home: home).path == "/Users/someone/Library/Application Support/MeetingAnalyzer")
+        #expect(RuntimePaths.dataDirectory(environment: ["MEETING_ANALYZER_DATA_DIR": "/tmp/d"], home: home).path == "/tmp/d")
+    }
+
+    @Test("トークンは、前後の空白を除いて読む。無い・空は区別して断る")
+    func token() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(throws: TokenError.missing) { try TokenStore.read(directory: directory).get() }
+        try Data("  abc123\n".utf8).write(to: directory.appendingPathComponent("token"))
+        #expect(try TokenStore.read(directory: directory).get() == "abc123")
+        try Data("\n \n".utf8).write(to: directory.appendingPathComponent("token"))
+        #expect(throws: TokenError.unreadable) { try TokenStore.read(directory: directory).get() }
+    }
+
+    @Test("記録は、セッションごとのディレクトリに、利用者だけが読める権限で書く")
+    func writeTranscript() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let file = try SessionStore(root: root).writeTranscript("# 記録\n", sessionId: id).get()
+        #expect(file.path == root.appendingPathComponent("sessions/\(id.uuidString.lowercased())/transcript.md").path)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "# 記録\n")
+        #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int) == 0o600)
+        #expect((try FileManager.default.attributesOfItem(atPath: file.deletingLastPathComponent().path)[.posixPermissions] as? Int) == 0o700)
+    }
+
+    @Test("書けない場所へは、失敗として返す（クラッシュしない）")
+    func writeFailure() {
+        let result = SessionStore(root: URL(fileURLWithPath: "/dev/null/nope")).writeTranscript("x", sessionId: UUID())
+        #expect(throws: SessionStoreError.writeFailed) { try result.get() }
+    }
+}
+
+@Suite("AppInfo")
+struct AppInfoTests {
+    @Test("コード上の版は、Info.plist の版と同じ")
+    func versionMatchesBundle() throws {
+        let plist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/Info.plist")
+        let data = try Data(contentsOf: plist)
+        let object = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(object["CFBundleShortVersionString"] as? String == AppInfo.version)
+        #expect(object["CFBundleVersion"] as? String == AppInfo.version)
+    }
+}
