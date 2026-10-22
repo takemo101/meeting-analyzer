@@ -35,15 +35,14 @@ AGENTS.md              開発規約・不変条件
 Package.swift          SwiftPM（macOS 26、外部依存なし）
 Resources/Info.plist   バンドル設定（LSUIElement・配備下限・マイクの用途文）
 Sources/MeetingAnalyzer/      実行ファイル（main.swift だけ）
-Sources/MeetingAnalyzerKit/   実装（Core・Transcription・Bridge・Platform・Session・CLI・App）
+Sources/MeetingAnalyzerKit/   実装（Core・Transcription・Capture・Hub・MCP・Platform・Session・CLI・App）
 Tests/MeetingAnalyzerKitTests/ 単体テスト（Swift Testing）
 justfile               開発用コマンド（build・run・cli・test・e2e）
 scripts/
   build.sh             build/MeetingAnalyzer.app を作る（Apple silicon、ad-hoc 署名）
   test.sh              単体テスト（Swift Testing のマクロプラグインのパスを渡す）
   e2e.sh               bundle ID を変えたコピーで native E2E を実行する
-  native-e2e.swift     実機の操作・期待値・report（CLI・本物の音声と認識・偽のブリッジ・起動と終了）
-  e2e-bridge.mjs       E2E 用の偽のブリッジ（受け取った要求を記録する）
+  native-e2e.swift     実機の操作・期待値・report（CLI・本物の音声と認識・窓口と MCP・起動と終了）
 .agents/skills/
   verifying-macos-apps/        他の macOS アプリへ持ち出せる共通検証手順（shortnote から取り込み）
   verifying-meeting-analyzer/  meeting-analyzer 固有のケース・コマンド・証拠契約

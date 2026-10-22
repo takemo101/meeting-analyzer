@@ -65,11 +65,11 @@ struct TranscriptTests {
         #expect(transcript.ordered.first?.text == "来週のリリースの件ですが、")
     }
 
-    @Test("Markdown は、会議の情報と、時刻・発言者つきの本文と、認識が不確かという注意を含む")
+    @Test("Markdown は、セッションの情報と、時刻・発言者つきの本文と、認識が不確かという注意を含む")
     func markdown() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        let text = make().markdown(meetingId: "定例", startedAt: start, endedAt: start.addingTimeInterval(3725))
-        #expect(text.contains("- 会議: 定例"))
+        let text = make().markdown(title: "定例", startedAt: start, endedAt: start.addingTimeInterval(3725))
+        #expect(text.contains("- 名前: 定例"))
         #expect(text.contains("- 長さ: 1:02:05"))
         #expect(text.contains("- 発話数: 3"))
         #expect(text.contains("[00:03] 相手: 来週のリリースの件ですが"))

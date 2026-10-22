@@ -19,12 +19,28 @@ final class MeetingController {
     private(set) var selection = AudioSelection()
     var onChange: (() -> Void)?
 
+    /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
+    private(set) var agentCount = 0
+
     private var session: LiveSession?
     private let environment: [String: String]
+    /// エージェントへ渡す窓口。待ち受けを始められなくても、記録は続けられる（出来事は、保持するだけ）。
+    private let hub: HubServer
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.environment = environment
+        hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
     }
+
+    /// 窓口を開く。開けなければ、知らせを出す（セッションは、記録だけで始められる）。
+    func startHub() {
+        hub.setClientCountHandler { [weak self] count in
+            Task { @MainActor in self?.agentCount = count; self?.onChange?() }
+        }
+        do { try hub.start() } catch let error as HubError { notice = FailureText.hub(error) } catch { notice = "エージェントへ渡す窓口を開けません" }
+    }
+
+    func stopHub() { hub.stop() }
 
     var hasActiveMeeting: Bool { session != nil }
 
@@ -86,7 +102,7 @@ final class MeetingController {
         Task { await end(reason: .user) }
     }
 
-    /// 会議を終える。終了の合図を送れなかったときは、利用者にそう伝える（記録は残る）。
+    /// 会議を終える。記録を書き、エージェントへ終了の出来事を出す。
     func end(reason: EndReason) async {
         // 開始・一時停止・再開の最中なら、終わるのを待つ（その間に終了を始めると、取り込みの停止が重なる）。
         while case .working = state, session != nil { try? await Task.sleep(for: .milliseconds(100)) }
@@ -95,14 +111,7 @@ final class MeetingController {
         defer { self.session = nil; state = .idle }
         do {
             let outcome = try await session.end(reason: reason)
-            if let failure = outcome.deliveryFailure {
-                notice = "終了の合図を送れませんでした"
-                var text = FailureText.bridge(failure)
-                if let path = outcome.transcriptPath { text += "\n\n記録は保存されています:\n\(path)" }
-                Alerts.show(title: "会議を終えましたが、エージェントへ届いていません", text: text)
-            } else {
-                notice = "会議を終了しました（発話 \(outcome.utterances) 件）"
-            }
+            notice = "終了しました（発話 \(outcome.utterances) 件）"
         } catch {
             notice = "会議を終了できませんでした"
         }
@@ -111,19 +120,14 @@ final class MeetingController {
     // MARK: 内部
 
     private func begin(_ selection: AudioSelection) async {
-        let endpoint: BridgeEndpoint
-        switch makeEndpoint() {
-        case .failure(let message): fail(message); return
-        case .success(let value): endpoint = value
-        }
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
         let session = LiveSession(
-            meetingId: Self.meetingName(selection: selection),
+            title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
             inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale)),
-            sender: BridgeClient(endpoint: endpoint),
+            sink: hub,
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
             notify: notify
         )
@@ -144,25 +148,8 @@ final class MeetingController {
         Alerts.show(title: "会議を始められません", text: message)
     }
 
-    private func makeEndpoint() -> Result<BridgeEndpoint, StartFailure> {
-        let directory = RuntimePaths.liveSupportDirectory(environment: environment)
-        switch TokenStore.read(directory: directory) {
-        case .failure(let error): return .failure(StartFailure(FailureText.token(error, directory: directory.path)))
-        case .success(let token):
-            switch BridgeEndpoint.parse(url: RuntimePaths.bridgeURL(environment: environment), token: token) {
-            case .success(let endpoint): return .success(endpoint)
-            case .failure(.notLoopbackHTTP): return .failure(StartFailure("ブリッジの送り先が、http://127.0.0.1 ではありません"))
-            case .failure(.shortToken): return .failure(StartFailure("トークンが短すぎる、または空白を含みます。エージェント側を起動し直してください"))
-            }
-        }
-    }
-
-    private struct StartFailure: Error { let message: String; init(_ message: String) { self.message = message } }
-
-    private func fail(_ failure: StartFailure) { fail(failure.message) }
-
-    /// 会議の名前。エージェントが区別できる程度（取り込む音声と開始時刻）。
-    static func meetingName(selection: AudioSelection, now: Date = Date()) -> String {
+    /// セッションの名前。エージェントが区別できる程度（取り込む音声と開始時刻）。
+    static func sessionTitle(selection: AudioSelection, now: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"

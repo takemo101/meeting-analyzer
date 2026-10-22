@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var termination: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        controller.startHub()
         statusMenu = StatusMenu(controller: controller)
         // SIGTERM も、通常の終了と同じ道（実行中の会議を `appQuit` で終える）を通す。
         signal(SIGTERM, SIG_IGN)
@@ -20,9 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 実行中・一時停止中の会議は、`appQuit` の理由で終わらせ（記録と終了の合図）、それから終了する（SPEC §3.1）。
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard controller.hasActiveMeeting else { return .terminateNow }
+        guard controller.hasActiveMeeting else { controller.stopHub(); return .terminateNow }
         Task {
             await controller.end(reason: .appQuit)
+            controller.stopHub()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

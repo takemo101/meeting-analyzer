@@ -28,31 +28,37 @@ struct CommandParserTests {
         #expect(parse(["transcribe", "a.wav", "b.wav"]) == .failure(.usage("引数が 1 個必要です")))
     }
 
-    @Test("replay は --bridge が必須。発言者の既定は相手、会議名の既定は音声ファイル名から")
+    @Test("replay の既定：発言者は相手、名前は音声ファイル名から、窓口を開けておく秒数は 0")
     func replay() throws {
-        #expect(parse(["replay", "a.wav"]) == .failure(.usage("--bridge <url> が必要です")))
-        guard case .success(.replay(let options)) = parse(["replay", "/x/sample.aiff", "--bridge", "http://127.0.0.1:1"]) else { Issue.record("parse failed"); return }
+        guard case .success(.replay(let options)) = parse(["replay", "/x/sample.aiff"]) else { Issue.record("parse failed"); return }
         #expect(options.speaker == .others)
-        #expect(options.meetingId == "replay-sample")
+        #expect(options.title == "replay-sample")
         #expect(options.locale == "ja_JP")
-        #expect(options.tokenDirectory == nil)
-        guard case .success(.replay(let custom)) = parse(["replay", "a.wav", "--bridge", "http://127.0.0.1:1", "--speaker", "you", "--meeting", "定例", "--token-dir", "/t"]) else { Issue.record("parse failed"); return }
-        #expect(custom.speaker == .you && custom.meetingId == "定例" && custom.tokenDirectory == "/t")
+        #expect(options.hold == 0 && options.wait == 0)
+        guard case .success(.replay(let custom)) = parse(["replay", "a.wav", "--speaker", "you", "--title", "定例", "--hold", "2.5", "--wait", "4"]) else { Issue.record("parse failed"); return }
+        #expect(custom.speaker == .you && custom.title == "定例" && custom.hold == 2.5 && custom.wait == 4)
+    }
+
+    @Test("mcp は、引数なしでツールだけ。--channel で Channels の通知つき")
+    func mcp() {
+        #expect(parse(["mcp"]) == .success(.mcp(channel: false)))
+        #expect(parse(["mcp", "--channel"]) == .success(.mcp(channel: true)))
+        #expect(parse(["mcp", "--other"]) == .failure(.usage("mcp に渡せるのは --channel だけです")))
     }
 
     @Test("知らないコマンド・オプション、値の欠落、重複、不正な値は、使い方の誤り")
     func rejections() {
-        for bad in [["bogus"], ["doctor", "--nope", "x"], ["doctor", "--locale"], ["doctor", "--locale", "--other"], ["doctor", "--locale", "a", "--locale", "b"], ["replay", "a.wav", "--bridge", "u", "--speaker", "everyone"], ["doctor", "extra"]] {
+        for bad in [["bogus"], ["doctor", "--nope", "x"], ["doctor", "--locale"], ["doctor", "--locale", "--other"], ["doctor", "--locale", "a", "--locale", "b"], ["replay", "a.wav", "--speaker", "everyone"], ["replay", "a.wav", "--hold", "-1"], ["replay", "a.wav", "--hold", "soon"], ["replay", "a.wav", "--wait", "5000"], ["replay", "a.wav", "--bridge", "http://127.0.0.1:1"], ["doctor", "extra"]] {
             guard case .failure(let error) = parse(bad) else { Issue.record("\(bad) was accepted"); continue }
             #expect(error.exitCode == 1, "\(bad)")
         }
     }
 
-    @Test("終了コードは、使い方 1・入力 2・ブリッジ 3・文字起こし 4")
+    @Test("終了コードは、使い方 1・入力 2・窓口 3・文字起こし 4")
     func exitCodes() {
         #expect(CLIError.usage("").exitCode == 1)
         #expect(CLIError.input("").exitCode == 2)
-        #expect(CLIError.bridge(code: "x", message: "").exitCode == 3)
+        #expect(CLIError.hub(code: "x", message: "").exitCode == 3)
         #expect(CLIError.transcription("").exitCode == 4)
     }
 }
@@ -65,12 +71,8 @@ final class Output: @unchecked Sendable {
     var lines: [String] { lock.lock(); defer { lock.unlock() }; return storage }
 }
 
-private func tokenDirectory(_ token: String? = String(repeating: "k", count: 43)) throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ma-cli-" + UUID().uuidString, isDirectory: true)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    if let token { try Data(token.utf8).write(to: url.appendingPathComponent("token")) }
-    return url
-}
+/// ソケットのパスは 103 バイトまで。一時ディレクトリの深い場所は使えないので、短い場所に作る。
+private func shortSocketPath() -> String { "/tmp/ma-" + UUID().uuidString.prefix(8).lowercased() + ".sock" }
 
 private func errorCode(_ line: String?) -> String? {
     guard let line, let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
@@ -99,76 +101,83 @@ struct CLIRunnerTests {
         TranscriptionUpdate(text: "来週のリリースの件です", isFinal: true, start: 0, end: 2.5),
     ]
 
-    private func runner(out: Output, err: Output, environment: [String: String] = [:], updates: @escaping CLIRunner.UpdatesProvider, sender: RecordingSender) -> CLIRunner {
-        CLIRunner(environment: environment, out: { out.add($0) }, err: { err.add($0) }, updates: updates, makeSender: { _ in sender })
+    private func runner(out: Output, err: Output, environment: [String: String] = [:], updates: @escaping CLIRunner.UpdatesProvider) -> CLIRunner {
+        CLIRunner(environment: environment, out: { out.add($0) }, err: { err.add($0) }, updates: updates)
     }
 
-    @Test("replay は、バッチを送り、最後に終了の合図を送り、結果を 1 行の JSON で出す")
-    func replaySuccess() async throws {
-        let out = Output(), err = Output(), sender = RecordingSender()
+    @Test("replay は、窓口を開けて、開始・バッチ・終了の出来事を、つながった受け手へ出し、結果を 1 行の JSON で出す")
+    func replayDeliversThroughHub() async throws {
+        let out = Output(), err = Output()
         let data = FileManager.default.temporaryDirectory.appendingPathComponent("ma-data-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: data) }
-        let options = ReplayOptions(file: try audioFile().path, bridge: "http://127.0.0.1:43821", speaker: .others, meetingId: "定例", locale: "ja_JP", tokenDirectory: try tokenDirectory().path)
-        let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_DATA_DIR": data.path], updates: fakeUpdates(sample), sender: sender).run(.replay(options))
+        let socket = shortSocketPath()
+        let environment = ["MEETING_ANALYZER_DATA_DIR": data.path, "MEETING_ANALYZER_SOCKET": socket]
+        let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "定例", locale: "ja_JP", hold: 3, wait: 0)
+        let run = Task { await runner(out: out, err: err, environment: environment, updates: fakeUpdates(sample)).run(.replay(options)) }
+
+        // 窓口が開いている間に、受け手としてつながる（実際の `meeting-analyzer mcp` と同じ部品）。
+        var kinds: [String] = []
+        var ended: HubEnvelope?
+        let deadline = Date().addingTimeInterval(8)
+        loop: for await event in HubClient(socketPath: socket, retryInterval: 0.05).events() {
+            guard case .message(.event(let envelope)) = event else { if Date() > deadline { break loop }; continue }
+            kinds.append(envelope.event.kind)
+            if envelope.event.kind == "ended" { ended = envelope; break loop }
+            if Date() > deadline { break loop }
+        }
+        let code = await run.value
 
         #expect(code == 0, "\(err.lines)")
-        #expect(sender.events.last == "end")
-        #expect(sender.batches.flatMap(\.updates).last?.transcript == "来週のリリースの件です")
+        #expect(kinds.first == "started" && kinds.last == "ended" && kinds.dropFirst().dropLast().allSatisfy { $0 == "captions" } && kinds.count >= 3)
+        let info = try #require(ended.flatMap { EndedInfo($0.event) })
+        #expect(info.utterances == 1)
+        #expect(info.durationSeconds == 3, "再生の長さは、音声の長さ（2.5 秒）。処理時間ではない")
         let last = try #require(out.lines.last)
         let summary = try #require(JSONSerialization.jsonObject(with: Data(last.utf8)) as? [String: Any])
-        #expect(summary["ok"] as? Bool == true)
-        #expect(summary["utterances"] as? Int == 1)
-        #expect(summary["durationSeconds"] as? Int == 3, "再生の長さは、音声の長さ（2.5 秒）。処理時間ではない")
+        #expect(summary["ok"] as? Bool == true && summary["utterances"] as? Int == 1)
         let path = try #require(summary["transcriptPath"] as? String)
         #expect(path.hasPrefix(data.path))
+        #expect(!FileManager.default.fileExists(atPath: socket), "終わったら、窓口は閉じる")
     }
 
-    @Test("トークンが読めない・送り先が不正・ブリッジが落ちている、は、ブリッジの失敗（終了コード 3）で、何も送らない")
-    func bridgeFailures() async throws {
-        let file = try audioFile().path
-        let cases: [(ReplayOptions, String)] = [
-            (ReplayOptions(file: file, bridge: "http://127.0.0.1:1", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory(nil).path), "token_missing"),
-            (ReplayOptions(file: file, bridge: "https://example.com", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory().path), "endpoint_invalid"),
-            (ReplayOptions(file: file, bridge: "http://127.0.0.1:1", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory("short").path), "token_invalid"),
-        ]
-        for (options, expected) in cases {
-            let out = Output(), err = Output(), sender = RecordingSender()
-            let code = await runner(out: out, err: err, updates: fakeUpdates(sample), sender: sender).run(.replay(options))
-            #expect(code == 3, "\(expected)")
-            #expect(sender.events.isEmpty)
-            #expect(errorCode(err.lines.last) == expected)
-        }
-        for (error, expected) in [(BridgeError.unreachable, "bridge_unreachable"), (.unauthorized, "bridge_unauthorized"), (.notReady, "bridge_not_ready")] {
-            let out = Output(), err = Output(), sender = RecordingSender()
-            sender.healthError = error
-            let options = ReplayOptions(file: file, bridge: "http://127.0.0.1:1", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory().path)
-            #expect(await runner(out: out, err: err, updates: fakeUpdates(sample), sender: sender).run(.replay(options)) == 3)
-            #expect(errorCode(err.lines.last) == expected)
-            #expect(sender.events.isEmpty, "文字起こしを始める前に、確認で止まる")
-        }
+    @Test("窓口が使用中（実行中のアプリがある）なら、終了コード 3 で、何も始めない")
+    func hubBusy() async throws {
+        let socket = shortSocketPath()
+        let other = HubServer(socketPath: socket)
+        try other.start()
+        defer { other.stop() }
+        let out = Output(), err = Output()
+        let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
+        let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_SOCKET": socket], updates: fakeUpdates(sample)).run(.replay(options))
+        #expect(code == 3)
+        #expect(errorCode(err.lines.last) == "hub_unavailable")
+        #expect(out.lines.isEmpty)
     }
 
     @Test("読めない音声ファイルは、入力の失敗（終了コード 2）")
     func unreadableAudio() async throws {
         let out = Output(), err = Output()
-        let options = ReplayOptions(file: "/nonexistent/x.aiff", bridge: "http://127.0.0.1:1", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory().path)
-        #expect(await runner(out: out, err: err, updates: fakeUpdates([]), sender: RecordingSender()).run(.replay(options)) == 2)
-        #expect(await runner(out: out, err: err, updates: fakeUpdates([]), sender: RecordingSender()).run(.transcribe(file: "/nonexistent/x.aiff", locale: "ja_JP")) == 2)
+        let options = ReplayOptions(file: "/nonexistent/x.aiff", speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
+        #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.replay(options)) == 2)
+        #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.transcribe(file: "/nonexistent/x.aiff", locale: "ja_JP")) == 2)
     }
 
-    @Test("文字起こしの失敗は、終了コード 4。途中までの内容に終了の合図を付けて送らない")
+    @Test("文字起こしの失敗は、終了コード 4。記録を書かず、終了の出来事も出さない")
     func transcriptionFailure() async throws {
-        let out = Output(), err = Output(), sender = RecordingSender()
-        let options = ReplayOptions(file: try audioFile().path, bridge: "http://127.0.0.1:1", speaker: .others, meetingId: "m", locale: "ja_JP", tokenDirectory: try tokenDirectory().path)
-        let code = await runner(out: out, err: err, updates: fakeUpdates(sample, failure: .unsupportedLocale("xx_XX")), sender: sender).run(.replay(options))
+        let out = Output(), err = Output()
+        let data = FileManager.default.temporaryDirectory.appendingPathComponent("ma-data-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: data) }
+        let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
+        let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_DATA_DIR": data.path, "MEETING_ANALYZER_SOCKET": shortSocketPath()], updates: fakeUpdates(sample, failure: .unsupportedLocale("xx_XX"))).run(.replay(options))
         #expect(code == 4)
-        #expect(!sender.events.contains("end"), "失敗した再生を、正常な会議の終了として知らせない")
+        #expect(out.lines.isEmpty, "失敗した再生を、正常な終了として知らせない")
+        #expect(!FileManager.default.fileExists(atPath: data.appendingPathComponent("sessions").path))
     }
 
     @Test("transcribe は、確定した結果だけを 1 行ずつ出す")
     func transcribeOutputsFinals() async throws {
         let out = Output(), err = Output()
-        let code = await runner(out: out, err: err, updates: fakeUpdates(sample), sender: RecordingSender()).run(.transcribe(file: try audioFile().path, locale: "ja_JP"))
+        let code = await runner(out: out, err: err, updates: fakeUpdates(sample)).run(.transcribe(file: try audioFile().path, locale: "ja_JP"))
         #expect(code == 0)
         #expect(out.lines.count == 1)
         let line = try #require(JSONSerialization.jsonObject(with: Data(out.lines[0].utf8)) as? [String: Any])
@@ -179,7 +188,7 @@ struct CLIRunnerTests {
     @Test("help と version は、そのまま出す")
     func helpAndVersion() async {
         let out = Output(), err = Output()
-        let r = runner(out: out, err: err, updates: fakeUpdates([]), sender: RecordingSender())
+        let r = runner(out: out, err: err, updates: fakeUpdates([]))
         #expect(await r.run(.version) == 0)
         #expect(out.lines.last == "meeting-analyzer \(AppInfo.version)")
         #expect(await r.run(.help) == 0)

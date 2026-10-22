@@ -6,18 +6,18 @@ public enum AppInfo {
     public static let name = "meeting-analyzer"
 }
 
-/// CLI の失敗。終了コードは SPEC §3.9：1 = 使い方、2 = 入力、3 = ブリッジ、4 = 文字起こし。
+/// CLI の失敗。終了コードは SPEC §3.9：1 = 使い方、2 = 入力、3 = 窓口（ハブ）、4 = 文字起こし。
 public enum CLIError: Error, Equatable {
     case usage(String)
     case input(String)
-    case bridge(code: String, message: String)
+    case hub(code: String, message: String)
     case transcription(String)
 
     public var exitCode: Int32 {
         switch self {
         case .usage: return 1
         case .input: return 2
-        case .bridge: return 3
+        case .hub: return 3
         case .transcription: return 4
         }
     }
@@ -26,7 +26,7 @@ public enum CLIError: Error, Equatable {
         switch self {
         case .usage: return "usage"
         case .input: return "input"
-        case .bridge(let code, _): return code
+        case .hub(let code, _): return code
         case .transcription: return "transcription"
         }
     }
@@ -34,19 +34,20 @@ public enum CLIError: Error, Equatable {
     public var message: String {
         switch self {
         case .usage(let text), .input(let text), .transcription(let text): return text
-        case .bridge(_, let text): return text
+        case .hub(_, let text): return text
         }
     }
 }
 
 public struct ReplayOptions: Equatable {
     public var file: String
-    public var bridge: String
     public var speaker: Speaker
-    public var meetingId: String
+    public var title: String
     public var locale: String
-    /// トークンのあるディレクトリ。指定が無ければ live-support の既定。
-    public var tokenDirectory: String?
+    /// 再生が終わってから、窓口を開けておく秒数（エージェントが読めるように）。
+    public var hold: Double
+    /// 再生を始める前に、エージェントがつながるのを待つ秒数の上限（つながったら、すぐ始める）。
+    public var wait: Double
 }
 
 public enum Command: Equatable {
@@ -56,6 +57,8 @@ public enum Command: Equatable {
     case doctor(locale: String)
     case transcribe(file: String, locale: String)
     case replay(ReplayOptions)
+    /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
+    case mcp(channel: Bool)
 }
 
 public enum CommandParser {
@@ -73,16 +76,26 @@ public enum CommandParser {
         case "transcribe":
             return options(rest, allowed: ["--locale"], positional: 1).map { .transcribe(file: $0.positional[0], locale: $0.values["--locale"] ?? defaultLocale) }
         case "replay":
-            return options(rest, allowed: ["--bridge", "--speaker", "--meeting", "--locale", "--token-dir"], positional: 1).flatMap { parsed in
-                guard let bridge = parsed.values["--bridge"] else { return .failure(.usage("--bridge <url> が必要です")) }
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
+                var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
+                for name in ["--hold", "--wait"] {
+                    if let text = parsed.values[name] {
+                        guard let value = Double(text), value >= 0, value <= 3600 else { return .failure(.usage("\(name) は 0〜3600 の秒数です")) }
+                        seconds[name] = value
+                    }
+                }
                 return .success(.replay(ReplayOptions(
-                    file: parsed.positional[0], bridge: bridge, speaker: speaker,
-                    meetingId: parsed.values["--meeting"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, tokenDirectory: parsed.values["--token-dir"]
+                    file: parsed.positional[0], speaker: speaker,
+                    title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0
                 )))
             }
+        case "mcp":
+            if rest.isEmpty { return .success(.mcp(channel: false)) }
+            if rest == ["--channel"] { return .success(.mcp(channel: true)) }
+            return .failure(.usage("mcp に渡せるのは --channel だけです"))
         default:
             return .failure(.usage("知らないコマンドです: \(first)。meeting-analyzer --help を見てください"))
         }
@@ -117,18 +130,20 @@ public enum CommandParser {
 }
 
 public let helpText = """
-meeting-analyzer — 会議の音声と画面を分析して、コーディングエージェントへ渡します
+meeting-analyzer — Mac の音声（マイク・システム音声）を文字にして、コーディングエージェントへ渡します
 
 使い方
   meeting-analyzer                         メニューバーのアプリを起動する
+  meeting-analyzer mcp [--channel]         エージェント向けの MCP サーバー（標準入出力）。実行中のアプリから、文字起こしを受けて渡す。
+                                           --channel で、Claude Code の Channels の通知（push）も出す
   meeting-analyzer doctor [--locale L]     この Mac で、その言語のオンデバイス認識が使えるか調べる（既定 ja_JP）
   meeting-analyzer transcribe <音声ファイル> [--locale L]
                                            文字起こしの結果を、1 行 1 件の JSON で標準出力へ出す
-  meeting-analyzer replay <音声ファイル> --bridge <URL> [--speaker you|others] [--meeting <名前>]
-                          [--locale L] [--token-dir <ディレクトリ>]
-                                           音声ファイルを、会議として再生して、ブリッジへ送る。最後に終了の合図を送る
+  meeting-analyzer replay <音声ファイル> [--speaker you|others] [--title <名前>] [--locale L] [--wait <秒>] [--hold <秒>]
+                                           音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。
+                                           --wait：エージェントがつながるのを、再生の前に待つ（上限）／--hold：再生のあと、窓口を開けておく
   meeting-analyzer --version | --help
 
-終了コード  0 成功 / 1 使い方 / 2 入力 / 3 ブリッジ / 4 文字起こし
-ブリッジ    http://127.0.0.1:<ポート> だけ。トークンは <token-dir>/token（既定 ~/.live-support/token）から読む
+終了コード  0 成功 / 1 使い方 / 2 入力 / 3 窓口（ハブ） / 4 文字起こし
+窓口        <データの置き場所>/hub.sock（Unix ドメインソケット。MEETING_ANALYZER_SOCKET で変更）
 """

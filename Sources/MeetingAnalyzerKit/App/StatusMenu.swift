@@ -41,6 +41,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         menu.addItem(label("\(AppInfo.name) \(AppInfo.version)"))
         menu.addItem(label("状態: " + stateText()))
+        menu.addItem(label(agentText()))
         if let notice = controller.notice { menu.addItem(label(notice)) }
         menu.addItem(.separator())
 
@@ -62,6 +63,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    /// 文字起こしを受け取っているエージェント（`meeting-analyzer mcp`）の数。
+    private func agentText() -> String {
+        controller.agentCount == 0 ? "エージェント: 未接続" : "エージェント: \(controller.agentCount) 件接続中"
     }
 
     private func stateText() -> String {

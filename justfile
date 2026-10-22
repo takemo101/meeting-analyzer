@@ -16,7 +16,7 @@ build:
 run: build
     open "{{app}}"
 
-# ビルドして、実行ファイルを CLI として呼ぶ（例: just cli doctor / just cli replay sample.aiff --bridge http://127.0.0.1:43821）
+# ビルドして、実行ファイルを CLI として呼ぶ（例: just cli doctor / just cli replay sample.aiff --hold 60）
 cli *args: build
     "{{exe}}" "$@"
 
@@ -24,6 +24,6 @@ cli *args: build
 test:
     ./scripts/test.sh
 
-# 実機の native E2E（CLI・本物の音声と認識・偽のブリッジ・メニューバーのアプリの起動と終了）。手順は docs/verification.md
+# 実機の native E2E（CLI・本物の音声と認識・窓口と MCP・メニューバーのアプリの起動と終了）。手順は docs/verification.md
 e2e: build
     ./scripts/e2e.sh

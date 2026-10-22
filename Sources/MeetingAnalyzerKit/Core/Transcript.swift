@@ -1,6 +1,6 @@
 import Foundation
 
-/// 会議全体の記録。発話を upsert で溜め、終了時に、エージェントが読む Markdown にする（SPEC §3.8）。
+/// セッション全体の記録。発話を upsert で溜め、終了時に、エージェントが読む Markdown にする（SPEC §3.8）。
 public struct Transcript: Sendable, Equatable {
     private var byKey: [String: Utterance] = [:]
 
@@ -30,12 +30,12 @@ public struct Transcript: Sendable, Equatable {
     }
 
     /// エージェントが読む本文。文字起こしは認識の誤りを含み得るので、先頭にそう書く。
-    public func markdown(meetingId: String, startedAt: Date, endedAt: Date) -> String {
+    public func markdown(title: String, startedAt: Date, endedAt: Date) -> String {
         let iso = ISO8601DateFormatter()
         var lines = [
-            "# 会議の文字起こし",
+            "# 文字起こし",
             "",
-            "- 会議: \(meetingId)",
+            "- 名前: \(title)",
             "- 開始: \(iso.string(from: startedAt))",
             "- 終了: \(iso.string(from: endedAt))",
             "- 長さ: \(Transcript.clock(endedAt.timeIntervalSince(startedAt)))",

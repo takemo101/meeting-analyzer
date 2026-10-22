@@ -5,7 +5,8 @@
 // 終了コード: 1 = fail あり、77 = blocked あり（fail がなければ）、0 = 全 pass
 //
 // 観測するもの: 実行ファイルの CLI（終了コード・標準出力・標準エラー）、本物の音声（`say` で作った日本語）を本物のオンデバイス認識に通した結果、
-// 偽のブリッジ（scripts/e2e-bridge.mjs）が受け取った HTTP 要求、書き出された記録ファイル、メニューバーのアプリの起動と終了。
+// エージェント側の窓口（`meeting-analyzer mcp`。MCP の JSON-RPC を、このハーネスが話す）が受け取る出来事、書き出された記録ファイル、
+// メニューバーのアプリの起動・窓口（Unix ドメインソケット）・終了。
 // 観測しないもの: マイク・システム音声の実取り込み、画面の取り込み、権限の許可。これらは人間の確認（docs/verification.md）。
 import AppKit
 import Foundation
@@ -64,11 +65,13 @@ func lastLine(_ text: String) -> String { text.split(separator: "\n").last.map(S
 let stamp = { () -> String in let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"; return f.string(from: Date()) }()
 let work = artifactsRoot + "/run-" + stamp
 try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-let dataDir = work + "/data", tokenDir = work + "/token"
-for dir in [dataDir, tokenDir] { try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
-let token = (0..<43).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }.map(String.init).joined()
-try Data(token.utf8).write(to: URL(fileURLWithPath: tokenDir + "/token"))
-let env = ["MEETING_ANALYZER_DATA_DIR": dataDir, "LIVE_SUPPORT_RUNTIME_DIR": tokenDir]
+let dataDir = work + "/data"
+try FileManager.default.createDirectory(atPath: dataDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+/// ソケットのパスは 103 バイトまで。作業ディレクトリは深いので、短い場所に作る（0700 のディレクトリの中）。
+let socketDir = "/tmp/ma-e2e-" + String((0..<8).map { _ in "abcdef0123456789".randomElement()! })
+try FileManager.default.createDirectory(atPath: socketDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+let socketPath = socketDir + "/hub.sock"
+let env = ["MEETING_ANALYZER_DATA_DIR": dataDir, "MEETING_ANALYZER_SOCKET": socketPath]
 print("meeting-analyzer native E2E  executable=\(exe)  artifacts=\(work)")
 
 guard FileManager.default.isExecutableFile(atPath: exe) else { record("E0", .blocked, "実行ファイルが見つからない: \(exe)（先に just build）"); exit(77) }
@@ -87,7 +90,7 @@ do {
     conclude("Z2", pass: "知らないコマンドは、使い方の誤り（終了コード 1）を、標準エラーの JSON で返す")
 }
 do {
-    let r = run(exe, ["replay", "/nonexistent/x.aiff", "--bridge", "http://127.0.0.1:1"], env: env, timeout: 10)
+    let r = run(exe, ["replay", "/nonexistent/x.aiff"], env: env, timeout: 10)
     check(r.status == 2, "終了コード \(r.status)（読めない音声は 2）")
     conclude("Z3", pass: "読めない音声ファイルは、入力の失敗（終了コード 2）")
 }
@@ -113,120 +116,235 @@ if asrReady {
     if !sampleReady { record("D2", .blocked, "日本語の声（Kyoko）で音声を作れない: \(r.err)") } else { record("D2", .pass, "検証用の日本語音声を作った（\(phrase)）") }
 }
 
-// ---------- 偽のブリッジ ----------
-final class Bridge {
+// ---------- 子プロセス（待たずに起動する）と、MCP のクライアント ----------
+final class Child {
     let process = Process()
-    let log: String
-    var port = 0
-    init?(token: String, log: String, mode: String = "ok", script: String) {
-        self.log = log
-        FileManager.default.createFile(atPath: log, contents: nil)
-        guard let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
-                ?? Bridge.which("node") else { return nil }
-        process.executableURL = URL(fileURLWithPath: node)
-        process.arguments = [script, "--token", token, "--log", log, "--mode", mode]
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let deadline = Date().addingTimeInterval(10)
-        var buffer = Data()
-        while Date() < deadline {
-            let chunk = out.fileHandleForReading.availableData
-            buffer.append(chunk)
-            if let line = String(data: buffer, encoding: .utf8)?.split(separator: "\n").first(where: { $0.hasPrefix("PORT ") }), let p = Int(line.dropFirst(5)) { port = p; break }
-            if chunk.isEmpty { Thread.sleep(forTimeInterval: 0.05) }
+    private let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
+    private let lock = NSLock()
+    private var lines: [String] = []
+    private var errText = ""
+    private var buffer = Data()
+
+    init?(_ path: String, _ args: [String], env: [String: String]) {
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+        stdout.fileHandleForReading.readabilityHandler = { [self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            lock.lock(); buffer.append(data)
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                lines.append(String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self))
+                buffer.removeSubrange(buffer.startIndex...newline)
+            }
+            lock.unlock()
         }
-        if port == 0 { stop(); return nil }
+        stderr.fileHandleForReading.readabilityHandler = { [self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            lock.lock(); errText += String(decoding: data, as: UTF8.self); lock.unlock()
+        }
+        do { try process.run() } catch { return nil }
     }
-    static func which(_ name: String) -> String? {
-        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/which"); p.arguments = [name]
-        let o = Pipe(); p.standardOutput = o; p.standardError = FileHandle.nullDevice
-        try? p.run(); p.waitUntilExit()
-        let s = String(decoding: o.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return s.isEmpty ? nil : s
+
+    func send(_ object: [String: Any]) {
+        guard var data = try? JSONSerialization.data(withJSONObject: object) else { return }
+        data.append(0x0A)
+        try? stdin.fileHandleForWriting.write(contentsOf: data)
     }
-    var url: String { "http://127.0.0.1:\(port)" }
-    func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
-    func requests() -> [[String: Any]] {
-        (try? String(contentsOfFile: log, encoding: .utf8))?.split(separator: "\n").compactMap { json(String($0)) } ?? []
+
+    func closeInput() { try? stdin.fileHandleForWriting.close() }
+
+    /// 受け取った行（JSON）をすべて。
+    var messages: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return lines.compactMap { json($0) } }
+    var outLines: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+    var errors: String { lock.lock(); defer { lock.unlock() }; return errText }
+
+    func waitForMessage(timeout: Double, _ match: ([String: Any]) -> Bool) -> [String: Any]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let hit = messages.first(where: match) { return hit }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return nil
+    }
+
+    func waitForExit(timeout: Double) -> Int32? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        return process.isRunning ? nil : process.terminationStatus
+    }
+
+    func stop() {
+        closeInput()
+        if process.isRunning { process.terminate(); Thread.sleep(forTimeInterval: 0.3); if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
+        process.waitUntilExit()
     }
 }
-let scriptPath = FileManager.default.currentDirectoryPath + "/scripts/e2e-bridge.mjs"
 
-// ---------- R: 音声ファイル → 文字起こし → バッチ → 終了の合図 ----------
-func replayCase(_ id: String, speaker: String, expectedName: String) {
+/// `meeting-analyzer mcp` へ、MCP のハンドシェイクと get_events を話す。
+final class McpClient {
+    let child: Child
+    private var nextId = 1
+    init?(_ exe: String, channel: Bool = false, env: [String: String]) {
+        guard let child = Child(exe, channel ? ["mcp", "--channel"] : ["mcp"], env: env) else { return nil }
+        self.child = child
+    }
+
+    func request(_ method: String, _ params: [String: Any] = [:], timeout: Double = 10) -> [String: Any]? {
+        let id = nextId; nextId += 1
+        child.send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+        return child.waitForMessage(timeout: timeout) { $0["id"] as? Int == id }
+    }
+
+    func initialize() -> [String: Any]? {
+        let reply = request("initialize", ["protocolVersion": "2025-06-18", "capabilities": [String: Any](), "clientInfo": ["name": "native-e2e", "version": "1"]])
+        child.send(["jsonrpc": "2.0", "method": "notifications/initialized"])
+        return reply
+    }
+
+    /// get_events の結果（`connected`・`cursor`・`events`）。
+    func getEvents(after: Int? = nil) -> [String: Any]? {
+        var arguments: [String: Any] = [:]
+        if let after { arguments["after"] = after }
+        guard let reply = request("tools/call", ["name": "get_events", "arguments": arguments]),
+              let text = ((reply["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String else { return nil }
+        return json(text)
+    }
+
+    func stop() { child.stop() }
+}
+
+/// ソケットの権限（ファイル）。
+func mode(_ path: String) -> Int { ((try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions]) as? Int) ?? -1 }
+
+/// 窓口（ハブ）から、終了の出来事まで、get_events で読み集める。
+func collectEvents(_ mcp: McpClient, timeout: Double) -> [[String: Any]] {
+    var after = 0
+    var all: [[String: Any]] = []
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if let result = mcp.getEvents(after: after), let events = result["events"] as? [[String: Any]] {
+            all += events
+            after = result["cursor"] as? Int ?? after
+            if events.contains(where: { ($0["event"] as? [String: Any])?["kind"] as? String == "ended" }) { return all }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+    }
+    return all
+}
+
+// ---------- R: 音声ファイル → 文字起こし → 窓口 → エージェント側の MCP ----------
+func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bool = false) {
     guard asrReady, sampleReady else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason); return }
-    guard let bridge = Bridge(token: token, log: work + "/\(id)-bridge.jsonl", script: scriptPath) else { record(id, .blocked, "偽のブリッジ（node scripts/e2e-bridge.mjs）を起動できない"); return }
-    defer { bridge.stop() }
-    let r = run(exe, ["replay", sample, "--bridge", bridge.url, "--speaker", speaker, "--meeting", "e2e-\(id)", "--token-dir", tokenDir], env: env, timeout: 120)
-    check(!r.timedOut, "タイムアウト")
-    check(r.status == 0, "終了コード \(r.status): \(r.err)")
-    let log = bridge.requests()
-    check(log.first?["method"] as? String == "GET" && log.first?["path"] as? String == "/health", "最初の要求が /health でない")
-    check(log.allSatisfy { $0["authorized"] as? Bool == true }, "認証されていない要求がある")
-    check(log.allSatisfy { $0["host"] as? String == "127.0.0.1:\(bridge.port)" }, "Host が想定と違う")
-    let captions = log.filter { $0["path"] as? String == "/captions" }
-    let ends = log.filter { $0["path"] as? String == "/end" }
-    check(!captions.isEmpty, "/captions が 1 件もない")
-    check(ends.count == 1, "/end が \(ends.count) 件（1 件であるべき）")
-    check(log.last?["path"] as? String == "/end", "終了の合図が最後でない")
-    check(log.allSatisfy { ($0["status"] as? Int ?? 0) / 100 == 2 }, "2xx でない応答がある")
+    // エージェント側（mcp）を先に起動する。窓口が開くまでは、つなぎ直しながら待つ。
+    guard let mcp = McpClient(exe, channel: channel, env: env) else { record(id, .blocked, "mcp を起動できない"); return }
+    defer { mcp.stop() }
+    let handshake = mcp.initialize()
+    check(handshake != nil, "initialize に返事がない")
+    let result = handshake?["result"] as? [String: Any]
+    let capabilities = result?["capabilities"] as? [String: Any]
+    check(capabilities?["tools"] != nil, "tools を宣言していない")
+    check((capabilities?["experimental"] != nil) == channel, "チャンネルの宣言が想定と違う（--channel=\(channel)）")
+    check((result?["instructions"] as? String)?.contains("untrusted") == true, "instructions に、非信頼の注意がない")
 
-    let batches = captions.compactMap { json($0["body"] as? String ?? "") }
+    // 再生：窓口を開き、エージェントがつながるのを待ってから、再生を始める。終わっても、窓口を少しの間、開けておく。
+    guard let replay = Child(exe, ["replay", sample, "--speaker", speaker, "--title", "e2e-\(id)", "--wait", "30", "--hold", "6"], env: env) else {
+        record(id, .blocked, "replay を起動できない"); return
+    }
+    defer { replay.stop() }
+    var pushed: [[String: Any]] = []
+    let events: [[String: Any]]
+    if channel {
+        // 押し込みの通知が、終了の出来事まで届くのを待つ。
+        let ended = mcp.child.waitForMessage(timeout: 90) { (($0["params"] as? [String: Any])?["meta"] as? [String: Any])?["kind"] as? String == "ended" }
+        check(ended != nil, "終了の出来事が、押し込みで届かない")
+        pushed = mcp.child.messages.filter { $0["method"] as? String == "notifications/claude/channel" }
+        events = collectEvents(mcp, timeout: 10)
+    } else {
+        events = collectEvents(mcp, timeout: 90)
+    }
+    let code = replay.waitForExit(timeout: 30)
+    check(code == 0, "replay の終了コード \(String(describing: code)): \(replay.errors)")
+    check(mode(socketPath) == 0o600 || !FileManager.default.fileExists(atPath: socketPath), "ソケットの権限が 0600 でない")
+
+    let bodies = events.compactMap { $0["event"] as? [String: Any] }
+    let kinds = bodies.compactMap { $0["kind"] as? String }
+    check(kinds.first == "started", "最初が started でない: \(kinds)")
+    check(kinds.last == "ended", "最後が ended でない: \(kinds)")
+    check(kinds.filter { $0 == "ended" }.count == 1, "ended が 1 件でない")
+    check(kinds.contains("captions"), "captions が 1 件もない")
+    check(events.compactMap { $0["id"] as? Int } == Array(1...max(1, events.count)).prefix(events.count).map { $0 }, "通し番号が 1 から連続していない")
+    check(Set(bodies.compactMap { $0["sessionId"] as? String }).count == 1, "sessionId が 1 つでない")
+    let batches = bodies.filter { $0["kind"] as? String == "captions" }
     check(batches.map { $0["sequence"] as? Int ?? -1 } == Array(1...max(1, batches.count)).prefix(batches.count).map { $0 }, "sequence が 1 から連続していない")
-    let sessionIds = Set(batches.compactMap { $0["sessionId"] as? String } + ends.compactMap { json($0["body"] as? String ?? "")?["sessionId"] as? String })
-    check(sessionIds.count == 1, "sessionId が 1 つでない: \(sessionIds)")
-    check(batches.allSatisfy { $0["platform"] as? String == "Mac" && $0["meetingId"] as? String == "e2e-\(id)" }, "platform / meetingId が違う")
     let updates = batches.flatMap { ($0["updates"] as? [[String: Any]]) ?? [] }
-    let latest = Dictionary(updates.map { ($0["messageId"] as? String ?? "", $0["transcript"] as? String ?? "") }, uniquingKeysWith: { $1 }).values.joined()
-    check(updates.allSatisfy { $0["speakerName"] as? String == expectedName }, "speakerName が \(expectedName) でない")
+    let latest = Dictionary(updates.map { ($0["id"] as? String ?? "", $0["text"] as? String ?? "") }, uniquingKeysWith: { $1 }).values.joined()
+    check(updates.allSatisfy { $0["speaker"] as? String == expectedName }, "speaker が \(expectedName) でない")
+    check(updates.allSatisfy { $0["source"] as? String == speaker }, "source が \(speaker) でない")
     check(latest.contains("リリース"), "認識結果に「リリース」がない: \(latest)")
     check(latest.contains("テスト環境"), "認識結果に「テスト環境」がない: \(latest)")
+    check((bodies.first?["sources"] as? [String]) == [speaker], "started の sources が想定と違う")
 
-    if let end = ends.first.flatMap({ json($0["body"] as? String ?? "") }) {
+    if let end = bodies.last(where: { $0["kind"] as? String == "ended" }) {
         check(end["reason"] as? String == "user", "reason が user でない")
-        check(end["batches"] as? Int == batches.count, "batches \(String(describing: end["batches"])) が送った数 \(batches.count) と違う")
+        check(end["batches"] as? Int == batches.count, "batches \(String(describing: end["batches"])) が出した数 \(batches.count) と違う")
         check((end["utterances"] as? Int ?? 0) >= 1, "utterances が 0")
         check((end["durationSeconds"] as? Int ?? 0) >= 1, "durationSeconds が 0")
         if let path = end["transcriptPath"] as? String {
             check(path.hasPrefix(dataDir), "記録が dataDir の外: \(path)")
             let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
             check(text.contains("\(expectedName):") && text.contains("リリース"), "記録の本文が想定と違う")
-            let mode = (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) ?? -1
-            check(mode == 0o600, "記録の権限が 0600 でない: \(String(describing: mode))")
+            check(mode(path) == 0o600, "記録の権限が 0600 でない: \(mode(path))")
+            check(mode(URL(fileURLWithPath: path).deletingLastPathComponent().path) == 0o700, "記録のディレクトリが 0700 でない")
         } else { check(false, "transcriptPath がない") }
     }
-    conclude(id, pass: "\(batches.count) バッチと終了の合図が、認証つきでブリッジへ届き、記録が 0600 で書かれた（認識: \(latest)）")
+
+    if channel {
+        // 押し込み：started・captions・ended が、順に届く。接続の前にあった出来事は含まない（ここでは、接続が先）。
+        let pushedKinds = pushed.compactMap { (($0["params"] as? [String: Any])?["meta"] as? [String: Any])?["kind"] as? String }
+        check(pushedKinds.first == "started" && pushedKinds.last == "ended", "押し込みの順序が違う: \(pushedKinds)")
+        check(pushedKinds.filter { $0 == "captions" }.count == batches.count, "押し込みの captions の数が違う: \(pushedKinds)")
+        let content = (pushed.last?["params"] as? [String: Any])?["content"] as? String ?? ""
+        check(!content.contains("<") && !content.contains(">") && json(content)?["kind"] as? String == "ended", "押し込みの本文が想定と違う")
+    }
+    conclude(id, pass: "\(batches.count) バッチと、開始・終了の出来事が、窓口から MCP（\(channel ? "get_events と、チャンネルの押し込み" : "get_events")）へ届き、記録が 0600 で書かれた（認識: \(latest)）")
 }
 replayCase("R1", speaker: "others", expectedName: "相手")
 replayCase("R2", speaker: "you", expectedName: "あなた")
+replayCase("R3", speaker: "others", expectedName: "相手", channel: true)
 
-// ---------- R3 / R4: ブリッジの失敗 ----------
-do {
-    let id = "R3"
-    if let bridge = Bridge(token: "x" + token, log: work + "/R3-bridge.jsonl", script: scriptPath) {
-        defer { bridge.stop() }
-        let r = run(exe, ["replay", sample, "--bridge", bridge.url, "--token-dir", tokenDir], env: env, timeout: 30)
-        check(r.status == 3, "終了コード \(r.status)")
-        check(json(lastLine(r.err))?["code"] as? String == "bridge_unauthorized", "標準エラー: \(r.err)")
-        check(bridge.requests().allSatisfy { $0["path"] as? String == "/health" }, "認証に失敗したのに、/health 以外を送った")
-        conclude(id, pass: "トークンが違うと、文字起こしを始める前に、終了コード 3（bridge_unauthorized）で止まる")
-    } else { record(id, .blocked, "偽のブリッジを起動できない") }
-}
+// ---------- R4: 窓口が使用中 / R5: アプリが無いときの MCP ----------
 do {
     let id = "R4"
-    let r = run(exe, ["replay", sample, "--bridge", "http://127.0.0.1:9", "--token-dir", tokenDir], env: env, timeout: 30)
-    check(r.status == 3, "終了コード \(r.status)")
-    check(json(lastLine(r.err))?["code"] as? String == "bridge_unreachable", "標準エラー: \(r.err)")
-    conclude(id, pass: "ブリッジが無いと、終了コード 3（bridge_unreachable）")
+    if asrReady, sampleReady, let first = Child(exe, ["replay", sample, "--hold", "20"], env: env) {
+        defer { first.stop() }
+        let deadline = Date().addingTimeInterval(15)
+        while !FileManager.default.fileExists(atPath: socketPath) && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        let r = run(exe, ["replay", sample], env: env, timeout: 30)
+        check(r.status == 3, "終了コード \(r.status)")
+        check(json(lastLine(r.err))?["code"] as? String == "hub_unavailable", "標準エラー: \(r.err)")
+        conclude(id, pass: "窓口が使用中なら、終了コード 3（hub_unavailable）で、何も始めない")
+    } else { record(id, .blocked, "検証用の音声がない／replay を起動できない") }
 }
 do {
     let id = "R5"
-    let r = run(exe, ["replay", sample, "--bridge", "https://example.com", "--token-dir", tokenDir], env: env, timeout: 30)
-    check(r.status == 3, "終了コード \(r.status)")
-    check(json(lastLine(r.err))?["code"] as? String == "endpoint_invalid", "標準エラー: \(r.err)")
-    conclude(id, pass: "ローカル以外の送り先は、通信する前に断る（endpoint_invalid）")
+    try? FileManager.default.removeItem(atPath: socketPath)
+    if let mcp = McpClient(exe, env: env) {
+        defer { mcp.stop() }
+        check(mcp.initialize() != nil, "initialize に返事がない")
+        let tools = ((mcp.request("tools/list")?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+        check(tools == ["get_events"], "ツールが想定と違う: \(String(describing: tools))")
+        let result = mcp.getEvents()
+        check(result?["connected"] as? Bool == false, "アプリが無いのに connected が偽でない")
+        check((result?["events"] as? [Any])?.isEmpty == true, "出来事がある")
+        mcp.child.closeInput()
+        check(mcp.child.waitForExit(timeout: 5) == 0, "標準入力を閉じても、終了しない")
+        conclude(id, pass: "アプリが無くても、MCP は応答し（connected=false）、標準入力を閉じると終了する")
+    } else { record(id, .blocked, "mcp を起動できない") }
 }
 
 // ---------- A: メニューバーのアプリとして起動・終了 ----------
@@ -250,12 +368,23 @@ do {
         else { check(false, "NSRunningApplication を取得できない") }
         let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []).filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
         check(windows.isEmpty, "通常のウィンドウが \(windows.count) 個ある（メニューバーだけのはず）")
+        // 窓口：ソケットが 0600 で開き、エージェント側の MCP がつながる。
+        check(mode(socketPath) == 0o600, "ソケットの権限が 0600 でない: \(mode(socketPath))")
+        if let mcp = McpClient(exe, env: env) {
+            _ = mcp.initialize()
+            var connected = false
+            let until = Date().addingTimeInterval(8)
+            while !connected && Date() < until { connected = mcp.getEvents()?["connected"] as? Bool == true; if !connected { Thread.sleep(forTimeInterval: 0.3) } }
+            check(connected, "MCP が、実行中のアプリの窓口へつながらない")
+            mcp.stop()
+        } else { check(false, "mcp を起動できない") }
         process.terminate()
         let end = Date().addingTimeInterval(5)
         while process.isRunning && Date() < end { Thread.sleep(forTimeInterval: 0.05) }
         check(!process.isRunning, "SIGTERM で終了しない")
         if process.isRunning { kill(pid, SIGKILL) }
-        conclude(id, pass: "引数なしで起動すると、Dock にもウィンドウにも出ずに常駐し、SIGTERM で終了する")
+        check(!FileManager.default.fileExists(atPath: socketPath), "終了したのに、ソケットが残っている")
+        conclude(id, pass: "引数なしで起動すると、Dock にもウィンドウにも出ずに常駐し、窓口（0600）を開け、MCP がつながり、SIGTERM で終了して窓口を閉じる")
     } catch { record(id, .blocked, "起動できない: \(error)") }
 }
 
@@ -271,5 +400,6 @@ if let data = try? JSONSerialization.data(withJSONObject: report, options: [.pre
     try? data.write(to: URL(fileURLWithPath: path))
     try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
 }
+try? FileManager.default.removeItem(atPath: socketDir)
 print("今回の report: \(summary)  (\(work)/report.json)")
 exit((counts[.fail] ?? 0) > 0 ? 1 : ((counts[.blocked] ?? 0) > 0 ? 77 : 0))

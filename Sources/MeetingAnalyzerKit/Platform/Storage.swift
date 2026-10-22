@@ -1,39 +1,18 @@
 import Foundation
 
-/// ブリッジのトークンの置き場所。live-support のランタイムディレクトリ（既定 `~/.live-support`、`LIVE_SUPPORT_RUNTIME_DIR` で変更）。
+/// このアプリの置き場所。
 public enum RuntimePaths {
-    public static func liveSupportDirectory(environment: [String: String] = ProcessInfo.processInfo.environment, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        if let custom = environment["LIVE_SUPPORT_RUNTIME_DIR"], !custom.isEmpty { return URL(fileURLWithPath: custom, isDirectory: true) }
-        return home.appendingPathComponent(".live-support", isDirectory: true)
-    }
-
-    /// このアプリのデータ（会議の記録）の置き場所。`MEETING_ANALYZER_DATA_DIR` で変更できる（検証用）。
+    /// このアプリのデータ（記録）の置き場所。`MEETING_ANALYZER_DATA_DIR` で変更できる（検証用）。
     public static func dataDirectory(environment: [String: String] = ProcessInfo.processInfo.environment, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         if let custom = environment["MEETING_ANALYZER_DATA_DIR"], !custom.isEmpty { return URL(fileURLWithPath: custom, isDirectory: true) }
         return home.appendingPathComponent("Library/Application Support/MeetingAnalyzer", isDirectory: true)
     }
 
-    /// ブリッジの送り先。live-support の既定のポート（43821）。`LIVE_SUPPORT_PORT` で変更できる。値が不正なら既定に戻す。
-    public static func bridgeURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
-        var port: UInt16 = 43821
-        if let value = environment["LIVE_SUPPORT_PORT"].flatMap({ UInt16($0) }), value > 0 { port = value }
-        return "http://127.0.0.1:\(port)"
-    }
-}
-
-public enum TokenError: Error, Sendable, Equatable {
-    case missing
-    case unreadable
-}
-
-public enum TokenStore {
-    /// `<dir>/token` の中身（前後の空白を除く）。トークンはどこへも保存・表示しない。
-    public static func read(directory: URL) -> Result<String, TokenError> {
-        let file = directory.appendingPathComponent("token")
-        guard FileManager.default.fileExists(atPath: file.path) else { return .failure(.missing) }
-        guard let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) else { return .failure(.unreadable) }
-        let token = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return token.isEmpty ? .failure(.unreadable) : .success(token)
+    /// ハブ（エージェントへ渡す窓口）の Unix ドメインソケット。既定は `<データの置き場所>/hub.sock`。
+    /// `MEETING_ANALYZER_SOCKET` で変更できる（検証用。ソケットのパスは 103 バイトまで）。
+    public static func hubSocket(environment: [String: String] = ProcessInfo.processInfo.environment, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String {
+        if let custom = environment["MEETING_ANALYZER_SOCKET"], !custom.isEmpty { return custom }
+        return dataDirectory(environment: environment, home: home).appendingPathComponent("hub.sock").path
     }
 }
 

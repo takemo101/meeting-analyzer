@@ -8,27 +8,17 @@ private func makeDirectory() throws -> URL {
     return url
 }
 
-@Suite("RuntimePaths / TokenStore / SessionStore")
+@Suite("RuntimePaths / SessionStore")
 struct PlatformTests {
-    @Test("置き場所は、環境変数が優先で、なければ既定の場所")
+    @Test("置き場所は、環境変数が優先で、なければ既定の場所。ソケットは、データの置き場所の中が既定")
     func paths() {
         let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
-        #expect(RuntimePaths.liveSupportDirectory(environment: [:], home: home).path == "/Users/someone/.live-support")
-        #expect(RuntimePaths.liveSupportDirectory(environment: ["LIVE_SUPPORT_RUNTIME_DIR": "/tmp/rt"], home: home).path == "/tmp/rt")
-        #expect(RuntimePaths.liveSupportDirectory(environment: ["LIVE_SUPPORT_RUNTIME_DIR": ""], home: home).path == "/Users/someone/.live-support", "空は無視する")
         #expect(RuntimePaths.dataDirectory(environment: [:], home: home).path == "/Users/someone/Library/Application Support/MeetingAnalyzer")
         #expect(RuntimePaths.dataDirectory(environment: ["MEETING_ANALYZER_DATA_DIR": "/tmp/d"], home: home).path == "/tmp/d")
-    }
-
-    @Test("トークンは、前後の空白を除いて読む。無い・空は区別して断る")
-    func token() throws {
-        let directory = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        #expect(throws: TokenError.missing) { try TokenStore.read(directory: directory).get() }
-        try Data("  abc123\n".utf8).write(to: directory.appendingPathComponent("token"))
-        #expect(try TokenStore.read(directory: directory).get() == "abc123")
-        try Data("\n \n".utf8).write(to: directory.appendingPathComponent("token"))
-        #expect(throws: TokenError.unreadable) { try TokenStore.read(directory: directory).get() }
+        #expect(RuntimePaths.dataDirectory(environment: ["MEETING_ANALYZER_DATA_DIR": ""], home: home).path == "/Users/someone/Library/Application Support/MeetingAnalyzer", "空は無視する")
+        #expect(RuntimePaths.hubSocket(environment: [:], home: home) == "/Users/someone/Library/Application Support/MeetingAnalyzer/hub.sock")
+        #expect(RuntimePaths.hubSocket(environment: ["MEETING_ANALYZER_DATA_DIR": "/tmp/d"], home: home) == "/tmp/d/hub.sock")
+        #expect(RuntimePaths.hubSocket(environment: ["MEETING_ANALYZER_DATA_DIR": "/tmp/d", "MEETING_ANALYZER_SOCKET": "/tmp/s.sock"], home: home) == "/tmp/s.sock")
     }
 
     @Test("記録は、セッションごとのディレクトリに、利用者だけが読める権限で書く")

@@ -1,12 +1,11 @@
 import Foundation
 
-extension BridgeError {
+extension HubError {
     var cliError: CLIError {
         switch self {
-        case .unreachable: return .bridge(code: "bridge_unreachable", message: "ブリッジに接続できません。エージェント側（live-support claude など）が起動しているか確認してください")
-        case .unauthorized: return .bridge(code: "bridge_unauthorized", message: "トークンが合いません。エージェントを起動し直すと、トークンが更新されます")
-        case .notReady: return .bridge(code: "bridge_not_ready", message: "ブリッジが、まだ受け付けられる状態ではありません（エージェントのセッションが未接続）")
-        case .rejected(let status): return .bridge(code: "bridge_rejected", message: "ブリッジが内容を断りました（HTTP \(status)）")
+        case .alreadyRunning(let path): return .hub(code: "hub_unavailable", message: "エージェントへ渡す窓口が使用中です（実行中の meeting-analyzer がある）: \(path)")
+        case .pathTooLong(let path): return .hub(code: "hub_path_too_long", message: "窓口のパスが長すぎます（103 バイトまで）: \(path)")
+        case .failed(let reason): return .hub(code: "hub_unavailable", message: reason)
         }
     }
 }
@@ -21,29 +20,25 @@ extension TranscriptionError {
     }
 }
 
-/// CLI の実行。標準出力・標準エラーと、文字起こし・送信の部品を差し替えられる（検証とテスト用）。
+/// CLI の実行。標準出力・標準エラーと、文字起こしの部品を差し替えられる（検証とテスト用）。
 public struct CLIRunner {
     public typealias UpdatesProvider = @Sendable (URL, Locale) -> AsyncThrowingStream<TranscriptionUpdate, Error>
-    public typealias SenderFactory = @Sendable (BridgeEndpoint) -> any BridgeSending
 
     private let environment: [String: String]
     private let out: @Sendable (String) -> Void
     private let err: @Sendable (String) -> Void
     private let updates: UpdatesProvider
-    private let makeSender: SenderFactory
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         out: @escaping @Sendable (String) -> Void,
         err: @escaping @Sendable (String) -> Void,
-        updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) },
-        makeSender: @escaping SenderFactory = { BridgeClient(endpoint: $0) }
+        updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) }
     ) {
         self.environment = environment
         self.out = out
         self.err = err
         self.updates = updates
-        self.makeSender = makeSender
     }
 
     /// 終了コードを返す。失敗は、標準エラーに 1 行の JSON（`{"ok":false,"code":...,"message":...}`）で出す。
@@ -56,6 +51,7 @@ public struct CLIRunner {
             case .doctor(let locale): try await doctor(locale)
             case .transcribe(let file, let locale): try await transcribe(file, locale)
             case .replay(let options): try await replay(options)
+            case .mcp(let channel): await MCPRunner.run(mode: channel ? .channel : .tools, socketPath: RuntimePaths.hubSocket(environment: environment))
             }
             return 0
         } catch let error as CLIError {
@@ -93,36 +89,32 @@ public struct CLIRunner {
         } catch let error as TranscriptionError { throw error.cliError }
     }
 
+    /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
+    /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
-        let directory = options.tokenDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? RuntimePaths.liveSupportDirectory(environment: environment)
-        let token: String
-        switch TokenStore.read(directory: directory) {
-        case .success(let value): token = value
-        case .failure: throw CLIError.bridge(code: "token_missing", message: "トークンを読めません: \(directory.path)/token（エージェント側を一度起動してください）")
-        }
-        let endpoint: BridgeEndpoint
-        switch BridgeEndpoint.parse(url: options.bridge, token: token) {
-        case .success(let value): endpoint = value
-        case .failure(.notLoopbackHTTP): throw CLIError.bridge(code: "endpoint_invalid", message: "ブリッジは http://127.0.0.1:<ポート> だけに送れます")
-        case .failure(.shortToken): throw CLIError.bridge(code: "token_invalid", message: "トークンが短すぎる、または空白を含みます")
-        }
-        let sender = makeSender(endpoint)
-        do { try await sender.health() } catch let error as BridgeError { throw error.cliError }
+        let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
+        do { try hub.start() } catch let error as HubError { throw error.cliError }
+        defer { hub.stop() }
+        // エージェントがつながるのを待つ（つながったら、すぐ始める。上限を過ぎたら、待たずに始める）。
+        let deadline = Date().addingTimeInterval(options.wait)
+        while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
 
-        let pipeline = SessionPipeline(meetingId: options.meetingId, sender: sender, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)))
+        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)))
+        pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale)) {
-                try await pipeline.ingest(update, speaker: options.speaker)
+                pipeline.ingest(update, speaker: options.speaker)
                 lastEnd = max(lastEnd, update.end)
             }
-            // 再生なので、会議の長さは、処理にかかった時間でなく、音声の長さにする。
-            let end = try await pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
-            var summary: [String: Any] = ["ok": true, "sessionId": end.sessionId, "batches": end.batches, "utterances": end.utterances, "durationSeconds": end.durationSeconds]
-            if let path = end.transcriptPath { summary["transcriptPath"] = path }
-            out(Self.json(summary))
-        } catch let error as BridgeError { throw error.cliError }
-        catch let error as TranscriptionError { throw error.cliError }
+        } catch let error as TranscriptionError { throw error.cliError }
+        // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
+        let event = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
+        guard case .ended(let sessionId, _, _, _, _, let duration, let batches, let utterances, let path) = event else { return }
+        var summary: [String: Any] = ["ok": true, "sessionId": sessionId, "batches": batches, "utterances": utterances, "durationSeconds": duration]
+        if let path { summary["transcriptPath"] = path }
+        out(Self.json(summary))
+        if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }
     }
 }
