@@ -229,7 +229,7 @@ struct LiveSessionReportTests {
         return (live, fake, sink, store, shots, root)
     }
 
-    @Test("資料をオンにすると、終了で、PDF ができ、終了の出来事に reportPath が入り、画面の画像は、記録の下へ残る")
+    @Test("資料をオンにすると、終了で、PDF（記録）ができ、終了の出来事に reportPath が入り、画面の画像は、記録の下へ残る")
     func createsReportAndKeepsScreens() async throws {
         let (live, fake, sink, store, shots, root) = rig(report: true, screen: FakeScreen())
         defer { try? FileManager.default.removeItem(at: root) }
@@ -243,8 +243,8 @@ struct LiveSessionReportTests {
         guard case .ended(_, _, _, _, _, _, _, _, _, let eventPath)? = sink.events.last else { Issue.record("no ended"); return }
         #expect(eventPath == reportPath, "終了の出来事が、資料の場所を伝える")
         let text = PDFDocument(url: URL(fileURLWithPath: reportPath))?.string ?? ""
-        #expect(text.contains("来週のリリースの件です") && text.contains("画面 1 枚") && text.contains("画面（00:00）"))
-        #expect((try? FileManager.default.contentsOfDirectory(atPath: sessionDirectory.appendingPathComponent("screens").path))?.count == 1, "画像は、記録の下へ移った")
+        #expect(text.contains("来週のリリースの件です") && text.contains("サマリーは、まだありません") && !text.contains("参考画面"), "終了の時点の PDF は、記録だけ。参考の画面は、エージェントのサマリーが載せる")
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: sessionDirectory.appendingPathComponent("screens").path))?.count == 1, "画像は、サマリーが載せるまで、記録の下へ移して残る")
         #expect(!FileManager.default.fileExists(atPath: shots.directory(sessionId: live.sessionId).path), "元の置き場は消える")
     }
 
@@ -277,6 +277,6 @@ struct LiveSessionReportTests {
         fake.emit(.others, "画面なしの会議です", final: true, 0, 2)
         let path = try #require(try await plain.end(reason: .user).reportPath)
         let text = PDFDocument(url: URL(fileURLWithPath: path))?.string ?? ""
-        #expect(text.contains("画面なしの会議です") && text.contains("画面 0 枚"))
+        #expect(text.contains("画面なしの会議です"))
     }
 }

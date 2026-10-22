@@ -58,6 +58,21 @@ enum ReportText {
         return result
     }
 
+    /// `![説明](ファイル名)` だけの行（参考の画面）。ファイル名は、パスの末尾だけを見る。
+    static func imageReference(_ line: String) -> (alt: String, name: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")"), let close = trimmed.range(of: "](") else { return nil }
+        let alt = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<close.lowerBound])
+        let target = String(trimmed[close.upperBound..<trimmed.index(before: trimmed.endIndex)])
+        let name = URL(fileURLWithPath: target).lastPathComponent
+        return name.isEmpty ? nil : (alt.trimmingCharacters(in: .whitespaces), name)
+    }
+
+    /// サマリーが参考として載せる画像のファイル名。
+    static func imageNames(in markdown: String) -> Set<String> {
+        Set(markdown.components(separatedBy: "\n").compactMap { imageReference($0)?.name })
+    }
+
     /// サマリー（Markdown）を、本文にする。
     static func summary(_ markdown: String, size: CGFloat = 10.5) -> NSAttributedString {
         let result = NSMutableAttributedString()

@@ -29,42 +29,50 @@ private func sampleData(lines: Int = 3, shots: [ReportData.Shot] = []) -> Report
 
 @Suite("資料（PDF）: 描画・保存・サマリーの差し込み")
 struct ReportTests {
-    @Test("記録が PDF になる：表題・概要・各発話が、文字として入り、長ければ複数ページになる")
-    func rendersTranscript() throws {
+    @Test("サマリーが無いときは、表題・概要・付録の記録（全文）。サマリーの代わりの案内が出て、画像は載らない。長ければ複数ページ")
+    func rendersTranscriptOnly() throws {
         let short = try #require(PDFReportRenderer.render(sampleData(), summary: nil, imageDirectory: tempDirectory()))
         let shortDocument = try #require(PDFDocument(data: short))
         #expect(shortDocument.pageCount == 1)
         let text = shortDocument.string ?? ""
-        #expect(text.contains("来週のリリースの件です") && text.contains("[00:20]") && text.contains("本人") && text.contains("発話 3 件") && text.contains("長さ 02:05"))
-        #expect(!text.contains("サマリー"), "サマリーが無ければ、見出しも出さない")
+        #expect(text.contains("付録：記録（全文）") && text.contains("来週のリリースの件です") && text.contains("[00:20]") && text.contains("本人") && text.contains("発話 3 件") && text.contains("長さ 02:05"))
+        #expect(text.contains("サマリーは、まだありません") && !text.contains("参考画面"))
 
         let long = try #require(PDFReportRenderer.render(sampleData(lines: 400), summary: nil, imageDirectory: tempDirectory()))
         #expect(try #require(PDFDocument(data: long)).pageCount > 3, "400 行は、複数のページに流れる")
     }
 
-    @Test("サマリーは、先頭の見出しの下に入り、Markdown の印（# ・- ・**）は、そのまま出ない")
-    func rendersSummary() throws {
+    @Test("サマリーは、先頭にあり、Markdown の印（# ・- ・**）はそのまま出ない。記録は、サマリーのあとの別ページ（付録）")
+    func rendersSummaryThenAppendix() throws {
         let summary = "# 概要\n- 来週の**リリース**の相談\n1. 環境の確認\n> 注意：認識の誤りの可能性"
         let pdf = try #require(PDFReportRenderer.render(sampleData(), summary: summary, imageDirectory: tempDirectory()))
-        let text = try #require(PDFDocument(data: pdf)?.string)
+        let document = try #require(PDFDocument(data: pdf))
+        let text = try #require(document.string)
         #expect(text.contains("サマリー") && text.contains("概要") && text.contains("リリース") && text.contains("環境の確認") && text.contains("認識の誤りの可能性"))
-        #expect(!text.contains("**") && !text.contains("# 概要"))
-        #expect(try #require(text.range(of: "サマリー")).lowerBound < (try #require(text.range(of: "記録と画面")).lowerBound))
+        #expect(!text.contains("**") && !text.contains("# 概要") && !text.contains("サマリーは、まだありません"))
+        #expect(try #require(text.range(of: "サマリー")).lowerBound < (try #require(text.range(of: "付録：記録（全文）")).lowerBound))
+        #expect(document.pageCount == 2, "サマリーのページと、付録のページ")
+        #expect((document.page(at: 1)?.string ?? "").contains("付録：記録（全文）"), "付録は、新しいページから")
     }
 
-    @Test("画面の画像は、撮った時刻の位置に、キャプションつきで入る。読めない画像は、その旨を示して、続ける")
-    func embedsScreens() throws {
+    @Test("参考の画面は、サマリーの関連する箇所（その行の位置）に、キャプションつきで載る。時系列の記録（付録）には載らない")
+    func embedsReferenceScreensInTheSummary() throws {
         let directory = tempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try writeJPEG("shot-0001.jpg", in: directory.appendingPathComponent("screens"))
-        let shots = [ReportData.Shot(at: 15, file: "screens/shot-0001.jpg"), ReportData.Shot(at: 25, file: "screens/missing.jpg")]
-        let withShots = try #require(PDFReportRenderer.render(sampleData(shots: shots), summary: nil, imageDirectory: directory))
-        let text = try #require(PDFDocument(data: withShots)?.string)
-        #expect(text.contains("画面（00:15）") && text.contains("画面（00:25）：画像を読めませんでした") && text.contains("画面 2 枚"))
-        let first = try #require(text.range(of: "[00:10]")), screen = try #require(text.range(of: "画面（00:15）")), second = try #require(text.range(of: "[00:20]"))
-        #expect(first.lowerBound < screen.lowerBound && screen.lowerBound < second.lowerBound, "00:10 と 00:20 の発話の間に、00:15 の画面")
-        let plain = try #require(PDFReportRenderer.render(sampleData(), summary: nil, imageDirectory: directory))
-        #expect(withShots.count > plain.count + 5_000, "画像のデータが、PDF に埋め込まれている")
+        let shots = [ReportData.Shot(at: 15, file: "screens/shot-0001.jpg"), ReportData.Shot(at: 25, file: "screens/shot-0002.jpg")]
+        let summary = "## 料金の話\n料金プランの変更が議題。\n![比較表の、右の列を見る](/anywhere/screens/shot-0001.jpg)\n続きの説明。\n![読めない画像](shot-0002.jpg)\n![無い画像](shot-0099.jpg)"
+        let withShot = try #require(PDFReportRenderer.render(sampleData(shots: shots), summary: summary, imageDirectory: directory))
+        let document = try #require(PDFDocument(data: withShot))
+        let text = try #require(document.string)
+        #expect(text.contains("参考画面（00:15）") && text.contains("比較表の、右の列を見る") && text.contains("参考画面 1 枚"), "\(text)")
+        let before = try #require(text.range(of: "料金プランの変更が議題")), caption = try #require(text.range(of: "参考画面（00:15）")), after = try #require(text.range(of: "続きの説明"))
+        #expect(before.lowerBound < caption.lowerBound && caption.lowerBound < after.lowerBound, "段落と段落の間の、画像の行の位置")
+        #expect(text.contains("参考画面を読めませんでした：shot-0002.jpg") && text.contains("参考画面が見つかりません：shot-0099.jpg"))
+        #expect(text.components(separatedBy: "参考画面（00:15）").count == 2, "付録の記録には、画面は載らない（1 回だけ）")
+
+        let withoutImage = try #require(PDFReportRenderer.render(sampleData(shots: shots), summary: "## 料金の話\n料金プランの変更が議題。", imageDirectory: directory))
+        #expect(withShot.count > withoutImage.count + 5_000, "画像のデータが、PDF に埋め込まれている")
     }
 
     @Test("保存：元データと PDF を、利用者だけが読める権限で書く。サマリーを渡すと、同じデータから作り直せる。元データが無ければ、作り直せない")
@@ -74,11 +82,11 @@ struct ReportTests {
         let url = try ReportBuilder.write(sampleData(), summary: nil, in: directory).get()
         #expect(url.lastPathComponent == "report.pdf" && permissions(url) == 0o600 && permissions(directory.appendingPathComponent("report-data.json")) == 0o600 && permissions(directory) == 0o700)
         let first = PDFDocument(url: url)?.string ?? ""
-        #expect(first.contains("来週のリリースの件です") && !first.contains("サマリー"), "\(first)")
+        #expect(first.contains("来週のリリースの件です") && first.contains("サマリーは、まだありません"), "\(first)")
 
         _ = try ReportBuilder.rebuild(summary: "**決定**：金曜に確認", in: directory).get()
         let rebuilt = PDFDocument(url: url)?.string ?? ""
-        #expect(rebuilt.contains("サマリー") && rebuilt.contains("金曜に確認") && rebuilt.contains("来週のリリースの件です"), "サマリーが入り、記録も残る")
+        #expect(rebuilt.contains("金曜に確認") && rebuilt.contains("来週のリリースの件です") && !rebuilt.contains("サマリーは、まだありません"), "サマリーが入り、記録も残る")
 
         #expect(ReportBuilder.rebuild(summary: "x", in: tempDirectory()) == .failure(.noData))
     }
@@ -109,33 +117,26 @@ struct SaveReportTests {
         return (result?["isError"] as? Bool == true, ((result?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
     }
 
-    @Test("screens を渡すと、関係のある画面だけが資料に残り、ほかの画像はディスクから消える。省くと、すべて残る。空なら、画像なし")
-    func keepsOnlyTheChosenScreens() async throws {
+    @Test("サマリーが参考として載せた画像だけが残り、ほかの画像は、ディスクから消える。画像を載せなければ、すべて消える")
+    func keepsOnlyReferencedScreens() async throws {
         let directory = tempDirectory().appendingPathComponent("sessions/s1", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent().deletingLastPathComponent()) }
         for name in ["shot-0001.jpg", "shot-0002.jpg", "shot-0003.jpg"] { try writeJPEG(name, in: directory.appendingPathComponent("screens")) }
         let shots = (1...3).map { ReportData.Shot(at: Double($0) * 10, file: "screens/shot-000\($0).jpg") }
         let pdf = try ReportBuilder.write(sampleData(shots: shots), summary: nil, in: directory).get()
         let (server, wire) = await serve([ended("s1", report: pdf.path)])
+        func files() -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("screens").path)) ?? []).sorted() }
 
-        await server.handle(line: rpc(1, ["summary": "要約"]))
+        #expect(files().count == 3, "サマリーを渡すまでは、画像は残っている（記録だけの PDF）")
+        await server.handle(line: rpc(1, ["summary": "## 決定\n金曜に確認。\n![表](shot-0002.jpg)\n## 次\n![図](/x/y/shot-0003.jpg)\n![無い](shot-9999.jpg)"]))
         #expect(!reply(wire, 1).isError)
-        #expect((PDFDocument(url: pdf)?.string ?? "").contains("画面 3 枚"), "省くと、すべて残る")
-
-        await server.handle(line: rpc(2, ["summary": "要約", "screens": ["shot-0002.jpg", "/anywhere/else/shot-0003.jpg", "shot-9999.jpg"]]))
-        #expect(!reply(wire, 2).isError)
         let text = PDFDocument(url: pdf)?.string ?? ""
-        #expect(text.contains("画面 2 枚") && text.contains("画面（00:20）") && text.contains("画面（00:30）") && !text.contains("画面（00:10）"))
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("screens").path))?.sorted()
-        #expect(files == ["shot-0002.jpg", "shot-0003.jpg"], "選ばれなかった画像は、ディスクから消える（パスは、ファイル名だけを見る）")
+        #expect(text.contains("参考画面 2 枚") && text.contains("参考画面（00:20）") && text.contains("参考画面（00:30）") && !text.contains("参考画面（00:10）"))
+        #expect(files() == ["shot-0002.jpg", "shot-0003.jpg"], "載せなかった shot-0001 は、ディスクから消える（パスはファイル名だけを見る）")
 
-        await server.handle(line: rpc(3, ["summary": "要約", "screens": [String]()]))
-        #expect(!reply(wire, 3).isError)
-        #expect((PDFDocument(url: pdf)?.string ?? "").contains("画面 0 枚"))
-        #expect(((try? FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("screens").path)) ?? []).isEmpty)
-
-        await server.handle(line: rpc(4, ["summary": "要約", "screens": "shot-0001.jpg"]))
-        #expect(reply(wire, 4).isError, "配列でない screens は、エラー")
+        await server.handle(line: rpc(2, ["summary": "## 決定\n画面は関係なかった。"]))
+        #expect(!reply(wire, 2).isError)
+        #expect(files().isEmpty && !(PDFDocument(url: pdf)?.string ?? "").contains("参考画面 "), "画像を載せなければ、すべて消える")
     }
 
     @Test("終了の出来事の資料へ、サマリーを入れて、PDF のパスを返す。書く場所は、出来事のパスだけ")
