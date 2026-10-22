@@ -378,6 +378,47 @@ do {
     conclude(id, pass: "claude は、利用者の引数 → MCP の設定（--channel・窓口の場所）→ チャンネルの指定の順で渡して置き換わり、無ければ終了コード 5")
 } catch { record("C1", .blocked, "偽の claude を用意できない: \(error)") }
 
+// ---------- C2: pi・omp・agy・opencode を、コマンド 1 つで起動する（設定へ MCP サーバーを自動で登録。エージェントは、偽物に置き換える） ----------
+do {
+    let id = "C2"
+    let stubDir = work + "/stub-agents"
+    try FileManager.default.createDirectory(atPath: stubDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    for name in ["pi", "omp", "agy", "opencode"] {
+        let argsFile = work + "/\(name)-args.txt"
+        let stub = stubDir + "/" + name
+        try Data("#!/bin/bash\nprintf '%s\\n' \"$@\" > '\(argsFile)'\nexit 7\n".utf8).write(to: URL(fileURLWithPath: stub))
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stub)
+    }
+    let path = stubDir + ":/usr/bin:/bin"
+    // 各エージェントの設定の置き場所を、検証用に向ける（利用者の設定には、触れない）。
+    let setups: [(name: String, env: [String: String], file: String, container: String)] = [
+        ("pi", ["PI_CODING_AGENT_DIR": work + "/pi-cfg"], work + "/pi-cfg/mcp.json", "mcpServers"),
+        ("omp", ["PI_CODING_AGENT_DIR": work + "/omp-cfg"], work + "/omp-cfg/mcp.json", "mcpServers"),
+        ("agy", ["HOME": work + "/agy-home"], work + "/agy-home/.gemini/config/mcp_config.json", "mcpServers"),
+        ("opencode", ["XDG_CONFIG_HOME": work + "/xdg", "HOME": work + "/oc-home"], work + "/xdg/opencode/opencode.json", "mcp"),
+    ]
+    for setup in setups {
+        let environment = env.merging(setup.env) { $1 }.merging(["PATH": path]) { $1 }
+        let r1 = run(exe, [setup.name, "hello"], env: environment, timeout: 30)
+        check(r1.status == 7, "\(setup.name): 終了コード \(r1.status)（偽のエージェントの 7 に置き換わるはず）: \(r1.err)")
+        let args = ((try? String(contentsOfFile: work + "/\(setup.name)-args.txt", encoding: .utf8)) ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init).dropLast()
+        check(args.first == "hello", "\(setup.name): 利用者の引数が先頭にない: \(Array(args))")
+        let skillExpected = setup.name == "pi" || setup.name == "omp"
+        check((args.contains("--append-system-prompt")) == skillExpected, "\(setup.name): skill の引き渡しが想定と違う: \(Array(args))")
+        let first = (try? Data(contentsOf: URL(fileURLWithPath: setup.file))) ?? Data()
+        let object = json(String(decoding: first, as: UTF8.self))
+        let entry = ((object?[setup.container] as? [String: Any])?["meeting-analyzer"]) as? [String: Any]
+        let command = setup.name == "opencode" ? (entry?["command"] as? [String])?.first : entry?["command"] as? String
+        check(command.map { FileManager.default.isExecutableFile(atPath: $0) } == true, "\(setup.name): 設定に、MCP サーバー（実行ファイル）が登録されていない: \(setup.file)")
+        check(r1.err.contains("登録しました"), "\(setup.name): 登録したことを伝えていない: \(r1.err)")
+        // 2 回目：登録済みなので、何も書かない（内容が同じ。登録のメッセージも出ない）。
+        let r2 = run(exe, [setup.name], env: environment, timeout: 30)
+        check((try? Data(contentsOf: URL(fileURLWithPath: setup.file))) == first, "\(setup.name): 登録済みなのに、設定を書き換えた")
+        check(!r2.err.contains("MCP サーバーを登録") && !r2.err.contains("MCP サーバーの登録"), "\(setup.name): 2 回目も、登録・更新のメッセージが出た: \(r2.err)")
+    }
+    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は skill）の順で、エージェントに置き換わる")
+} catch { record("C2", .blocked, "偽のエージェントを用意できない: \(error)") }
+
 // ---------- A: メニューバーのアプリとして起動・終了 ----------
 do {
     let id = "A1"

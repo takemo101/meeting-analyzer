@@ -186,7 +186,9 @@ struct AgentRegistrationTests {
         #expect(AgentRegistration.claudeCode.text(executable: exe) == "claude mcp add meeting-analyzer -- '\(exe)' mcp")
         #expect(AgentRegistration.pi.text(executable: exe) == "pi mcp add meeting-analyzer -- '\(exe)' mcp")
         #expect(AgentRegistration.agy.text(executable: exe) == "agy mcp add meeting-analyzer -- '\(exe)' mcp")
-        #expect(AgentRegistration.opencode.text(executable: exe) == "opencode mcp add --global meeting-analyzer -- '\(exe)' mcp")
+        let opencode = try? JSONSerialization.jsonObject(with: Data(AgentRegistration.opencode.text(executable: exe).utf8)) as? [String: Any]
+        let entry = (opencode?["mcp"] as? [String: Any])?["meeting-analyzer"] as? [String: Any]
+        #expect(entry?["type"] as? String == "local" && entry?["command"] as? [String] == [exe, "mcp"], "opencode は、mcp add でなく、opencode.json へ足す JSON")
     }
 
     @Test("Channels は、別の名前で --channel を付けて登録し、開発用の許可つきの起動も添える")

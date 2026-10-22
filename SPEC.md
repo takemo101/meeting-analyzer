@@ -116,9 +116,8 @@ meeting-analyzer は、Mac の**音声**（マイクと、Mac から出ている
 
 | エージェント | 方式 | 状況 |
 |---|---|---|
-| Claude Code | MCP（`claude mcp add`、または `meeting-analyzer claude`）。`--channel` で push | `get_events`・`--channel` の押し込み（字幕と終了の出来事が自動で届き、Claude Code が反応する）とも、実機の Claude Code で確認済み（合成音声）。起動時に「no MCP server configured with that name」と表示されるが、動作には影響しない |
-| pi | MCP（`pi mcp add`） | `pi mcp list` で接続・ツール `get_events` を確認済み。モデルを使った動作は未確認 |
-| omp・agy・opencode v2 | MCP（ツール `get_events` の pull）。登録の文は、メニューの「エージェントに登録（コピー）」 | **未確認**（opencode は、`opencode mcp add` で書いた設定が、`opencode mcp list` に出なかった） |
+| Claude Code | `meeting-analyzer claude`（設定ファイルは書かず、起動のたびに渡す）。または `claude mcp add`。`--channel` で push | `get_events`・`--channel` の押し込み（字幕と終了の出来事が自動で届き、Claude Code が反応する）とも、実機の Claude Code で確認済み（合成音声）。起動時に「no MCP server configured with that name」と表示されるが、動作には影響しない |
+| pi・omp・agy・opencode v2 | `meeting-analyzer <名前>`（設定へ自動で登録。ツール `get_events` の pull）。手で登録する文は、メニューの「エージェントに登録（コピー）」 | pi は、実機の `pi mcp list` で、接続とツール `get_events` を確認済み。agy は、実機の `agy mcp list` で、登録と enabled を確認済み。**omp・opencode は、実機では未確認**（omp は、設定の書式をドキュメントと既存の設定から。opencode は、利用者が手で書く `mcp.<名前>` の形と同じ）。モデルを使った動作は、どれも未確認 |
 
 ### 3.8 会議の終了とサマリー
 
@@ -134,6 +133,7 @@ meeting-analyzer は、Mac の**音声**（マイクと、Mac から出ている
 | コマンド | 内容 |
 |---|---|
 | `claude [claude の引数…]` | **コマンド 1 つで、Claude Code を、このアプリの MCP サーバー（`--channel`）つきで起動する**。アプリ（窓口）が動いていなければ、入れてあるアプリを `open -b` で起動して、窓口を待つ（最大 8 秒。待っても開かなければ、警告して、そのまま起動する。`mcp` がつなぎ直す）。MCP の設定は、`--mcp-config` で、その起動だけに渡す（エージェントの設定ファイルは書き換えない）。`--dangerously-load-development-channels server:meeting-analyzer-channel` も付ける（Channels の開発用の許可。利用者のコマンドとして実行される）。利用者の引数は、そのまま `claude` へ渡す（先頭に置き、こちらの指定を最後に付ける）。窓口の場所を環境変数で変えているときは、アプリを起動せず、同じ値を `mcp` へ渡す。プロセスを `claude` に置き換えるので、終了コードは `claude` のもの |
+| `pi`・`omp`・`agy`・`opencode` `[引数…]` | **コマンド 1 つで、そのエージェントを、このアプリの MCP サーバーつきで起動する**（利用者の判断で、設定への自動の登録を行う）。アプリ（窓口）が動いていなければ、`claude` と同じく起動する。エージェントの**設定ファイルへ、`meeting-analyzer` の 1 件だけを登録**する（初回・入れ直しなどで実行ファイルの場所が変わったときだけ書く。登録済みなら、何も書かない）。書き方は、**書式を保った挿入**（他のキー・並び・インデントは、そのまま）。最初の書き込みの前に、元のファイルを `*.meeting-analyzer.bak` へ控える。コメントを含む設定（JSONC）・読めない形は、書かず、手で足す文を示す。設定ファイル：pi＝`$PI_CODING_AGENT_DIR/mcp.json`（既定 `~/.pi/agent/mcp.json`）、omp＝`~/.omp/agent/mcp.json`（`PI_CODING_AGENT_DIR`・`PI_CONFIG_DIR`・`--profile` を尊重）、agy＝`~/.gemini/config/mcp_config.json`、opencode＝`$XDG_CONFIG_HOME/opencode/opencode.json`（既定 `~/.config/opencode/`）の `mcp`。pi・omp には、同梱の skill を `--append-system-prompt` で足す。**字幕の押し込みはできない**（Claude Code の Channels だけ）。エージェントが `get_events` で取りに行く（起動時に、そう案内する） |
 | `mcp [--channel]` | エージェント向けの MCP サーバー（§3.7）。標準入出力。標準入力が閉じたら終わる |
 | `doctor [--locale L]` | その言語のオンデバイス認識が、この Mac で使えるか（`supported`・`installed`）を、1 行の JSON で出す。既定 `ja_JP` |
 | `transcribe <音声ファイル> [--locale L]` | 確定した結果を、1 行 1 件の JSON（`text`・`isFinal`・`start`・`end`）で標準出力へ出す |
@@ -205,6 +205,7 @@ meeting-analyzer は、Mac の**音声**（マイクと、Mac から出ている
 | A13 | 画面を撮り（画面全体／アプリのウィンドウ）、変化があるときだけ、縮小した JPEG にして、次の字幕のバッチに添える。画面の一部の変化も検知し、ごく小さな変化は除く。撮影の失敗は、字幕を止めない。保存は 0700／0600・最新 30 枚・終了時に削除 | 実装済み・要人間確認 | 単体（変化の規則・画像の縮小・保存・`LiveSession` の流れ・失敗時）・人間（実際の画面・権限） |
 | A14 | メニューから、開始・一時停止・再開・終了ができる（開始に、確認のダイアログは出ない）。終了で、A06 の手順が走る | 実装済み・要人間確認 | 単体（状態・順序・失敗）・自動の実機観測（同意と開始の失敗のダイアログ）・人間（実際の取り込みを伴う開始〜終了の操作） |
 | A15 | 窓口とエージェント側の MCP（§3.7）：窓口は同じユーザーだけを受け付け（ソケット 0600）、複数の受け手へ同じ出来事を流し、後から接続した受け手へ、現在のセッションの出来事を先頭から渡す。`mcp` は、`get_events`（pull）と、`--channel` の押し込みで、出来事を渡す。切れた受け手・アプリの不在・アプリの再起動に耐える | 実装済み | 単体（窓口・MCP）・E2E（R1〜R5・A1） |
+| A19 | `meeting-analyzer pi\|omp\|agy\|opencode` が、設定へ MCP サーバーを 1 件だけ登録し（書式を保つ・控えを作る・登録済みなら書かない・コメントつきは書かない）、利用者の引数 →（pi・omp は skill）の順で、エージェントに置き換わる | 実装済み・要人間確認 | 単体（書式を保つ挿入・場所・登録済み・更新・控え・権限・JSONC）・E2E（C2）・実際の pi・agy（隔離した設定で、`mcp list`） |
 | A18 | `meeting-analyzer claude` が、利用者の引数 → MCP の設定（`--channel`・窓口の場所）→ チャンネルの指定の順で、`claude` に置き換わる。`claude` が無ければ終了コード 5 | 実装済み・要人間確認 | 単体・E2E（C1）・実際の Claude Code（`-p`、合成音声）。Channels の押し込みも、実際の Claude Code（対話の起動を、疑似端末で操作）で確認 |
 | A16 | 実際のエージェントでの連携：Claude Code・omp・pi・agy（と調査後の opencode v2）に、`mcp` を登録して、字幕が届き、終了の出来事で詳細なサマリーが出る | 実装済み・要人間確認 | 人間（各エージェントで実際に） |
 | A17 | サマリー（§3.8）：記録の全文とプロジェクトの内容を元に、決定事項・未決事項・アクション・プロジェクトへの影響・認識の不確かさを含む。記録・字幕内の命令は実行しない | 未確認 | 人間（エージェントの出力の判断） |

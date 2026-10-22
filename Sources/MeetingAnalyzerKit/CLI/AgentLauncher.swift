@@ -29,6 +29,25 @@ public enum AgentLauncher {
         ]
     }
 
+    /// 起動する引数（コマンド名を除く）。利用者の引数を先頭に置く。skill は、`--append-system-prompt` を持つエージェント（pi・omp）には、そのシステムプロンプトへ足す。
+    /// ほかのエージェント（agy・opencode）は、MCP の `instructions` が、同じ内容の短い版を伝える。
+    static func arguments(agent: LaunchableAgent, userArguments: [String], executable: String, environment: [String: String], skillPath: String?) -> [String] {
+        switch agent {
+        case .claude: return claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: skillPath)
+        case .pi, .omp: return userArguments + (skillPath.map { ["--append-system-prompt", $0] } ?? [])
+        case .agy, .opencode: return userArguments
+        }
+    }
+
+    /// omp の名前つきプロファイル（`--profile X`／`--profile=X`）。設定ファイルの場所が変わる。
+    static func profile(in arguments: [String]) -> String? {
+        for (index, argument) in arguments.enumerated() {
+            if argument == "--profile", index + 1 < arguments.count { return arguments[index + 1] }
+            if argument.hasPrefix("--profile=") { return String(argument.dropFirst("--profile=".count)) }
+        }
+        return nil
+    }
+
     /// アプリに同梱した skill（`Contents/Resources/SKILL.md`）。実行ファイルは `Contents/MacOS/` にある（シンボリックリンク経由でも、実パスで探す）。無ければ nil。
     static func bundledSkillPath(executable: String) -> String? {
         let resources = URL(fileURLWithPath: executable).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources")

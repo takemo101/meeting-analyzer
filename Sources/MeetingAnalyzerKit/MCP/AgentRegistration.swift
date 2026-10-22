@@ -16,7 +16,7 @@ public enum AgentRegistration: CaseIterable, Sendable {
         case .claudeCodeChannel: return "Claude Code（自動で届ける: Channels）"
         case .pi: return "pi"
         case .agy: return "agy"
-        case .opencode: return "opencode"
+        case .opencode: return "opencode（opencode.json の mcp に追加）"
         case .omp: return "omp（~/.omp/agent/mcp.json に追加）"
         }
     }
@@ -39,7 +39,7 @@ public enum AgentRegistration: CaseIterable, Sendable {
         case .agy:
             return "agy mcp add \(Self.serverName) -- \(exe) mcp"
         case .opencode:
-            return "opencode mcp add --global \(Self.serverName) -- \(exe) mcp"
+            return Self.opencodeJSON(executable: executable)
         case .omp:
             return Self.ompJSON(executable: executable)
         }
@@ -48,6 +48,13 @@ public enum AgentRegistration: CaseIterable, Sendable {
     /// `mcpServers` の 1 件（omp の `mcp.json` に、`mcpServers` の中へ足す）。
     static func ompJSON(executable: String) -> String {
         let object: [String: Any] = ["mcpServers": [serverName: ["type": "stdio", "command": executable, "args": ["mcp"]] as [String: Any]]]
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// opencode の設定（`opencode.json`）の `mcp` の中へ足す 1 件。**`opencode mcp add` は使わない**：v2.1.2 の書き込みは、`mcp.servers` という入れ子を作り、通常の `mcp.<名前>` の形（利用者が手で書く形）と、揃わない。
+    static func opencodeJSON(executable: String) -> String {
+        let object: [String: Any] = ["mcp": [serverName: ["type": "local", "command": [executable, "mcp"], "enabled": true] as [String: Any]]]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

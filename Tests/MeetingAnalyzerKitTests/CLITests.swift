@@ -46,10 +46,11 @@ struct CommandParserTests {
         #expect(parse(["mcp", "--other"]) == .failure(.usage("mcp に渡せるのは --channel だけです")))
     }
 
-    @Test("claude は、以降の引数を、そのまま渡す（オプションも、最初の発言も）")
-    func claude() {
-        #expect(parse(["claude"]) == .success(.claude(arguments: [])))
-        #expect(parse(["claude", "--resume", "--model", "opus", "会議を始めます"]) == .success(.claude(arguments: ["--resume", "--model", "opus", "会議を始めます"])))
+    @Test("エージェントの名前は、以降の引数を、そのまま渡す（オプションも、最初の発言も）")
+    func launch() {
+        #expect(parse(["claude"]) == .success(.launch(agent: .claude, arguments: [])))
+        #expect(parse(["claude", "--resume", "--model", "opus", "会議を始めます"]) == .success(.launch(agent: .claude, arguments: ["--resume", "--model", "opus", "会議を始めます"])))
+        for agent in LaunchableAgent.allCases { #expect(parse([agent.rawValue, "-x"]) == .success(.launch(agent: agent, arguments: ["-x"]))) }
     }
 
     @Test("知らないコマンド・オプション、値の欠落、重複、不正な値は、使い方の誤り")
@@ -191,7 +192,7 @@ struct CLIRunnerTests {
             replaceProcess: { command, arguments in calls.add(([command] + arguments).joined(separator: "\u{1F}")); return 0 },
             executablePath: { "/Apps/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer" }
         )
-        let code = await runner.run(.claude(arguments: ["会議を始めます", "--resume"]))
+        let code = await runner.run(.launch(agent: .claude, arguments: ["会議を始めます", "--resume"]))
         let call = calls.lines.first?.components(separatedBy: "\u{1F}") ?? []
         #expect(call.first == "claude")
         #expect(Array(call.dropFirst().prefix(2)) == ["会議を始めます", "--resume"], "利用者の引数が先")

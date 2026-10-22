@@ -57,7 +57,7 @@ public struct CLIRunner {
             case .doctor(let locale): try await doctor(locale)
             case .transcribe(let file, let locale): try await transcribe(file, locale)
             case .replay(let options): try await replay(options)
-            case .claude(let arguments): try launchClaude(arguments)
+            case .launch(let agent, let arguments): try launch(agent, arguments)
             case .mcp(let channel): await MCPRunner.run(mode: channel ? .channel : .tools, socketPath: RuntimePaths.hubSocket(environment: environment))
             }
             return 0
@@ -96,18 +96,36 @@ public struct CLIRunner {
         } catch let error as TranscriptionError { throw error.cliError }
     }
 
-    /// Claude Code を、MCP サーバー（チャンネル）つきで起動する。このプロセスを置き換えるので、成功すると戻らない。
-    private func launchClaude(_ userArguments: [String]) throws {
-        let ready = AgentLauncher.ensureAppRunning(environment: environment)
-        FileHandle.standardError.write(Data((ready
-            ? "meeting-analyzer: Claude Code を起動します（文字起こしは、チャンネルで届きます）\n"
-            : "meeting-analyzer: アプリ（窓口）に接続できません。Claude Code は起動しますが、アプリを起動するまで、文字起こしは届きません\n").utf8))
+    /// エージェントを、MCP サーバーつきで起動する。このプロセスを置き換えるので、成功すると戻らない。
+    /// Claude Code は、その起動だけに設定を渡す。ほかのエージェントは、設定ファイルへ、`meeting-analyzer` の 1 件を登録する（初回・場所が変わったときだけ）。
+    private func launch(_ agent: LaunchableAgent, _ userArguments: [String]) throws {
         let executable = executablePath()
-        let arguments = AgentLauncher.claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: AgentLauncher.bundledSkillPath(executable: executable))
-        let code = replaceProcess("claude", arguments)
+        let ready = AgentLauncher.ensureAppRunning(environment: environment)
+        var lines = [ready
+            ? "meeting-analyzer: \(agent.command) を起動します"
+            : "meeting-analyzer: アプリ（窓口）に接続できません。\(agent.command) は起動しますが、アプリを起動するまで、文字起こしは届きません"]
+        if agent == .claude {
+            lines[0] += "（文字起こしは、チャンネルで届きます）"
+        } else {
+            switch AgentSetup.ensureRegistered(agent, executable: executable, environment: environment, profile: AgentLauncher.profile(in: userArguments)) {
+            case .alreadyRegistered: break
+            case .registered(let path, let backedUp): lines.append("meeting-analyzer: MCP サーバーを登録しました: \(path)" + (backedUp ? "（元のファイルは *.meeting-analyzer.bak に控えました）" : ""))
+            case .updated(let path, let backedUp): lines.append("meeting-analyzer: MCP サーバーの登録を、このアプリの場所へ更新しました: \(path)" + (backedUp ? "（元のファイルは *.meeting-analyzer.bak に控えました）" : ""))
+            case .manual(let path, let reason):
+                let registration = AgentRegistration.allCases.first { $0.title.hasPrefix(agent.rawValue) }
+                lines.append("meeting-analyzer: MCP サーバーを自動で登録できませんでした（\(reason): \(path)）。手で足してください:\n\(registration?.text(executable: executable) ?? "")")
+            }
+            lines.append("meeting-analyzer: 字幕は、自動では届きません。\(agent.command) に「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください（自動の押し込みは Claude Code だけ）")
+        }
+        FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+        let arguments = AgentLauncher.arguments(
+            agent: agent, userArguments: userArguments, executable: executable, environment: environment,
+            skillPath: AgentLauncher.bundledSkillPath(executable: executable)
+        )
+        let code = replaceProcess(agent.command, arguments)
         throw CLIError.agent(code == ENOENT
-            ? "claude が見つかりません（Claude Code を入れて、PATH を通してください）"
-            : "claude を起動できません（errno \(code)）")
+            ? "\(agent.command) が見つかりません（\(agent.command) を入れて、PATH を通してください）"
+            : "\(agent.command) を起動できません（errno \(code)）")
     }
 
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。

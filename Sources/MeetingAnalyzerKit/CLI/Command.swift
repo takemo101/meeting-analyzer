@@ -62,8 +62,8 @@ public enum Command: Equatable {
     case replay(ReplayOptions)
     /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
     case mcp(channel: Bool)
-    /// Claude Code を、このアプリの MCP サーバー（チャンネルつき）で起動する。`arguments` は、そのまま `claude` へ渡す。
-    case claude(arguments: [String])
+    /// エージェント（Claude Code・pi・omp・agy・opencode）を、このアプリの MCP サーバーつきで起動する。`arguments` は、そのままエージェントへ渡す。
+    case launch(agent: LaunchableAgent, arguments: [String])
 }
 
 public enum CommandParser {
@@ -97,8 +97,8 @@ public enum CommandParser {
                     locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0
                 )))
             }
-        case "claude":
-            return .success(.claude(arguments: rest))
+        case _ where LaunchableAgent(rawValue: first) != nil:
+            return .success(.launch(agent: LaunchableAgent(rawValue: first)!, arguments: rest))
         case "mcp":
             if rest.isEmpty { return .success(.mcp(channel: false)) }
             if rest == ["--channel"] { return .success(.mcp(channel: true)) }
@@ -145,6 +145,9 @@ meeting-analyzer — Mac の音声（マイク・システム音声）を文字�
                                            --channel で、Claude Code の Channels の通知（push）も出す
   meeting-analyzer claude [claude の引数...]  Claude Code を、このアプリの MCP サーバー（Channels）つきで起動する（設定ファイルは書き換えない）。
                                            アプリが動いていなければ、入れてあるアプリを起動する
+  meeting-analyzer pi|omp|agy|opencode [引数...]
+                                           そのエージェントの設定へ、MCP サーバーを自動で登録して（初回・場所が変わったときだけ。
+                                           書くのは meeting-analyzer の 1 件だけ）、起動する。字幕は get_events で取りに行く形
   meeting-analyzer doctor [--locale L]     この Mac で、その言語のオンデバイス認識が使えるか調べる（既定 ja_JP）
   meeting-analyzer transcribe <音声ファイル> [--locale L]
                                            文字起こしの結果を、1 行 1 件の JSON で標準出力へ出す
