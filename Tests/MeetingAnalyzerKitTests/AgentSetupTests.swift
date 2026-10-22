@@ -3,7 +3,7 @@ import Testing
 @testable import MeetingAnalyzerKit
 
 private func tempHome() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ma-home-" + UUID().uuidString, isDirectory: true)
+    let url = tempURL("home")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }

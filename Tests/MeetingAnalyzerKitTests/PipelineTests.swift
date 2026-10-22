@@ -32,7 +32,7 @@ private func update(_ text: String, final: Bool = false, _ start: Double, _ end:
 }
 
 private func temporaryRoot() -> URL {
-    FileManager.default.temporaryDirectory.appendingPathComponent("ma-tests-" + UUID().uuidString, isDirectory: true)
+    tempURL("tests")
 }
 
 @Suite("SessionPipeline: 更新 → バッチ → 終了の出来事")

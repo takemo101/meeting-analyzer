@@ -3,7 +3,7 @@ import Testing
 @testable import MeetingAnalyzerKit
 
 private func tempDirectory() -> URL {
-    FileManager.default.temporaryDirectory.appendingPathComponent("ma-presets-" + UUID().uuidString, isDirectory: true)
+    tempURL("presets")
 }
 
 private func write(_ text: String, _ name: String, in directory: URL) throws {
@@ -191,7 +191,7 @@ struct PresetCLITests {
         let user = tempDirectory()
         defer { try? FileManager.default.removeItem(at: user) }
         let err = Output()
-        let audio = FileManager.default.temporaryDirectory.appendingPathComponent("ma-preset-" + UUID().uuidString + ".aiff")
+        let audio = tempURL("preset", ext: "aiff")
         try? Data([0]).write(to: audio)
         defer { try? FileManager.default.removeItem(at: audio) }
         let options = ReplayOptions(file: audio.path, speaker: .others, title: "t", locale: "ja_JP", hold: 0, wait: 0, preset: "nope")
@@ -226,5 +226,22 @@ struct PresetAuthoringSkillTests {
         #expect(text.contains("\(AnalysisPreset.maxInstructionLength) 文字") || text.contains("8000 文字"))
         #expect(AnalysisPreset.maxInstructionLength == 8000)
         for id in ["standard", "minutes", "tech-review", "learning", "video", "negotiation"] { #expect(text.contains("`\(id)`"), Comment(rawValue: id)) }
+    }
+}
+
+@Suite("押し込みの注意（note）：Swift と、pi・omp・opencode の拡張で、同じ文")
+struct PushNoteConsistencyTests {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    @Test("拡張（JS）の note が、窓口の note（MCPServer.dataNote・startedNote）と一致している。食い違うと、エージェントごとに、注意の文が変わる")
+    func jsNotesMatchSwift() throws {
+        for path in ["integrations/pi/meeting-analyzer.js", "integrations/opencode/server.js"] {
+            let text = try source(path)
+            #expect(text.contains("\"\(MCPServer.dataNote)\""), "\(path): データの注意が、Swift と違う")
+            #expect(text.contains("\"\(MCPServer.startedNote)\""), "\(path): 開始の注意が、Swift と違う")
+        }
     }
 }

@@ -88,7 +88,7 @@ private func errorCode(_ line: String?) -> String? {
 }
 
 private func audioFile() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ma-audio-" + UUID().uuidString + ".aiff")
+    let url = tempURL("audio", ext: "aiff")
     try Data([0]).write(to: url)
     return url
 }
@@ -116,7 +116,7 @@ struct CLIRunnerTests {
     @Test("replay は、窓口を開けて、開始・バッチ・終了の出来事を、つながった受け手へ出し、結果を 1 行の JSON で出す")
     func replayDeliversThroughHub() async throws {
         let out = Output(), err = Output()
-        let data = FileManager.default.temporaryDirectory.appendingPathComponent("ma-data-" + UUID().uuidString)
+        let data = tempURL("data")
         defer { try? FileManager.default.removeItem(at: data) }
         let socket = shortSocketPath()
         let environment = ["MEETING_ANALYZER_DATA_DIR": data.path, "MEETING_ANALYZER_SOCKET": socket]
@@ -173,7 +173,7 @@ struct CLIRunnerTests {
     @Test("文字起こしの失敗は、終了コード 4。記録を書かず、終了の出来事も出さない")
     func transcriptionFailure() async throws {
         let out = Output(), err = Output()
-        let data = FileManager.default.temporaryDirectory.appendingPathComponent("ma-data-" + UUID().uuidString)
+        let data = tempURL("data")
         defer { try? FileManager.default.removeItem(at: data) }
         let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
         let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_DATA_DIR": data.path, "MEETING_ANALYZER_SOCKET": shortSocketPath()], updates: fakeUpdates(sample, failure: .unsupportedLocale("xx_XX"))).run(.replay(options))

@@ -96,104 +96,87 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// エージェントへの登録の文のコピー（MCP サーバー `mcp` を、エージェントに登録する）。
-    private func registrationItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "エージェントに登録（コピー）", action: nil, keyEquivalent: "")
+    // MARK: 選択肢のサブメニュー
+
+    /// メニュー項目が選ばれたときの処理（`representedObject` は参照型のみ）。選択肢ごとに、処理を持たせる。
+    private final class Choice: NSObject {
+        let run: () -> Void
+        init(_ run: @escaping () -> Void) { self.run = run }
+    }
+
+    @objc private func runChoice(_ sender: NSMenuItem) { (sender.representedObject as? Choice)?.run() }
+
+    /// 選択肢 1 つ。`selected` なら、チェックを付ける。
+    private func choice(_ title: String, selected: Bool, tooltip: String? = nil, _ run: @escaping () -> Void) -> NSMenuItem {
+        let entry = NSMenuItem(title: title, action: #selector(runChoice(_:)), keyEquivalent: "")
+        entry.target = self
+        entry.representedObject = Choice(run)
+        entry.state = selected ? .on : .off
+        entry.toolTip = tooltip
+        return entry
+    }
+
+    /// サブメニューを持つ項目。`build` で、サブメニューの中身を作る。
+    private func submenuItem(_ title: String, _ build: (NSMenu) -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        for (index, registration) in AgentRegistration.allCases.enumerated() {
-            let entry = NSMenuItem(title: registration.title, action: #selector(copyRegistration(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = index
-            submenu.addItem(entry)
-        }
+        build(submenu)
         item.submenu = submenu
         return item
     }
 
-    @objc private func copyRegistration(_ sender: NSMenuItem) {
-        guard AgentRegistration.allCases.indices.contains(sender.tag) else { return }
-        controller.copyRegistration(AgentRegistration.allCases[sender.tag])
+    /// 起動中のアプリの一覧（見出しつき）。1 つも無ければ、その旨を出す。
+    private func addApps(to submenu: NSMenu, heading: String, entry: (CaptureApp) -> NSMenuItem) {
+        submenu.addItem(.separator())
+        submenu.addItem(label(heading))
+        let apps = controller.candidateApps()
+        if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
+        for app in apps { submenu.addItem(entry(app)) }
+    }
+
+    /// エージェントへの登録の文のコピー（MCP サーバー `mcp` を、エージェントに登録する）。
+    private func registrationItem() -> NSMenuItem {
+        submenuItem("エージェントに登録（コピー）") { submenu in
+            for registration in AgentRegistration.allCases {
+                submenu.addItem(choice(registration.title, selected: false) { [controller] in controller.copyRegistration(registration) })
+            }
+        }
     }
 
     /// 画面の取り込み：オフ・画面全体・起動中のアプリのウィンドウ。変化があったときだけ、縮小した画像を、字幕に添えて渡す。
     private func screenItem() -> NSMenuItem {
         let current = controller.screen
-        let item = NSMenuItem(title: "画面の取り込み: " + current.title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
         func entry(_ title: String, _ selection: ScreenSelection) -> NSMenuItem {
-            let entry = NSMenuItem(title: title, action: #selector(selectScreen(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = ScreenChoice(selection: selection)
-            entry.state = current == selection ? .on : .off
-            return entry
+            choice(title, selected: current == selection) { [controller] in controller.setScreen(selection) }
         }
-        submenu.addItem(entry("オフ", .off))
-        submenu.addItem(entry("画面全体（メインの画面）", .display))
-        submenu.addItem(.separator())
-        submenu.addItem(label("アプリのウィンドウ"))
-        let apps = controller.candidateApps()
-        if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
-        for app in apps { submenu.addItem(entry(app.name, .app(bundleID: app.bundleID, name: app.name))) }
-        item.submenu = submenu
-        return item
+        return submenuItem("画面の取り込み: " + current.title) { submenu in
+            submenu.addItem(entry("オフ", .off))
+            submenu.addItem(entry("画面全体（メインの画面）", .display))
+            addApps(to: submenu, heading: "アプリのウィンドウ") { entry($0.name, .app(bundleID: $0.bundleID, name: $0.name)) }
+        }
     }
 
-    private final class ScreenChoice: NSObject {
-        let selection: ScreenSelection
-        init(selection: ScreenSelection) { self.selection = selection }
-    }
-
-    @objc private func selectScreen(_ sender: NSMenuItem) {
-        guard let choice = sender.representedObject as? ScreenChoice else { return }
-        controller.setScreen(choice.selection)
-    }
-
-    /// エージェントへ渡す、まとめ方（発話の区切り／会話の区切り／約 30 秒／約 5 秒）。
+    /// エージェントへ渡す、まとめ方（発話の区切り／会話の区切り／まとまってから解説／約 30 秒／約 5 秒）。
     private func batchModeItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "転送のまとめ方: " + controller.batchMode.title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-        for (index, mode) in BatchMode.allCases.enumerated() {
-            let entry = NSMenuItem(title: mode.title, action: #selector(selectBatchMode(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = index
-            entry.state = mode == controller.batchMode ? .on : .off
-            submenu.addItem(entry)
+        submenuItem("転送のまとめ方: " + controller.batchMode.title) { submenu in
+            for mode in BatchMode.allCases {
+                submenu.addItem(choice(mode.title, selected: mode == controller.batchMode) { [controller] in controller.setBatchMode(mode) })
+            }
         }
-        item.submenu = submenu
-        return item
-    }
-
-    @objc private func selectBatchMode(_ sender: NSMenuItem) {
-        guard BatchMode.allCases.indices.contains(sender.tag) else { return }
-        controller.setBatchMode(BatchMode.allCases[sender.tag])
     }
 
     /// 分析のしかた：プリセット（解説・提案・サマリーの出し方）。同梱のものと、自分のフォルダのもの。
     private func presetItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "分析のプリセット: " + controller.presetName, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
         let selected = controller.presetStore.resolve(id: controller.presetID)?.id
-        for preset in controller.presets() {
-            let entry = NSMenuItem(title: preset.name + (preset.source == .user ? "（自分）" : ""), action: #selector(selectPreset(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = preset.id
-            entry.toolTip = preset.summary.isEmpty ? nil : preset.summary
-            entry.state = preset.id == selected ? .on : .off
-            submenu.addItem(entry)
+        return submenuItem("分析のプリセット: " + controller.presetName) { submenu in
+            for preset in controller.presets() {
+                let title = preset.name + (preset.source == .user ? "（自分）" : "")
+                submenu.addItem(choice(title, selected: preset.id == selected, tooltip: preset.summary.isEmpty ? nil : preset.summary) { [controller] in controller.setPreset(preset.id) })
+            }
+            submenu.addItem(.separator())
+            submenu.addItem(action("プリセットのフォルダを開く（自分のものを足す）", #selector(openPresetFolder)))
         }
-        submenu.addItem(.separator())
-        submenu.addItem(action("プリセットのフォルダを開く（自分のものを足す）", #selector(openPresetFolder)))
-        item.submenu = submenu
-        return item
-    }
-
-    @objc private func selectPreset(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        controller.setPreset(id)
     }
 
     @objc private func openPresetFolder() { controller.openPresetFolder() }
@@ -205,6 +188,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return item
     }
 
+    @objc private func toggleMicrophone() { controller.setMicrophone(!controller.selection.microphone) }
+
     /// システム音声（相手）の選択：オフ・全体・起動中のアプリ。
     private func systemItem() -> NSMenuItem {
         let current = controller.selection.system
@@ -214,48 +199,15 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .all: title = "全体"
         case .app(_, let name): title = name
         }
-        let item = NSMenuItem(title: "システム音声: " + title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-
-        let off = NSMenuItem(title: "オフ", action: #selector(selectSystem(_:)), keyEquivalent: "")
-        off.target = self
-        off.representedObject = SystemChoice(source: .off)
-        off.state = current == .off ? .on : .off
-        submenu.addItem(off)
-
-        let all = NSMenuItem(title: "全体（Mac から出ている音すべて）", action: #selector(selectSystem(_:)), keyEquivalent: "")
-        all.target = self
-        all.representedObject = SystemChoice(source: .all)
-        all.state = current == .all ? .on : .off
-        submenu.addItem(all)
-
-        submenu.addItem(.separator())
-        submenu.addItem(label("アプリを選ぶ"))
-        let apps = controller.candidateApps()
-        if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
-        for app in apps {
-            let entry = NSMenuItem(title: app.name, action: #selector(selectSystem(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = SystemChoice(source: .app(bundleID: app.bundleID, name: app.name))
-            if case .app(let id, _) = current, id == app.bundleID { entry.state = .on }
-            submenu.addItem(entry)
+        return submenuItem("システム音声: " + title) { submenu in
+            submenu.addItem(choice("オフ", selected: current == .off) { [controller] in controller.setSystem(.off) })
+            submenu.addItem(choice("全体（Mac から出ている音すべて）", selected: current == .all) { [controller] in controller.setSystem(.all) })
+            addApps(to: submenu, heading: "アプリを選ぶ") { app in
+                var selected = false
+                if case .app(let id, _) = current, id == app.bundleID { selected = true }
+                return choice(app.name, selected: selected) { [controller] in controller.setSystem(.app(bundleID: app.bundleID, name: app.name)) }
+            }
         }
-        item.submenu = submenu
-        return item
-    }
-
-    /// メニュー項目に持たせる選択（`representedObject` は参照型のみ）。
-    private final class SystemChoice: NSObject {
-        let source: SystemSource
-        init(source: SystemSource) { self.source = source }
-    }
-
-    @objc private func toggleMicrophone() { controller.setMicrophone(!controller.selection.microphone) }
-
-    @objc private func selectSystem(_ sender: NSMenuItem) {
-        guard let choice = sender.representedObject as? SystemChoice else { return }
-        controller.setSystem(choice.source)
     }
 
     @objc private func start() { controller.start() }

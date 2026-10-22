@@ -78,7 +78,7 @@ struct CLIViewTests {
 
     @Test("transcribe は、端末では時刻つきの行、パイプでは 1 行 1 件の JSON")
     func transcribeFollowsTerminal() async throws {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("ma-view-" + UUID().uuidString + ".aiff")
+        let file = tempURL("view", ext: "aiff")
         try Data([0]).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
         let updates: CLIRunner.UpdatesProvider = { _, _ in

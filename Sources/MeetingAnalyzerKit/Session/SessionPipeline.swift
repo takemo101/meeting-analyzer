@@ -37,7 +37,6 @@ public final class SessionPipeline: @unchecked Sendable {
         self.batcher = Batcher(policy: policy)
     }
 
-    public var batchCount: Int { sequence }
     public var utteranceCount: Int { transcript.utteranceCount }
 
     /// セッションの開始を知らせる（取り込む流れ付き）。

@@ -53,7 +53,7 @@ final class Notices: @unchecked Sendable {
     func add(_ notice: LiveSessionNotice) { lock.withLock { items.append(notice) } }
 }
 
-private func root() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("ma-live-" + UUID().uuidString, isDirectory: true) }
+private func root() -> URL { tempURL("live") }
 
 private func eventually(timeout: Double = 3, _ condition: () -> Bool) async -> Bool {
     let deadline = Date().addingTimeInterval(timeout)

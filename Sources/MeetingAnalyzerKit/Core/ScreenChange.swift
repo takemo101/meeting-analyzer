@@ -50,3 +50,35 @@ public enum ScreenChange {
         return false
     }
 }
+
+/// 画面の画像を、いつ保存してよいかの規則（SPEC §3.5）：前の保存から `minGap` 秒たち、かつ、前に保存した画面から変化があるとき。
+/// 時計を持たず、`now`（セッションの開始からの秒数）を引数で受ける。保存した枚数も数える（画像の通し番号）。
+public struct ScreenshotGate: Sendable, Equatable {
+    public let minGap: TimeInterval
+    private var lastSignature: ScreenSignature?
+    private var lastSavedAt: TimeInterval?
+    public private(set) var savedCount = 0
+
+    public init(minGap: TimeInterval) {
+        self.minGap = minGap
+    }
+
+    /// 間隔の条件を満たしているか（保存したことが無い、または、前の保存から `minGap` 秒以上）。画像の署名を作る前に、確かめる（間隔の中では、計算しない）。
+    public func isOpen(at now: TimeInterval) -> Bool {
+        lastSavedAt.map { now - $0 >= minGap } ?? true
+    }
+
+    /// 前に保存した画面から、変化があるか（保存したことが無ければ、常にあり）。
+    public func hasChanged(_ signature: ScreenSignature) -> Bool {
+        ScreenChange.hasChanged(from: lastSignature, to: signature)
+    }
+
+    /// 次に保存する画像の通し番号（1 から）。
+    public var nextIndex: Int { savedCount + 1 }
+
+    public mutating func didSave(_ signature: ScreenSignature, at now: TimeInterval) {
+        savedCount += 1
+        lastSignature = signature
+        lastSavedAt = now
+    }
+}

@@ -47,6 +47,37 @@ struct ScreenChangeTests {
     }
 }
 
+@Suite("ScreenshotGate: 画像を保存してよいかの規則")
+struct ScreenshotGateTests {
+    private let base = signature(makeImage())
+    private let changed = signature(makeImage(gray: 30))
+
+    @Test("最初は、間隔も変化も問わず、保存してよい。通し番号は 1 から")
+    func firstIsAlwaysOpen() {
+        let gate = ScreenshotGate(minGap: 10)
+        #expect(gate.isOpen(at: 0) && gate.hasChanged(base) && gate.nextIndex == 1 && gate.savedCount == 0)
+    }
+
+    @Test("保存すると、間隔（minGap 秒）の間は閉じ、変化の無い画面は保存しない。番号が進む")
+    func gapAndChange() {
+        var gate = ScreenshotGate(minGap: 10)
+        gate.didSave(base, at: 5)
+        #expect(gate.savedCount == 1 && gate.nextIndex == 2)
+        #expect(!gate.isOpen(at: 14.9) && gate.isOpen(at: 15), "ちょうど minGap 秒で、開く")
+        #expect(!gate.hasChanged(base), "同じ画面は、変化なし")
+        #expect(gate.hasChanged(changed))
+        gate.didSave(changed, at: 15)
+        #expect(gate.nextIndex == 3 && !gate.hasChanged(changed) && gate.hasChanged(base), "比べる相手は、最後に保存した画面")
+    }
+
+    @Test("minGap が 0 なら、いつでも開く")
+    func zeroGap() {
+        var gate = ScreenshotGate(minGap: 0)
+        gate.didSave(base, at: 3)
+        #expect(gate.isOpen(at: 3))
+    }
+}
+
 @Suite("ImageTools / ScreenshotStore")
 struct ScreenshotFilesTests {
     @Test("JPEG は、長い辺を 1280 以下に縮め、読み戻せる。小さい画像は、そのまま")
@@ -65,7 +96,7 @@ struct ScreenshotFilesTests {
 
     @Test("保存は、ディレクトリ 0700・ファイル 0600。最新の keep 枚だけ残し、終了で全部消す")
     func store() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ma-shots-" + UUID().uuidString, isDirectory: true)
+        let root = tempURL("shots")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ScreenshotStore(root: root, keep: 3)
         let session = UUID()
@@ -127,7 +158,7 @@ struct LiveSessionScreenTests {
     }
 
     private func tempStore() -> (ScreenshotStore, URL) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ma-shots-" + UUID().uuidString, isDirectory: true)
+        let root = tempURL("shots")
         return (ScreenshotStore(root: root), root)
     }
 
@@ -222,7 +253,7 @@ struct LiveSessionScreenTests {
 @Suite("ScreenshotStore: 終了後の保持（7 日）")
 struct ScreenshotRetentionTests {
     private func makeStore() -> (ScreenshotStore, URL) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ma-retention-" + UUID().uuidString, isDirectory: true)
+        let root = tempURL("retention")
         return (ScreenshotStore(root: root), root)
     }
 
