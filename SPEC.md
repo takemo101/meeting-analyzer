@@ -187,7 +187,7 @@ live-support との違いは、入力が「会議サービスの字幕」から�
 
 ## 10. 構成と制約
 
-- SwiftPM の 3 つのターゲット：`MeetingAnalyzerKit`（本体）、`MeetingAnalyzer`（実行ファイル。起動するだけ）、`MeetingAnalyzerKitTests`。macOS 26 以降・外部パッケージなし。構成の説明は [構成説明](docs/architecture.md)。
+- SwiftPM の 4 つのターゲット：`MeetingAnalyzerKit`（本体）、`MeetingAnalyzer`（実行ファイル。起動するだけ）、`CaptureProbe`（取り込みの実験用の実行ファイル。製品の CLI ではない）、`MeetingAnalyzerKitTests`。macOS 26 以降・外部パッケージなし。構成の説明は [構成説明](docs/architecture.md)。
 - 依存は下向きだけ：App・CLI → Session → Transcription・Bridge・Platform → Core。`Core` は AppKit を `import` しない。
 - 保存してよい設定・データは §5 のものだけ。増やすときは、先にこの文書を更新する。
 - 外部パッケージ・ネットワーク（ブリッジの `127.0.0.1` と、OS の仕組みによる言語モデルの取得を除く）を足さない。

@@ -2,16 +2,17 @@
 
 meeting-analyzer の Module の責務・状態の所有・時間と並行・失敗の関係を説明する。要件は [SPEC.md](../SPEC.md) が正本であり、本書は選択済みの構成とその理由を述べる。API の保証や、動作の成功証拠ではない（証拠は [検証記録](verification.md)）。設計原則の出典と選択は [参考にした設計原則](references.md)。
 
-**範囲**：本書は、いま実装されているもの（SPEC §8 で「実装済み」）の構成を述べる。マイク・システム音声・画面の取り込みと、メニューの操作は未実装で、置く場所の方針だけを「これから置く場所」に書く。
+**範囲**：本書は、いま実装されているもの（SPEC §8 で「実装済み」）の構成を述べる。マイク・システム音声・画面の取り込みの本接続と、メニューの操作は未実装。ただし、取り込みの部品（`Capture/`、ライブ入力の認識）は、実験用の `CaptureProbe` からだけ使われる試作としてあり、アプリ（`SessionPipeline`・メニュー）へは接続していない（「取り込みの試作」）。
 
 ## Module と責務
 
-外部パッケージはなく、Foundation・AVFoundation・Speech・AppKit だけを使う。コードは SwiftPM の 3 つのターゲットに分かれる。
+外部パッケージはなく、Foundation・AVFoundation・Speech・ScreenCaptureKit・AppKit だけを使う。コードは SwiftPM の 4 つのターゲットに分かれる。
 
 | ターゲット | 場所 | 役割 |
 |---|---|---|
 | `MeetingAnalyzer`（実行ファイル） | `Sources/MeetingAnalyzer/main.swift` | 引数を見て、GUI の起動か CLI の実行かを `MeetingAnalyzerApp` に任せるだけ |
 | `MeetingAnalyzerKit`（ライブラリ） | `Sources/MeetingAnalyzerKit/` | アプリ本体。単体テストから `@testable import` で使う |
+| `CaptureProbe`（実行ファイル） | `Sources/CaptureProbe/main.swift` | 取り込みの実験用（製品の CLI ではない）。マイク・システム音声・音声ファイルを実時間のライブ入力として認識し、遅延と音量を測る。権限は `--request` なしでは要求しない |
 | `MeetingAnalyzerKitTests` | `Tests/MeetingAnalyzerKitTests/` | Swift Testing の単体テスト（`scripts/test.sh`） |
 
 `MeetingAnalyzerKit` は、変わる理由ごとに 7 つのディレクトリへ分ける。**依存は上から下へだけ**向く。
@@ -48,9 +49,14 @@ flowchart TD
 | | `CLIRunner` | `Command` の実行。標準出力・標準エラー・文字起こし・送信の部品を差し替えられる（検証とテスト用）。**失敗の見せ方（JSON・終了コード）を決める唯一の場所** | なし |
 | `App/` | `Launch`（`MeetingAnalyzerApp`、`AppDelegate`）、`StatusMenu` | 起動の入口。引数なしなら、アクセサリ（Dock に出ない）として起動し、メニューバーの項目を置く。CLI なら、実行して終了コードを返す | `StatusMenu` の項目 |
 
-### これから置く場所（未実装）
+### 取り込みの試作（アプリへは未接続）
 
-- マイク・システム音声：`Capture/`（`Transcription` と同じ階層）。音声のバッファを、`AppleSpeechTranscriber` の「ライブ入力」へ渡す。更新は、`SessionPipeline.ingest` に、`Speaker`（マイク＝あなた、システム音声＝相手）つきで入る。
+- `Capture/`：`MicrophoneCapture`（`AVAudioEngine`。ボイス処理を有効にし、他のアプリの音の抑え込みを最小にする）と `SystemAudioCapture`（ScreenCaptureKit。選んだアプリの音だけ。自分の音は除く）。どちらも `AsyncStream<AVAudioPCMBuffer>` を返し、音声はメモリ上だけで扱う。権限の確認（`MicrophoneCapture.isAuthorized`、`ScreenRecordingPermission.isGranted`）は、要求をしない。`start` は、権限が未確認なら OS の確認を出すので、利用者の開始の操作の中だけで呼ぶ。
+- `Transcription/LiveTranscription.swift`：バッファの流れを `SpeechAnalyzer` の入力へ渡す。形式の変換（`AudioFormatConverter`。多チャンネルは先頭のみ）を含む。実時間の入力では `.fastResults` が要る（[検証記録](verification.md#実施記録)）。更新の `start`／`end` は、**その流れの最初のバッファを 0 とした秒数**。
+
+これからの接続（未実装）：
+
+- 更新は、`SessionPipeline.ingest` に、`Speaker`（マイク＝あなた、システム音声＝相手）つきで入る。**時計の課題**：`SessionPipeline` は、更新の秒数を時計に使うが、マイクとシステム音声は、別の流れで、それぞれ 0 から始まる。接続のとき、会議の開始からの経過で揃える（開始の時刻で、各流れの原点を決める）。
 - 画面：同じく `Capture/`。変化の検知（画面の署名の比較）は、画面にも OS にも依存しない純粋な規則として `Core/` に置き、取り込みだけを `Capture/` に置く。
 - メニューの操作・同意の確認：`App/`。会議の状態は `SessionLifecycle` が持ち、`App/` は表示と操作の受け渡しだけをする。
 - 時間（`tick`）：ライブでは、`SessionPipeline.tick(at:)` を、定期的（0.25 秒程度）に呼ぶ。メイン実行ループで動かし、会議が実行中でないときは動かさない。

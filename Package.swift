@@ -10,6 +10,8 @@ let package = Package(
         .target(name: "MeetingAnalyzerKit", path: "Sources/MeetingAnalyzerKit"),
         // 実行ファイル。起動するだけ。
         .executableTarget(name: "MeetingAnalyzer", dependencies: ["MeetingAnalyzerKit"], path: "Sources/MeetingAnalyzer"),
+        // 取り込みの試作（実験用。製品の CLI ではない）。マイク・システム音声の認識の遅延と音量を測る。
+        .executableTarget(name: "CaptureProbe", dependencies: ["MeetingAnalyzerKit"], path: "Sources/CaptureProbe"),
         .testTarget(name: "MeetingAnalyzerKitTests", dependencies: ["MeetingAnalyzerKit"], path: "Tests/MeetingAnalyzerKitTests"),
     ],
     swiftLanguageModes: [.v5]
