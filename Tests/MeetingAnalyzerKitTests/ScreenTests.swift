@@ -197,7 +197,9 @@ struct LiveSessionScreenTests {
         let live = session(screen, sink: sink, store: store, fake: fake, notify: { notices.add($0) })
         try await live.start()
         screen.fail(CaptureError.failed("ウィンドウが無い"))
-        try await Task.sleep(for: .milliseconds(200))
+        // 知らせが出るのを待つ（遅い環境でも通るよう、固定の待ちでなく、出るまで確かめる）。そのあと、2 回目が出ないことを見るため、少し待つ。
+        for _ in 0..<300 where notices.all.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(150))
         fake.emit(.others, "字幕は届く", final: true, 0, 1)
         let outcome = try await live.end(reason: .user)
         #expect(outcome.utterances == 1)
