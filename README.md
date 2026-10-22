@@ -41,7 +41,20 @@ just e2e            # 実機の native E2E（CLI・本物の音声と認識・�
 
 ## 使い方
 
-### 1. エージェントに、MCP サーバーを登録する（一度だけ）
+### 0. Claude Code を、コマンド 1 つで起動する（登録は不要）
+
+`just install` が、コマンド `meeting-analyzer` を `~/.local/bin` に置く（PATH に無ければ、足す）。
+
+```sh
+meeting-analyzer claude            # アプリ（窓口）が動いていなければ起動し、Claude Code を、文字起こしのチャンネルつきで起動する
+meeting-analyzer claude "今日の打ち合わせを聞いて、気になる点を教えて" --resume   # 引数は、そのまま claude へ渡す
+```
+
+- MCP の設定は、その起動だけに渡す（Claude Code の設定ファイルは、書き換えない）。字幕は、チャンネルで自動で届く。
+- Channels には、開発用の許可（`--dangerously-load-development-channels`）が付く。Claude Code の確認が出たら、内容を見て承認する。
+- 他のエージェント（pi・agy・opencode・omp）は、下の「登録」を使う。
+
+### 1. エージェントに、MCP サーバーを登録する（一度だけ。`meeting-analyzer claude` を使うなら不要）
 
 メニューの「エージェントに登録（コピー）」から、実行ファイルのパスを入れたコマンドをコピーして、ターミナルで実行できる（Claude Code・pi・agy・opencode・omp）。手で書くときは、次のとおり。
 
@@ -75,6 +88,7 @@ pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・agy（`agy mcp add …`）
 アプリと同じ実行ファイルに引数を付けると、CLI になる（ウィンドウは出ない）。
 
 ```sh
+$EXE claude [claude の引数...]            # Claude Code を、MCP サーバー（チャンネル）つきで起動する
 $EXE mcp [--channel]                      # エージェント向けの MCP サーバー（標準入出力）
 $EXE doctor                               # {"installed":true,"locale":"ja_JP","supported":true}
 $EXE transcribe sample.aiff               # 確定した結果を 1 行 1 件の JSON で出す
@@ -82,7 +96,7 @@ $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイル�
 $EXE --help
 ```
 
-- 失敗は、標準エラーの 1 行の JSON と、終了コード（1 使い方・2 入力・3 窓口・4 文字起こし）で返す。
+- 失敗は、標準エラーの 1 行の JSON と、終了コード（1 使い方・2 入力・3 窓口・4 文字起こし・5 エージェントを起動できない）で返す。
 - アプリの窓口は `~/Library/Application Support/MeetingAnalyzer/hub.sock`（`MEETING_ANALYZER_SOCKET` で変更）。`replay` は、同じ窓口を開けるので、アプリが起動していると使えない（終了コード 3）。
 
 ## プライバシー

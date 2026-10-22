@@ -3,6 +3,8 @@
 # 置き場所を変えるときは INSTALL_DIR を渡す（例: INSTALL_DIR=/Applications ./scripts/install.sh）。
 # 同じ場所で実行中のアプリは、SIGTERM で終了させてから置き換える（実行中のセッションは、appQuit で終わる）。
 # 入れたあと、アプリを起動する（起動したくないときは NO_OPEN=1）。
+# コマンド `meeting-analyzer`（例: meeting-analyzer claude）を、BIN_DIR（既定 ~/.local/bin）へ、シンボリックリンクで置く。
+# INSTALL_DIR を変えているとき（検証用）は、BIN_DIR を渡さない限り、置かない。
 # エージェントが起動した `mcp`（同じ実行ファイルの別プロセス）には、触れない。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -48,5 +50,12 @@ if [ -z "${NO_OPEN:-}" ]; then
     if [ -n "$(running_pids)" ]; then echo "起動しました（メニューバーの波形のアイコン）"
     else echo "install.sh: 起動を確認できませんでした（open \"$DEST\" で起動してください）" >&2; exit 1; fi
 fi
-echo "エージェントへの登録（Claude Code の例）: claude mcp add meeting-analyzer -- \"$EXE\" mcp"
+if [ -n "${BIN_DIR:-}" ] || [ -z "${INSTALL_DIR:-}" ]; then
+    BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
+    mkdir -p "$BIN_DIR"
+    ln -sfn "$EXE" "$BIN_DIR/meeting-analyzer"
+    echo "コマンド:  $BIN_DIR/meeting-analyzer（Claude Code を起動: meeting-analyzer claude）"
+    case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "注: $BIN_DIR が PATH にありません。シェルの設定に足してください" >&2 ;; esac
+fi
+echo "手で登録するなら（Claude Code の例）: claude mcp add meeting-analyzer -- \"$EXE\" mcp"
 echo "注: ad-hoc 署名のため、入れ直すたびに、マイク・画面収録の許可が外れることがある"

@@ -52,6 +52,7 @@ just e2e          # ./scripts/e2e.sh と同じ。ビルドし、bundle ID を変
 | R3 | `mcp --channel`（押し込み） | R1 と同じ内容が `get_events` で読める。加えて、`notifications/claude/channel` の通知が、`started` → `captions`（バッチ数と同数）→ `ended` の順に届き、本文に `<`・`>` を含まず、`meta.kind` が出来事の種類と一致する。`initialize` が `experimental` に `claude/channel` を宣言する | A15 |
 | R4 | 窓口が使用中（`replay` を保持中に、もう 1 つ `replay`） | 終了コード 3、`code` が `hub_unavailable` | A08 |
 | R5 | アプリが無い状態の `mcp` | `initialize` に応答し、ツールが `get_events` だけ。`get_events` が `connected: false`・出来事なし。標準入力を閉じると 0 で終了する | A15 |
+| C1 | `claude 会議を始めます --resume`（PATH の先頭に、引数を書き出すだけの偽の `claude`） | 偽の `claude` に置き換わる（終了コードが偽の 7）。引数が、利用者の引数 → `--mcp-config`（JSON：コマンドが実行ファイル、`args` が `["mcp","--channel"]`、`env` に窓口の場所）→ `--dangerously-load-development-channels server:meeting-analyzer-channel`（最後）の順。PATH に `claude` が無ければ、終了コード 5・`code` が `agent_unavailable` | A18 |
 | A1 | 引数なしで起動 | 6 秒以内に起動し、1.5 秒後も動いている。`activationPolicy` が `accessory`。通常のウィンドウ（レイヤー 0）が無い。窓口のソケットが 0600 で開いている。`mcp` がつながり、`get_events` が `connected: true`。SIGTERM で 5 秒以内に終了し、ソケットが消える | A09・A15 |
 
 ケースの期待値は、実行する前に決めたもので、結果を見て変えない。ハーネスが、期待を満たさない観測を fail にすることは、変異で確認した（[実施記録](#実施記録)）。
@@ -128,3 +129,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 
 - **対象**：`scripts/install.sh`。検証用に `INSTALL_DIR=/tmp/…` へ入れた（利用者の `~/Applications` へは入れていない）。
 - **観測**：既定で、入れたあとに `open` で起動し、プロセスの存在を確認して「起動しました」を出す（1 プロセス）。実行中に再実行すると、終了 → 置き換え → 起動し直し（1 プロセス）。`NO_OPEN=1` では起動しない。**不具合を見つけて直した**：実行中のアプリを探すとき、`/tmp` が `/private/tmp` に解決されるため、コマンド行が一致せず、起動を確認できなかった。入れ先を実パスにそろえた。起動したテスト用のプロセスは、自分で終了させた。
+
+### 2026-10-22 — `meeting-analyzer claude`（コマンド 1 つで Claude Code を起動）
+
+- **対象**：v0.1.0（`build/MeetingAnalyzer.app`）。環境：macOS 27.0.1、Apple M6、Swift 6.4。
+- **単体テスト**：89 件・15 スイート pass（引数の透過、起動の順序、MCP の設定の形と環境変数の引き渡し、アプリを起動する条件）。
+- **native E2E**：`./scripts/e2e.sh` — **12 件すべて pass**（C1 を追加）。**変異による確認**：利用者の引数を、`--mcp-config` の後ろへ移すと、C1 が fail した（変更は元に戻した）。
+- **実際の Claude Code（合成音声のみ）**：`say` の音声を `replay`（窓口を保持。窓口の場所は環境変数で隔離）で流し、**シンボリックリンク経由の** `meeting-analyzer claude -p "…" --allowedTools mcp__meeting-analyzer-channel__get_events` を実行した。Claude Code は、`--mcp-config`・チャンネルの指定を受けて起動し、`get_events` で `started`・`captions`・`ended` と相手の発話を報告した（終了コード 0）。ユーザーの Claude Code の設定は、変えていない。
+- **未確認**：Channels の押し込み（対話の起動で、字幕が自動で届くこと。開発用の許可の確認の画面を含む）、アプリが動いていないときに `open -b` でアプリが起動すること（実際の `~/Applications` のアプリでは、試していない）。

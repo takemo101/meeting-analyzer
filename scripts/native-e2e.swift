@@ -347,6 +347,33 @@ do {
     } else { record(id, .blocked, "mcp を起動できない") }
 }
 
+// ---------- C: コマンド 1 つでエージェントを起動する（claude は、偽物に置き換える。エージェントは起動しない） ----------
+do {
+    let id = "C1"
+    let stubDir = work + "/stub"
+    try FileManager.default.createDirectory(atPath: stubDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let argsFile = work + "/claude-args.txt"
+    let stub = stubDir + "/claude"
+    // 受け取った引数を 1 行ずつ書き出すだけの偽の claude。
+    try Data("#!/bin/bash\nprintf '%s\\n' \"$@\" > '\(argsFile)'\nexit 7\n".utf8).write(to: URL(fileURLWithPath: stub))
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stub)
+    let r = run(exe, ["claude", "会議を始めます", "--resume"], env: env.merging(["PATH": stubDir + ":/usr/bin:/bin"]) { $1 }, timeout: 30)
+    let args = ((try? String(contentsOfFile: argsFile, encoding: .utf8)) ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init).dropLast()
+    check(r.status == 7, "終了コード \(r.status)（偽の claude の 7 に置き換わっているはず）")
+    check(Array(args.prefix(2)) == ["会議を始めます", "--resume"], "利用者の引数が先頭にない: \(Array(args))")
+    check(args.suffix(2) == ["--dangerously-load-development-channels", "server:meeting-analyzer-channel"], "チャンネルの指定が最後にない")
+    if let i = args.firstIndex(of: "--mcp-config"), i + 1 < args.endIndex, let config = json(String(args[i + 1])),
+       let server = (config["mcpServers"] as? [String: Any])?["meeting-analyzer-channel"] as? [String: Any] {
+        check((server["command"] as? String).map { FileManager.default.isExecutableFile(atPath: $0) } == true, "MCP のコマンドが実行ファイルでない")
+        check(server["args"] as? [String] == ["mcp", "--channel"], "MCP の引数が違う")
+        check((server["env"] as? [String: String])?["MEETING_ANALYZER_SOCKET"] == socketPath, "窓口の場所を、mcp へ渡していない")
+    } else { check(false, "--mcp-config の JSON を読めない") }
+    // claude が無い PATH：エージェントを起動できない失敗（終了コード 5）。
+    let missing = run(exe, ["claude"], env: env.merging(["PATH": "/usr/bin:/bin"]) { $1 }, timeout: 30)
+    check(missing.status == 5 && json(lastLine(missing.err))?["code"] as? String == "agent_unavailable", "claude が無いときの失敗が違う: \(missing.status) \(missing.err)")
+    conclude(id, pass: "claude は、利用者の引数 → MCP の設定（--channel・窓口の場所）→ チャンネルの指定の順で渡して置き換わり、無ければ終了コード 5")
+} catch { record("C1", .blocked, "偽の claude を用意できない: \(error)") }
+
 // ---------- A: メニューバーのアプリとして起動・終了 ----------
 do {
     let id = "A1"

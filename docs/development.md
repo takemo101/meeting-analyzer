@@ -35,7 +35,7 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 |---|---|
 | `just build` | `./scripts/build.sh`。`build/MeetingAnalyzer.app`（Apple silicon）を ad-hoc 署名で作る。`VERSION=X.Y.Z` で版を指定でき、`SIGN_IDENTITY` を渡すと Developer ID で署名する |
 | `just run` | ビルドして `open` で起動する。メニューバーに常駐し、Dock・ウィンドウには出ない。終了はメニューの「終了」 |
-| `just install` | ビルドして、`~/Applications/MeetingAnalyzer.app` へ入れて、**起動する**（`./scripts/install.sh`。管理者権限は不要。`INSTALL_DIR` で場所、`NO_OPEN=1` で起動なし）。同じ場所で実行中のアプリ本体は、SIGTERM で終了させてから置き換え、入れたあとに起動し直す（エージェントが起動した `mcp` には触れない）。署名が ad-hoc なので、入れ直すたびに、マイク・画面収録の許可が外れることがある。登録コマンドは出力に出る |
+| `just install` | ビルドして、`~/Applications/MeetingAnalyzer.app` へ入れて、**起動する**（`./scripts/install.sh`。管理者権限は不要。`INSTALL_DIR` で場所、`NO_OPEN=1` で起動なし）。同じ場所で実行中のアプリ本体は、SIGTERM で終了させてから置き換え、入れたあとに起動し直す（エージェントが起動した `mcp` には触れない）。署名が ad-hoc なので、入れ直すたびに、マイク・画面収録の許可が外れることがある。コマンド `meeting-analyzer` を `BIN_DIR`（既定 `~/.local/bin`）へ、シンボリックリンクで置く（`INSTALL_DIR` を変えているときは、`BIN_DIR` を渡さない限り置かない）。登録コマンドは出力に出る |
 | `just cli <引数>` | ビルドして、実行ファイルを CLI として呼ぶ（例：`just cli doctor`） |
 | `just test` | `./scripts/test.sh`。単体テスト（Swift Testing）。音声・画面・ネットワークは使わない。Command Line Tools だけの環境では、`swift test` にマクロプラグインのパスを渡す必要があり、素の `swift test` は失敗する |
 | `just e2e` | ビルドして native E2E を実行する（[検証の入口](verification.md#検証の入口)） |

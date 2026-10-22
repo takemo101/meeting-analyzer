@@ -6,12 +6,13 @@ public enum AppInfo {
     public static let name = "meeting-analyzer"
 }
 
-/// CLI の失敗。終了コードは SPEC §3.9：1 = 使い方、2 = 入力、3 = 窓口（ハブ）、4 = 文字起こし。
+/// CLI の失敗。終了コードは SPEC §3.9：1 = 使い方、2 = 入力、3 = 窓口（ハブ）、4 = 文字起こし、5 = エージェントを起動できない。
 public enum CLIError: Error, Equatable {
     case usage(String)
     case input(String)
     case hub(code: String, message: String)
     case transcription(String)
+    case agent(String)
 
     public var exitCode: Int32 {
         switch self {
@@ -19,6 +20,7 @@ public enum CLIError: Error, Equatable {
         case .input: return 2
         case .hub: return 3
         case .transcription: return 4
+        case .agent: return 5
         }
     }
 
@@ -28,12 +30,13 @@ public enum CLIError: Error, Equatable {
         case .input: return "input"
         case .hub(let code, _): return code
         case .transcription: return "transcription"
+        case .agent: return "agent_unavailable"
         }
     }
 
     public var message: String {
         switch self {
-        case .usage(let text), .input(let text), .transcription(let text): return text
+        case .usage(let text), .input(let text), .transcription(let text), .agent(let text): return text
         case .hub(_, let text): return text
         }
     }
@@ -59,6 +62,8 @@ public enum Command: Equatable {
     case replay(ReplayOptions)
     /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
     case mcp(channel: Bool)
+    /// Claude Code を、このアプリの MCP サーバー（チャンネルつき）で起動する。`arguments` は、そのまま `claude` へ渡す。
+    case claude(arguments: [String])
 }
 
 public enum CommandParser {
@@ -92,6 +97,8 @@ public enum CommandParser {
                     locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0
                 )))
             }
+        case "claude":
+            return .success(.claude(arguments: rest))
         case "mcp":
             if rest.isEmpty { return .success(.mcp(channel: false)) }
             if rest == ["--channel"] { return .success(.mcp(channel: true)) }
@@ -136,6 +143,8 @@ meeting-analyzer — Mac の音声（マイク・システム音声）を文字�
   meeting-analyzer                         メニューバーのアプリを起動する
   meeting-analyzer mcp [--channel]         エージェント向けの MCP サーバー（標準入出力）。実行中のアプリから、文字起こしを受けて渡す。
                                            --channel で、Claude Code の Channels の通知（push）も出す
+  meeting-analyzer claude [claude の引数...]  Claude Code を、このアプリの MCP サーバー（Channels）つきで起動する（設定ファイルは書き換えない）。
+                                           アプリが動いていなければ、入れてあるアプリを起動する
   meeting-analyzer doctor [--locale L]     この Mac で、その言語のオンデバイス認識が使えるか調べる（既定 ja_JP）
   meeting-analyzer transcribe <音声ファイル> [--locale L]
                                            文字起こしの結果を、1 行 1 件の JSON で標準出力へ出す
@@ -144,6 +153,6 @@ meeting-analyzer — Mac の音声（マイク・システム音声）を文字�
                                            --wait：エージェントがつながるのを、再生の前に待つ（上限）／--hold：再生のあと、窓口を開けておく
   meeting-analyzer --version | --help
 
-終了コード  0 成功 / 1 使い方 / 2 入力 / 3 窓口（ハブ） / 4 文字起こし
+終了コード  0 成功 / 1 使い方 / 2 入力 / 3 窓口（ハブ） / 4 文字起こし / 5 エージェントを起動できない
 窓口        <データの置き場所>/hub.sock（Unix ドメインソケット。MEETING_ANALYZER_SOCKET で変更）
 """

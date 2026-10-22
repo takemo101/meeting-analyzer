@@ -28,17 +28,23 @@ public struct CLIRunner {
     private let out: @Sendable (String) -> Void
     private let err: @Sendable (String) -> Void
     private let updates: UpdatesProvider
+    private let replaceProcess: @Sendable (String, [String]) -> Int32
+    private let executablePath: @Sendable () -> String
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         out: @escaping @Sendable (String) -> Void,
         err: @escaping @Sendable (String) -> Void,
-        updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) }
+        updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) },
+        replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
+        executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path }
     ) {
         self.environment = environment
         self.out = out
         self.err = err
         self.updates = updates
+        self.replaceProcess = replaceProcess
+        self.executablePath = executablePath
     }
 
     /// 終了コードを返す。失敗は、標準エラーに 1 行の JSON（`{"ok":false,"code":...,"message":...}`）で出す。
@@ -51,6 +57,7 @@ public struct CLIRunner {
             case .doctor(let locale): try await doctor(locale)
             case .transcribe(let file, let locale): try await transcribe(file, locale)
             case .replay(let options): try await replay(options)
+            case .claude(let arguments): try launchClaude(arguments)
             case .mcp(let channel): await MCPRunner.run(mode: channel ? .channel : .tools, socketPath: RuntimePaths.hubSocket(environment: environment))
             }
             return 0
@@ -87,6 +94,19 @@ public struct CLIRunner {
                 out(Self.json(["text": update.text, "isFinal": true, "start": update.start, "end": update.end]))
             }
         } catch let error as TranscriptionError { throw error.cliError }
+    }
+
+    /// Claude Code を、MCP サーバー（チャンネル）つきで起動する。このプロセスを置き換えるので、成功すると戻らない。
+    private func launchClaude(_ userArguments: [String]) throws {
+        let ready = AgentLauncher.ensureAppRunning(environment: environment)
+        FileHandle.standardError.write(Data((ready
+            ? "meeting-analyzer: Claude Code を起動します（文字起こしは、チャンネルで届きます）\n"
+            : "meeting-analyzer: アプリ（窓口）に接続できません。Claude Code は起動しますが、アプリを起動するまで、文字起こしは届きません\n").utf8))
+        let arguments = AgentLauncher.claudeArguments(userArguments: userArguments, executable: executablePath(), environment: environment)
+        let code = replaceProcess("claude", arguments)
+        throw CLIError.agent(code == ENOENT
+            ? "claude が見つかりません（Claude Code を入れて、PATH を通してください）"
+            : "claude を起動できません（errno \(code)）")
     }
 
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。

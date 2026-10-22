@@ -46,6 +46,12 @@ struct CommandParserTests {
         #expect(parse(["mcp", "--other"]) == .failure(.usage("mcp に渡せるのは --channel だけです")))
     }
 
+    @Test("claude は、以降の引数を、そのまま渡す（オプションも、最初の発言も）")
+    func claude() {
+        #expect(parse(["claude"]) == .success(.claude(arguments: [])))
+        #expect(parse(["claude", "--resume", "--model", "opus", "会議を始めます"]) == .success(.claude(arguments: ["--resume", "--model", "opus", "会議を始めます"])))
+    }
+
     @Test("知らないコマンド・オプション、値の欠落、重複、不正な値は、使い方の誤り")
     func rejections() {
         for bad in [["bogus"], ["doctor", "--nope", "x"], ["doctor", "--locale"], ["doctor", "--locale", "--other"], ["doctor", "--locale", "a", "--locale", "b"], ["replay", "a.wav", "--speaker", "everyone"], ["replay", "a.wav", "--hold", "-1"], ["replay", "a.wav", "--hold", "soon"], ["replay", "a.wav", "--wait", "5000"], ["replay", "a.wav", "--bridge", "http://127.0.0.1:1"], ["doctor", "extra"]] {
@@ -54,12 +60,13 @@ struct CommandParserTests {
         }
     }
 
-    @Test("終了コードは、使い方 1・入力 2・窓口 3・文字起こし 4")
+    @Test("終了コードは、使い方 1・入力 2・窓口 3・文字起こし 4・エージェント 5")
     func exitCodes() {
         #expect(CLIError.usage("").exitCode == 1)
         #expect(CLIError.input("").exitCode == 2)
         #expect(CLIError.hub(code: "x", message: "").exitCode == 3)
         #expect(CLIError.transcription("").exitCode == 4)
+        #expect(CLIError.agent("").exitCode == 5)
     }
 }
 
@@ -172,6 +179,51 @@ struct CLIRunnerTests {
         #expect(code == 4)
         #expect(out.lines.isEmpty, "失敗した再生を、正常な終了として知らせない")
         #expect(!FileManager.default.fileExists(atPath: data.appendingPathComponent("sessions").path))
+    }
+
+    @Test("claude は、アプリの窓口を確かめ、MCP の設定（チャンネル）と利用者の引数を付けて、claude に置き換わる")
+    func claudeLaunch() async {
+        let out = Output(), err = Output()
+        let calls = Output()
+        let runner = CLIRunner(
+            environment: ["MEETING_ANALYZER_SOCKET": "/tmp/ma-none.sock"], out: { out.add($0) }, err: { err.add($0) },
+            updates: fakeUpdates([]),
+            replaceProcess: { command, arguments in calls.add(([command] + arguments).joined(separator: "\u{1F}")); return 0 },
+            executablePath: { "/Apps/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer" }
+        )
+        let code = await runner.run(.claude(arguments: ["会議を始めます", "--resume"]))
+        let call = calls.lines.first?.components(separatedBy: "\u{1F}") ?? []
+        #expect(call.first == "claude")
+        #expect(Array(call.dropFirst().prefix(2)) == ["会議を始めます", "--resume"], "利用者の引数が先")
+        #expect(call.suffix(2) == ["--dangerously-load-development-channels", "server:meeting-analyzer-channel"], "チャンネルの指定は、最後")
+        #expect(code == 5, "replaceProcess が戻った（置き換えに失敗した）なら、エージェントを起動できない失敗")
+        #expect(errorCode(err.lines.last) == "agent_unavailable")
+    }
+
+    @Test("MCP の設定は、このアプリの実行ファイルを --channel で呼ぶ。窓口を変えているときは、同じ値を mcp にも渡す")
+    func claudeMcpConfig() throws {
+        let plain = try #require(JSONSerialization.jsonObject(with: Data(AgentLauncher.mcpConfig(executable: "/x/y", environment: [:]).utf8)) as? [String: Any])
+        let server = try #require((plain["mcpServers"] as? [String: Any])?["meeting-analyzer-channel"] as? [String: Any])
+        #expect(server["command"] as? String == "/x/y" && server["args"] as? [String] == ["mcp", "--channel"])
+        #expect(server["env"] == nil)
+        let isolated = try #require(JSONSerialization.jsonObject(with: Data(AgentLauncher.mcpConfig(executable: "/x/y", environment: ["MEETING_ANALYZER_SOCKET": "/tmp/s.sock", "MEETING_ANALYZER_DATA_DIR": ""]).utf8)) as? [String: Any])
+        let env = ((isolated["mcpServers"] as? [String: Any])?["meeting-analyzer-channel"] as? [String: Any])?["env"] as? [String: String]
+        #expect(env == ["MEETING_ANALYZER_SOCKET": "/tmp/s.sock"], "空の値は渡さない")
+    }
+
+    @Test("アプリを起動するのは、窓口を既定の場所にしているときだけ。動いていれば、何もしない")
+    func ensureApp() throws {
+        let launched = Output()
+        let unreachable = shortSocketPath()
+        // 場所を変えている（検証・隔離）：実際のアプリは起動しない。
+        #expect(!AgentLauncher.ensureAppRunning(environment: ["MEETING_ANALYZER_SOCKET": unreachable], wait: 0.2, launch: { launched.add("x"); return true }))
+        #expect(launched.lines.isEmpty)
+        // 動いている：起動しない。
+        let hub = HubServer(socketPath: unreachable)
+        try hub.start()
+        defer { hub.stop() }
+        #expect(AgentLauncher.ensureAppRunning(environment: ["MEETING_ANALYZER_SOCKET": unreachable], wait: 0.2, launch: { launched.add("y"); return true }))
+        #expect(launched.lines.isEmpty)
     }
 
     @Test("transcribe は、確定した結果だけを 1 行ずつ出す")
