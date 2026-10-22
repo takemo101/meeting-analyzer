@@ -34,7 +34,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 ```sh
 just build          # build/MeetingAnalyzer.app（Apple silicon、ad-hoc 署名）
 just run            # メニューバーのアプリとして起動する（Dock・ウィンドウには出ない）
-just install        # ~/Applications へ入れる（INSTALL_DIR で変更。実行中の同じアプリは、終了して置き換える）
+just install        # ~/Applications へ入れて起動する（INSTALL_DIR で場所、NO_OPEN=1 で起動なし。実行中の同じアプリは、終了して置き換える）
 just test           # 単体テスト（Swift Testing）
 just e2e            # 実機の native E2E（CLI・本物の音声と認識・窓口と MCP・起動と終了）
 ```

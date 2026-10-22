@@ -40,7 +40,7 @@ Tests/MeetingAnalyzerKitTests/ 単体テスト（Swift Testing）
 justfile               開発用コマンド（build・run・cli・test・e2e）
 scripts/
   build.sh             build/MeetingAnalyzer.app を作る（Apple silicon、ad-hoc 署名）
-  install.sh           build/MeetingAnalyzer.app を、開発用に ~/Applications へ入れる
+  install.sh           build/MeetingAnalyzer.app を、開発用に ~/Applications へ入れて起動する
   test.sh              単体テスト（Swift Testing のマクロプラグインのパスを渡す）
   e2e.sh               bundle ID を変えたコピーで native E2E を実行する
   native-e2e.swift     実機の操作・期待値・report（CLI・本物の音声と認識・窓口と MCP・起動と終了）

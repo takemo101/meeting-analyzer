@@ -16,7 +16,7 @@ build:
 run: build
     open "{{app}}"
 
-# ビルドして、開発用に ~/Applications へ入れる（INSTALL_DIR で変更）。実行中の同じアプリは、終了してから置き換える
+# ビルドして、開発用に ~/Applications へ入れて、起動する（INSTALL_DIR で場所、NO_OPEN=1 で起動なし）。実行中の同じアプリは、終了してから置き換える
 install: build
     ./scripts/install.sh
 
