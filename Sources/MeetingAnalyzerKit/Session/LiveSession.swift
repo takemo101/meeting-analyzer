@@ -164,8 +164,7 @@ public actor LiveSession {
         try? lifecycle.end(reason)
         let now = clock()
         let event = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
-        // 画像は、セッションの終了で消す（SPEC §3.5）。
-        discardScreenshots()
+        // 画像は、終了のあとも残す（`ScreenshotStore.retentionDays` 日。過ぎたものは、アプリが消す。SPEC §3.5）。
         guard case .ended(_, _, _, _, _, _, _, let utterances, let path) = event else { return LiveSessionOutcome(utterances: pipeline.utteranceCount, transcriptPath: nil) }
         return LiveSessionOutcome(utterances: utterances, transcriptPath: path)
     }
@@ -266,6 +265,7 @@ public actor LiveSession {
         screenTicker = nil
     }
 
+    /// 会議が始まらなかったとき（開始に失敗）の画像を、消す。
     private func discardScreenshots() {
         screenshots?.deleteAll(sessionId: sessionId)
     }

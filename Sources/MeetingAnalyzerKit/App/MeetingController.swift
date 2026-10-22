@@ -46,9 +46,30 @@ final class MeetingController {
             Task { @MainActor in self?.agentCount = count; self?.onChange?() }
         }
         do { try hub.start() } catch let error as HubError { notice = FailureText.hub(error) } catch { notice = "エージェントへ渡す窓口を開けません" }
+        scheduleScreenshotCleanup()
     }
 
-    func stopHub() { hub.stop() }
+    func stopHub() {
+        hub.stop()
+        screenshotCleanup?.invalidate()
+    }
+
+    private var screenshotCleanup: Timer?
+
+    /// 終了から `ScreenshotStore.retentionDays` 日たった画面の画像を消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
+    func cleanScreenshots() {
+        let root = RuntimePaths.dataDirectory(environment: environment)
+        let active = session?.sessionId
+        Task.detached(priority: .utility) { ScreenshotStore(root: root).deleteExpired(except: active) }
+    }
+
+    private func scheduleScreenshotCleanup() {
+        cleanScreenshots()
+        screenshotCleanup?.invalidate()
+        screenshotCleanup = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.cleanScreenshots() }
+        }
+    }
 
     var hasActiveMeeting: Bool { session != nil }
 
@@ -121,6 +142,7 @@ final class MeetingController {
         guard !selection.isEmpty else { notice = "取り込む音声を選んでください"; return }
         notice = nil
         state = .working("開始処理中…")
+        cleanScreenshots()
         Task { await begin(selection) }
     }
 
@@ -156,6 +178,7 @@ final class MeetingController {
         defer { self.session = nil; state = .idle }
         do {
             let outcome = try await session.end(reason: reason)
+            defer { cleanScreenshots() }
             notice = "終了しました（発話 \(outcome.utterances) 件）"
         } catch {
             notice = "会議を終了できませんでした"

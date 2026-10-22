@@ -159,7 +159,8 @@ struct LiveSessionScreenTests {
         _ = try await live.end(reason: .user)
         #expect(screenshots(sink).count == 2, "同じ画面は、添えない（バッチは 3 つ目があるのに、画像は 2 枚のまま）")
         #expect(sink.events.filter { $0.kind == "captions" }.count == 3)
-        #expect(!FileManager.default.fileExists(atPath: store.directory(sessionId: live.sessionId).path), "終了で、画像は消える")
+        let kept = (try? FileManager.default.contentsOfDirectory(atPath: store.directory(sessionId: live.sessionId).path)) ?? []
+        #expect(kept.sorted() == ["shot-0001.jpg", "shot-0002.jpg"], "終了のあとも、画像は残る（`retentionDays` 日たつまで。エージェントが、あとから開ける）")
     }
 
     @Test("前の保存から指定の秒数がたつまでは、画面が変わっても、新しい画像を作らない")
@@ -214,5 +215,51 @@ struct LiveSessionScreenTests {
         fake.emit(.others, "音声だけ", final: true, 0, 1)
         _ = try await live.end(reason: .user)
         #expect(screenshots(sink).isEmpty)
+    }
+}
+
+
+@Suite("ScreenshotStore: 終了後の保持（7 日）")
+struct ScreenshotRetentionTests {
+    private func makeStore() -> (ScreenshotStore, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ma-retention-" + UUID().uuidString, isDirectory: true)
+        return (ScreenshotStore(root: root), root)
+    }
+
+    private func seed(_ store: ScreenshotStore, daysAgo: Double, now: Date) throws -> UUID {
+        let id = UUID()
+        let url = try store.save(Data([0xFF, 0xD8, 1]), sessionId: id, index: 1).get()
+        let when = now.addingTimeInterval(-daysAgo * 86_400)
+        try FileManager.default.setAttributes([.modificationDate: when], ofItemAtPath: url.deletingLastPathComponent().path)
+        return id
+    }
+
+    @Test("7 日以上たったセッションの画像だけを消す。ちょうど 7 日は消し、6 日は残す。消した数を返す")
+    func deletesOnlyExpired() throws {
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let old = try seed(store, daysAgo: 8, now: now), edge = try seed(store, daysAgo: 7, now: now), recent = try seed(store, daysAgo: 6, now: now), today = try seed(store, daysAgo: 0, now: now)
+        #expect(store.deleteExpired(now: now) == 2)
+        func exists(_ id: UUID) -> Bool { FileManager.default.fileExists(atPath: store.directory(sessionId: id).path) }
+        #expect(!exists(old) && !exists(edge) && exists(recent) && exists(today))
+        #expect(store.deleteExpired(now: now) == 0, "2 回目は、何も消さない")
+    }
+
+    @Test("実行中のセッションは、古くても消さない。screens/ の下の、UUID でない名前・ファイルには触れない。画像が無くても、失敗しない")
+    func skipsActiveAndForeign() throws {
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(store.deleteExpired() == 0, "screens/ が無くても、失敗しない")
+        let now = Date()
+        let active = try seed(store, daysAgo: 30, now: now)
+        let screens = root.appendingPathComponent("screens", isDirectory: true)
+        let foreign = screens.appendingPathComponent("not-a-session", isDirectory: true)
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-30 * 86_400)], ofItemAtPath: foreign.path)
+        try Data([1]).write(to: screens.appendingPathComponent("loose.jpg"))
+        #expect(store.deleteExpired(now: now, except: active) == 0)
+        #expect(FileManager.default.fileExists(atPath: store.directory(sessionId: active).path) && FileManager.default.fileExists(atPath: foreign.path))
+        #expect(store.deleteExpired(now: now) == 1, "実行中でなければ、30 日前のものは消える")
     }
 }
