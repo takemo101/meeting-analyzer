@@ -79,7 +79,8 @@ public final class SessionPipeline: @unchecked Sendable {
 
     /// セッションを終える。未送信の発話を出し切り、記録を書き、最後に終了の出来事を 1 回だけ出す。
     @discardableResult
-    public func finish(reason: EndReason, endedAt: Date = Date(), at now: TimeInterval) -> TranscriptEvent {
+    /// `report`：記録を書いたあと、終了の出来事を出す前に呼ぶ。資料（PDF）を作って、そのパスを返す（作れなければ nil）。終了の出来事の `reportPath` になる。
+    public func finish(reason: EndReason, endedAt: Date = Date(), at now: TimeInterval, report: (() -> String?)? = nil) -> TranscriptEvent {
         precondition(!finished, "finish は 1 回だけ")
         while batcher.hasPending { deliver(batcher.flush(at: now)) }
         finished = true
@@ -88,12 +89,18 @@ public final class SessionPipeline: @unchecked Sendable {
             let markdown = transcript.markdown(title: title, startedAt: startedAt, endedAt: endedAt)
             if case .success(let url) = store.writeTranscript(markdown, sessionId: sessionId) { transcriptPath = url.path }
         }
+        let reportPath = transcriptPath == nil ? nil : report?()
         let end = TranscriptEvent.ended(
             sessionId: sessionId, title: title, reason: reason, startedAt: startedAt, endedAt: endedAt,
-            batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath
+            batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath, reportPath: reportPath
         )
         sink.publish(end)
         return end
+    }
+
+    /// 資料の「記録」の行（開始時刻の順）。
+    public func reportLines() -> [ReportData.Line] {
+        transcript.ordered.map { ReportData.Line(at: $0.startedAt, speaker: $0.speaker.displayName, text: $0.text) }
     }
 
     private func deliver(_ utterances: [Utterance]) {

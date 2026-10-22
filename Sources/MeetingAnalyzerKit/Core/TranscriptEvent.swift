@@ -22,11 +22,11 @@ public enum TranscriptEvent: Equatable, Sendable {
     /// 字幕のバッチ。`sequence` は 1 から連続する。`screenshot` は、前の送信から画面が変わったときの、画面の JPEG の絶対パス。
     case captions(sessionId: String, sequence: Int, updates: [CaptionUpdate], screenshot: String? = nil)
     /// セッションの終了。エージェントは、これを受けて、サマリーを出す（SPEC §3.8）。
-    case ended(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?)
+    case ended(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?, reportPath: String? = nil)
 
     public var sessionId: String {
         switch self {
-        case .started(let id, _, _, _), .captions(let id, _, _, _), .ended(let id, _, _, _, _, _, _, _, _): return id
+        case .started(let id, _, _, _), .captions(let id, _, _, _), .ended(let id, _, _, _, _, _, _, _, _, _): return id
         }
     }
 
@@ -54,21 +54,21 @@ public enum TranscriptEvent: Equatable, Sendable {
 
     public static func ended(
         sessionId: UUID, title: String, reason: EndReason, startedAt: Date, endedAt: Date,
-        batches: Int, utterances: Int, transcriptPath: String?
+        batches: Int, utterances: Int, transcriptPath: String?, reportPath: String? = nil
     ) -> TranscriptEvent {
         let iso = ISO8601DateFormatter()
         return .ended(
             sessionId: sessionId.uuidString.lowercased(), title: title, reason: reason.rawValue,
             startedAt: iso.string(from: startedAt), endedAt: iso.string(from: endedAt),
             durationSeconds: max(0, Int(endedAt.timeIntervalSince(startedAt).rounded())),
-            batches: batches, utterances: utterances, transcriptPath: transcriptPath
+            batches: batches, utterances: utterances, transcriptPath: transcriptPath, reportPath: reportPath
         )
     }
 }
 
 extension TranscriptEvent: Codable {
     private enum Key: String, CodingKey {
-        case kind, sessionId, title, startedAt, sources, sequence, updates, screenshot, reason, endedAt, durationSeconds, batches, utterances, transcriptPath
+        case kind, sessionId, title, startedAt, sources, sequence, updates, screenshot, reason, endedAt, durationSeconds, batches, utterances, transcriptPath, reportPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,7 +84,8 @@ extension TranscriptEvent: Codable {
                 sessionId: sessionId, title: try c.decode(String.self, forKey: .title), reason: try c.decode(String.self, forKey: .reason),
                 startedAt: try c.decode(String.self, forKey: .startedAt), endedAt: try c.decode(String.self, forKey: .endedAt),
                 durationSeconds: try c.decode(Int.self, forKey: .durationSeconds), batches: try c.decode(Int.self, forKey: .batches),
-                utterances: try c.decode(Int.self, forKey: .utterances), transcriptPath: try c.decodeIfPresent(String.self, forKey: .transcriptPath)
+                utterances: try c.decode(Int.self, forKey: .utterances), transcriptPath: try c.decodeIfPresent(String.self, forKey: .transcriptPath),
+                reportPath: try c.decodeIfPresent(String.self, forKey: .reportPath)
             )
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "知らない kind: \(other)")
@@ -100,11 +101,11 @@ extension TranscriptEvent: Codable {
             try c.encode(title, forKey: .title); try c.encode(startedAt, forKey: .startedAt); try c.encode(sources, forKey: .sources)
         case .captions(_, let sequence, let updates, let screenshot):
             try c.encode(sequence, forKey: .sequence); try c.encode(updates, forKey: .updates); try c.encodeIfPresent(screenshot, forKey: .screenshot)
-        case .ended(_, let title, let reason, let startedAt, let endedAt, let duration, let batches, let utterances, let path):
+        case .ended(_, let title, let reason, let startedAt, let endedAt, let duration, let batches, let utterances, let path, let reportPath):
             try c.encode(title, forKey: .title); try c.encode(reason, forKey: .reason)
             try c.encode(startedAt, forKey: .startedAt); try c.encode(endedAt, forKey: .endedAt)
             try c.encode(duration, forKey: .durationSeconds); try c.encode(batches, forKey: .batches); try c.encode(utterances, forKey: .utterances)
-            try c.encodeIfPresent(path, forKey: .transcriptPath)
+            try c.encodeIfPresent(path, forKey: .transcriptPath); try c.encodeIfPresent(reportPath, forKey: .reportPath)
         }
     }
 }

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import PDFKit
 import Testing
 @testable import MeetingAnalyzerKit
 
@@ -212,5 +213,70 @@ struct LiveSessionScreenTests {
         fake.emit(.others, "音声だけ", final: true, 0, 1)
         _ = try await live.end(reason: .user)
         #expect(screenshots(sink).isEmpty)
+    }
+}
+
+@Suite("LiveSession: 会議のあとの資料（PDF）")
+struct LiveSessionReportTests {
+    private func rig(report: Bool, screen: FakeScreen?) -> (LiveSession, FakeInputs, RecordingSink, SessionStore, ScreenshotStore, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ma-live-report-" + UUID().uuidString, isDirectory: true)
+        let fake = FakeInputs(), sink = RecordingSink()
+        let store = SessionStore(root: root), shots = ScreenshotStore(root: root)
+        let live = LiveSession(
+            title: "資料の会議", speakers: [.others], inputs: fake.inputs, sink: sink, store: store, tickInterval: .seconds(60),
+            screen: screen?.feed, screenshots: screen == nil ? nil : shots, screenInterval: .milliseconds(20), screenMinGap: 0, report: report, notify: { _ in }
+        )
+        return (live, fake, sink, store, shots, root)
+    }
+
+    @Test("資料をオンにすると、終了で、PDF ができ、終了の出来事に reportPath が入り、画面の画像は、記録の下へ残る")
+    func createsReportAndKeepsScreens() async throws {
+        let (live, fake, sink, store, shots, root) = rig(report: true, screen: FakeScreen())
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await live.start()
+        fake.emit(.others, "来週のリリースの件です", final: true, 0, 2)
+        let outcome = try await live.end(reason: .user)
+
+        let reportPath = try #require(outcome.reportPath)
+        let sessionDirectory = store.transcriptURL(sessionId: live.sessionId).deletingLastPathComponent()
+        #expect(reportPath == sessionDirectory.appendingPathComponent("report.pdf").path)
+        guard case .ended(_, _, _, _, _, _, _, _, _, let eventPath)? = sink.events.last else { Issue.record("no ended"); return }
+        #expect(eventPath == reportPath, "終了の出来事が、資料の場所を伝える")
+        let text = PDFDocument(url: URL(fileURLWithPath: reportPath))?.string ?? ""
+        #expect(text.contains("来週のリリースの件です") && text.contains("画面 1 枚") && text.contains("画面（00:00）"))
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: sessionDirectory.appendingPathComponent("screens").path))?.count == 1, "画像は、記録の下へ移った")
+        #expect(!FileManager.default.fileExists(atPath: shots.directory(sessionId: live.sessionId).path), "元の置き場は消える")
+    }
+
+    @Test("資料がオフなら、PDF は作らず、終了で画像は消える（従来どおり）")
+    func offKeepsNothing() async throws {
+        let (live, fake, sink, store, shots, root) = rig(report: false, screen: FakeScreen())
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await live.start()
+        fake.emit(.others, "来週のリリースの件です", final: true, 0, 2)
+        let outcome = try await live.end(reason: .user)
+        #expect(outcome.reportPath == nil)
+        guard case .ended(_, _, _, _, _, _, _, _, _, let eventPath)? = sink.events.last else { Issue.record("no ended"); return }
+        #expect(eventPath == nil)
+        let sessionDirectory = store.transcriptURL(sessionId: live.sessionId).deletingLastPathComponent()
+        #expect(!FileManager.default.fileExists(atPath: sessionDirectory.appendingPathComponent("report.pdf").path))
+        #expect(!FileManager.default.fileExists(atPath: sessionDirectory.appendingPathComponent("screens").path))
+        #expect(!FileManager.default.fileExists(atPath: shots.directory(sessionId: live.sessionId).path))
+    }
+
+    @Test("何も話されなかった会議は、記録が無いので、資料も作らない。画面を選んでいなくても、記録だけの資料はできる")
+    func emptyAndNoScreen() async throws {
+        let (empty, _, _, _, _, root1) = rig(report: true, screen: FakeScreen())
+        defer { try? FileManager.default.removeItem(at: root1) }
+        try await empty.start()
+        #expect(try await empty.end(reason: .user).reportPath == nil)
+
+        let (plain, fake, _, _, _, root2) = rig(report: true, screen: nil)
+        defer { try? FileManager.default.removeItem(at: root2) }
+        try await plain.start()
+        fake.emit(.others, "画面なしの会議です", final: true, 0, 2)
+        let path = try #require(try await plain.end(reason: .user).reportPath)
+        let text = PDFDocument(url: URL(fileURLWithPath: path))?.string ?? ""
+        #expect(text.contains("画面なしの会議です") && text.contains("画面 0 枚"))
     }
 }

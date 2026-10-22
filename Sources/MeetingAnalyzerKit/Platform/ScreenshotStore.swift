@@ -34,6 +34,26 @@ public struct ScreenshotStore: Sendable {
         return .success(file)
     }
 
+    /// そのセッションの画像を、`destination`（資料のディレクトリ。0700）へ移す。移した画像の名前を、撮った順に返す。元のディレクトリは消す。
+    public func moveAll(sessionId: UUID, to destination: URL) -> [String] {
+        let source = directory(sessionId: sessionId)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: source.path) else { return [] }
+        let shots = names.filter { $0.hasPrefix("shot-") }.sorted()
+        guard !shots.isEmpty else { return [] }
+        do { try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) } catch { return [] }
+        var moved: [String] = []
+        for name in shots {
+            let target = destination.appendingPathComponent(name)
+            try? FileManager.default.removeItem(at: target)
+            if (try? FileManager.default.moveItem(at: source.appendingPathComponent(name), to: target)) != nil {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+                moved.append(name)
+            }
+        }
+        try? FileManager.default.removeItem(at: source)
+        return moved
+    }
+
     /// そのセッションの画像を、すべて消す（セッションの終了）。
     public func deleteAll(sessionId: UUID) {
         try? FileManager.default.removeItem(at: directory(sessionId: sessionId))

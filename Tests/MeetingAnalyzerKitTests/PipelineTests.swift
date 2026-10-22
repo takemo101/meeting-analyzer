@@ -22,7 +22,7 @@ struct EndedInfo {
     let reason: String, batches: Int, utterances: Int, durationSeconds: Int, transcriptPath: String?
 
     init?(_ event: TranscriptEvent) {
-        guard case .ended(_, _, let reason, _, _, let duration, let batches, let utterances, let path) = event else { return nil }
+        guard case .ended(_, _, let reason, _, _, let duration, let batches, let utterances, let path, _) = event else { return nil }
         self.reason = reason; self.batches = batches; self.utterances = utterances; self.durationSeconds = duration; self.transcriptPath = path
     }
 }
