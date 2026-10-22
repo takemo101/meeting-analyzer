@@ -63,7 +63,7 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 
 ## mikan の Issue 進行
 
-**まだ初期化していない**。使うなら、ツール導入の権限を確認し、ルートから `mikan init --key MA --name meeting-analyzer` を実行する（既存のローカルボードを上書き・削除しない）。以下は、shortnote で使っている進め方を、そのまま使う想定である。
+**初期化済み**（Issue の ID は `MIK-NNN`）。以下は、shortnote で使っている進め方と同じである。
 
 - `.mikan/` 全体は Git 管理外のローカル作業状態であり、別の clone へ Issue やボード設定は引き継がれない。配下を直接参照・編集せず、文書のリンク対象にも含めない。Issue の読取り、Status 更新、Report 追加は mikan MCP だけで行う。利用できる機能は `search_tools` で発見し、`get_tool_details` で schema と分類を確認し、読取り専用だけを `call_read_tool`、更新または未分類を `call_write_tool` から呼ぶ。
 - 実装 Issue は **`backlog → ready → active → completed`** の順で進める。各遷移の直前に現在の Status を再読取りし、期待する前状態に一致することを確認する。

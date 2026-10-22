@@ -431,3 +431,8 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 
 - **操作**：利用者の指示で、ルートから `but setup`（`but` 0.22.3）を実行した。作業ツリーは `gitbutler/workspace`、target は `refs/remotes/origin/main`、push remote は `origin`（`gitbutler.project.*` で確認）。実行前は、`main`＝`origin/main`、作業ツリーはきれいだった。以後の Git の書込みは `but`（AGENTS.md・開発手順を更新）。
 - **これ以前の変更**は、ローカルの Git で `main` に直接 commit した（v0.1.0〜v0.1.6）。この変更から、branch → PR → normal merge → `but pull` の流れにする。
+
+### 2026-10-23 — mikan の運用の開始
+
+- **状況**：利用者が `mikan init` を実行した。Issue の ID は、文書に書いていた `MA-NNN` でなく、**`MIK-NNN`**（最初の Issue は `MIK-001`）。AGENTS.md・開発手順を、初期化済み・`MIK` に直した。
+- **確認**：mikan の MCP で、Issue の作成（`create_issue`）・読取り（`get_issue`、`get_board`）・Status 遷移（`move_issue`）・Report の追加（`append_issue`）が動いた。`get_board` は、読取り専用でなく分類されているため、`call_write_tool` から呼ぶ。`create_issue` の `labels` は、未登録のラベルを拒否する（`Unknown label`）。
