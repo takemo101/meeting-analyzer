@@ -49,6 +49,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .idle:
             menu.addItem(microphoneItem())
             menu.addItem(systemItem())
+            menu.addItem(screenItem())
             menu.addItem(batchModeItem())
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
@@ -112,6 +113,40 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func copyRegistration(_ sender: NSMenuItem) {
         guard AgentRegistration.allCases.indices.contains(sender.tag) else { return }
         controller.copyRegistration(AgentRegistration.allCases[sender.tag])
+    }
+
+    /// 画面の取り込み：オフ・画面全体・起動中のアプリのウィンドウ。変化があったときだけ、縮小した画像を、字幕に添えて渡す。
+    private func screenItem() -> NSMenuItem {
+        let current = controller.screen
+        let item = NSMenuItem(title: "画面の取り込み: " + current.title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        func entry(_ title: String, _ selection: ScreenSelection) -> NSMenuItem {
+            let entry = NSMenuItem(title: title, action: #selector(selectScreen(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = ScreenChoice(selection: selection)
+            entry.state = current == selection ? .on : .off
+            return entry
+        }
+        submenu.addItem(entry("オフ", .off))
+        submenu.addItem(entry("画面全体（メインの画面）", .display))
+        submenu.addItem(.separator())
+        submenu.addItem(label("アプリのウィンドウ"))
+        let apps = controller.candidateApps()
+        if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
+        for app in apps { submenu.addItem(entry(app.name, .app(bundleID: app.bundleID, name: app.name))) }
+        item.submenu = submenu
+        return item
+    }
+
+    private final class ScreenChoice: NSObject {
+        let selection: ScreenSelection
+        init(selection: ScreenSelection) { self.selection = selection }
+    }
+
+    @objc private func selectScreen(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? ScreenChoice else { return }
+        controller.setScreen(choice.selection)
     }
 
     /// エージェントへ渡す、まとめ方（発話の区切り／会話の区切り／約 30 秒／約 5 秒）。

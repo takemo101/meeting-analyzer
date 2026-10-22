@@ -15,6 +15,8 @@ public final class SessionPipeline: @unchecked Sendable {
     private var streams: [Speaker: Stream] = [:]
     private var sequence = 0
     private var finished = false
+    /// 次のバッチへ添える画面の画像（まだ渡していない最新の 1 枚）。
+    private var pendingScreenshot: String?
 
     private struct Stream {
         var currentId = 0
@@ -37,6 +39,12 @@ public final class SessionPipeline: @unchecked Sendable {
     /// セッションの開始を知らせる（取り込む流れ付き）。
     public func begin(sources: [Speaker]) {
         sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources))
+    }
+
+    /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。
+    public func attachScreenshot(path: String) {
+        guard !finished else { return }
+        pendingScreenshot = path
     }
 
     /// 時間だけが進んだとき（更新が来ない間）の確認。静けさが十分なら、溜まった発話を送る。実際の取り込みでは、定期的に呼ぶ。
@@ -91,6 +99,7 @@ public final class SessionPipeline: @unchecked Sendable {
     private func deliver(_ utterances: [Utterance]) {
         guard !utterances.isEmpty else { return }
         sequence += 1
-        sink.publish(.captions(sessionId: sessionId, sequence: sequence, utterances: utterances, sessionStart: startedAt))
+        sink.publish(.captions(sessionId: sessionId, sequence: sequence, utterances: utterances, sessionStart: startedAt, screenshot: pendingScreenshot))
+        pendingScreenshot = nil
     }
 }

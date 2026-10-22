@@ -13,7 +13,7 @@ final class RecordingSink: EventSink, @unchecked Sendable {
     var kinds: [String] { events.map(\.kind) }
     /// 字幕のバッチ（順序どおり）。
     var batches: [(sequence: Int, updates: [CaptionUpdate])] {
-        events.compactMap { if case .captions(_, let sequence, let updates) = $0 { return (sequence, updates) } else { return nil } }
+        events.compactMap { if case .captions(_, let sequence, let updates, _) = $0 { return (sequence, updates) } else { return nil } }
     }
     var ends: [TranscriptEvent] { events.filter { $0.kind == "ended" } }
 }

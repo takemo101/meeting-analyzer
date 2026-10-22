@@ -19,6 +19,8 @@ final class MeetingController {
     private(set) var selection = AudioSelection()
     /// エージェントへ渡す、まとめ方（SPEC §3.6）。開始のたびに選ぶ（保存しない）。
     private(set) var batchMode = BatchMode.utterance
+    /// 画面の取り込み（SPEC §3.5）。開始のたびに選ぶ（保存しない）。
+    private(set) var screen = ScreenSelection.off
     var onChange: (() -> Void)?
 
     /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
@@ -61,6 +63,12 @@ final class MeetingController {
     func setMicrophone(_ enabled: Bool) {
         guard state == .idle else { return }
         selection.microphone = enabled
+        onChange?()
+    }
+
+    func setScreen(_ selection: ScreenSelection) {
+        guard state == .idle else { return }
+        screen = selection
         onChange?()
     }
 
@@ -135,6 +143,7 @@ final class MeetingController {
     // MARK: 内部
 
     private func begin(_ selection: AudioSelection) async {
+        let screenSelection = screen
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
@@ -145,6 +154,8 @@ final class MeetingController {
             sink: hub,
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
             policy: batchMode.policy,
+            screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
+            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
             notify: notify
         )
         do {
