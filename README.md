@@ -95,7 +95,7 @@ pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・agy（`agy mcp add …`）
 2. 一覧の meeting-analyzer を選び、「−」で**一度削除**する。
 3. もう一度「開始」する。許可の確認が出るので、許可する。
 
-ターミナルなら、`tccutil reset ScreenCapture dev.takemo101.meeting-analyzer`（マイクは `Microphone`）でも、同じ状態に戻せる。
+ターミナルなら、**`just reset-permissions`** で、画面収録とマイクの許可を、まとめて取り消せる（内部は `tccutil reset`）。`RESET_PERMISSIONS=1 just install` なら、入れる前に取り消す。`just uninstall` は、既定の場所のとき、アプリの削除と一緒に、許可も取り消す。
 
 マイク・画面収録の許可は、このアプリ（ad-hoc 署名のビルドは、ビルドのたびに外れることがある）に付く。スピーカーで聞くと、相手の声がマイクに回り込むことがある。ヘッドホンを使うと確実。
 

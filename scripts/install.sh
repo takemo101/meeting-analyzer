@@ -3,6 +3,7 @@
 # 置き場所を変えるときは INSTALL_DIR を渡す（例: INSTALL_DIR=/Applications ./scripts/install.sh）。
 # 同じ場所で実行中のアプリは、SIGTERM で終了させてから置き換える（実行中のセッションは、appQuit で終わる）。
 # 入れたあと、アプリを起動する（起動したくないときは NO_OPEN=1）。
+# RESET_PERMISSIONS=1 を渡すと、入れる前に、マイク・画面収録の許可を取り消す（古い許可が残っていて、「許可されていません」と出るとき）。
 # コマンド `meeting-analyzer`（例: meeting-analyzer claude）を、BIN_DIR（既定 ~/.local/bin）へ、シンボリックリンクで置く。
 # INSTALL_DIR を変えているとき（検証用）は、BIN_DIR を渡さない限り、置かない。
 # エージェントが起動した `mcp`（同じ実行ファイルの別プロセス）には、触れない。
@@ -18,6 +19,8 @@ mkdir -p "${INSTALL_DIR:-$HOME/Applications}"
 resolve_install_paths
 
 stop_running_app || { echo "install.sh: 10 秒たっても終了しません（置き換えません）" >&2; exit 1; }
+
+if [ -n "${RESET_PERMISSIONS:-}" ]; then reset_permissions; fi
 
 rm -rf "$DEST"
 ditto "$SRC" "$DEST"

@@ -35,3 +35,19 @@ stop_running_app() {
     done
     return 1
 }
+
+# アプリの bundle ID（マイク・画面収録の許可は、この ID に紐づく。コピー先が違っても、同じ ID なら、同じ許可）。検証では、BUNDLE_ID で別の ID を渡す。
+BUNDLE_ID="${BUNDLE_ID:-dev.takemo101.meeting-analyzer}"
+
+# マイク・画面収録の許可を、このアプリの分だけ取り消す（`tccutil reset`。管理者権限は不要）。
+# 取り消すと、次の「開始」で、OS の許可の確認が、もう一度出る。
+reset_permissions() {
+    local service
+    for service in ScreenCapture Microphone; do
+        if tccutil reset "$service" "$BUNDLE_ID" >/dev/null 2>&1; then
+            echo "許可を取り消しました: ${service}（${BUNDLE_ID}）"
+        else
+            echo "取り消せませんでした: ${service}（システム設定で、手で外してください）" >&2
+        fi
+    done
+}

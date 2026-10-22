@@ -186,3 +186,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **実際の pi・agy（隔離した設定。モデルは使っていない）**：`pi`（`PI_CODING_AGENT_DIR` を向ける）：自動で登録され、`pi mcp list` が「connected, 1 tool … tools: get_events」。`agy`（`HOME` を向ける）：自動で登録され、`agy mcp list` に `meeting-analyzer  stdio  enabled …`。
 - **未確認**：**omp**（実機の omp で、登録した MCP サーバーが接続できること。モデルなしで確認する手段が見つからなかった）、**opencode**（隔離した設定での `opencode mcp list` は、実行中の opencode のサーバーに繋がるためか、結果が安定せず、確認できなかった。形は、利用者の `opencode.json` の既存のエントリ（`mcp.<名前>`、`type: local`、`command` の配列）と同じ）、すべてのエージェントで、モデルを使った `get_events` の呼び出し、アプリが動いていないときに `open -b` でアプリが起動すること。
 - **見つけた事実**：利用者の実際の `~/.config/opencode/opencode.json` に、`mcp.servers.meeting-analyzer`（`~/Applications/…` を指す）があった。**メニューの「エージェントに登録（コピー）」が、以前、`opencode mcp add --global …` をコピーする作りで、opencode v2.1.2 のその書き込みが、`mcp.servers` という入れ子を作るため**（利用者が手で書く `mcp.<名前>` の形と揃わない）。メニューを、`opencode.json` の `mcp` へ足す JSON をコピーする形に直した。実際のファイルの `mcp.servers` は、書き換えていない（`meeting-analyzer opencode` が、正しい形の `mcp.meeting-analyzer` を足す。古い `servers` の 1 件は、利用者が消してよい）。なお、この確認で、その設定の控え（`opencode.json.bak`）にあった、古い認証用の値が、ツールの出力に 1 度表示された（記録には残していない）。
+
+### 2026-10-22 — uninstall・install での許可の取り消し（利用者の依頼）
+
+- **利用者の依頼**：uninstall や install のとき、画面収録などの許可を、一度取り消して、アプリも削除する必要はないか。
+- **変更**：`just uninstall` は、既定の場所のとき、**アプリを消す前に**、マイク・画面収録の許可を取り消す（`tccutil reset`）。`INSTALL_DIR` を変えているときは、`RESET_PERMISSIONS=1` を渡したときだけ（許可は bundle ID に紐づくので、検証用のコピーの取り除きが、本物の許可を巻き込まないため）。`just install` は、既定では取り消さない（許可が入れ直しをまたいで残るかを、確かめるため）。`RESET_PERMISSIONS=1` で、入れる前に取り消す。`just reset-permissions` で、許可だけを取り消す。
+- **実測**：`tccutil reset` は、アプリが LaunchServices に登録されているあいだは成功し、**アプリを削除したあとは「No such bundle identifier」で失敗する**（検証用に作った、別の bundle ID のコピーで確認）。そのため、uninstall は、取り消してから削除する順にした。
+- **確認の範囲**：取り消し→削除の順、既定でない場所では取り消さないこと、`install` の既定では取り消さないことを、検証用の bundle ID（`dev.takemo101.meeting-analyzer.e2e` など）で確認した。**利用者の本物の許可（`dev.takemo101.meeting-analyzer`）は、取り消していない**（実際の `just uninstall`・`just reset-permissions` は、実行していない）。
+- **不具合を見つけて直した**：メッセージの `$service（…）` が、全角の括弧を、変数名の一部として読み、文字化けしていた（`${service}` にした）。

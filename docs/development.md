@@ -36,7 +36,8 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 | `just build` | `./scripts/build.sh`。`build/MeetingAnalyzer.app`（Apple silicon）を ad-hoc 署名で作る。`VERSION=X.Y.Z` で版を指定でき、`SIGN_IDENTITY` を渡すと Developer ID で署名する |
 | `just run` | ビルドして `open` で起動する。メニューバーに常駐し、Dock・ウィンドウには出ない。終了はメニューの「終了」 |
 | `just install` | ビルドして、`~/Applications/MeetingAnalyzer.app` へ入れて、**起動する**（`./scripts/install.sh`。管理者権限は不要。`INSTALL_DIR` で場所、`NO_OPEN=1` で起動なし）。同じ場所で実行中のアプリ本体は、SIGTERM で終了させてから置き換え、入れたあとに起動し直す（エージェントが起動した `mcp` には触れない）。署名が ad-hoc なので、入れ直すたびに、マイク・画面収録の許可が外れることがある。コマンド `meeting-analyzer` を `BIN_DIR`（既定 `~/.local/bin`）へ、シンボリックリンクで置く（`INSTALL_DIR` を変えているときは、`BIN_DIR` を渡さない限り置かない）。登録コマンドは出力に出る |
-| `just uninstall` | `./scripts/uninstall.sh`。`just install` で入れたアプリ（`INSTALL_DIR`）と、それを指すコマンドのシンボリックリンク（`BIN_DIR`。別のものを指していれば残す）を取り除く。実行中なら、SIGTERM で終了させる。**会議の記録・エージェントの設定（MCP の登録）・OS の許可には触れない**（取り除き方を、出力に出す） |
+| `just uninstall` | `./scripts/uninstall.sh`。`just install` で入れたアプリ（`INSTALL_DIR`）と、それを指すコマンドのシンボリックリンク（`BIN_DIR`。別のものを指していれば残す）を取り除く。実行中なら、SIGTERM で終了させる。既定の場所のときは、**マイク・画面収録の許可も取り消す**（`tccutil reset`。bundle ID に紐づくので、`INSTALL_DIR` を変えているときは、`RESET_PERMISSIONS=1` を渡したときだけ）。**会議の記録・エージェントの設定（MCP の登録）には触れない**（取り除き方を、出力に出す） |
+| `just reset-permissions` | `./scripts/reset-permissions.sh`。このアプリのマイク・画面収録の許可を取り消す（次の「開始」で、OS の許可の確認が、もう一度出る）。設定の一覧ではオンなのに「許可されていません」と出るときに使う。`just install` に `RESET_PERMISSIONS=1` を付けると、入れる前に取り消す |
 | `just cli <引数>` | ビルドして、実行ファイルを CLI として呼ぶ（例：`just cli doctor`） |
 | `just test` | `./scripts/test.sh`。単体テスト（Swift Testing）。音声・画面・ネットワークは使わない。Command Line Tools だけの環境では、`swift test` にマクロプラグインのパスを渡す必要があり、素の `swift test` は失敗する |
 | `just e2e` | ビルドして native E2E を実行する（[検証の入口](verification.md#検証の入口)） |
