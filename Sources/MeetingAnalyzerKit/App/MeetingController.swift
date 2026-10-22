@@ -70,6 +70,14 @@ final class MeetingController {
 
     // MARK: 操作
 
+    /// エージェントへの登録の文を、クリップボードへ入れる（エージェントの設定は、自動では書き換えない）。
+    func copyRegistration(_ registration: AgentRegistration) {
+        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(registration.text(executable: executable), forType: .string)
+        notice = "コピーしました: \(registration.title)。ターミナルで実行してください"
+    }
+
     func start() {
         guard state == .idle else { return }
         guard !selection.isEmpty else { notice = "取り込む音声を選んでください"; return }

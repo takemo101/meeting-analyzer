@@ -62,6 +62,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             break
         }
         menu.addItem(.separator())
+        menu.addItem(registrationItem())
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
@@ -89,6 +91,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
         item.target = self
         return item
+    }
+
+    /// エージェントへの登録の文のコピー（MCP サーバー `mcp` を、エージェントに登録する）。
+    private func registrationItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "エージェントに登録（コピー）", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for (index, registration) in AgentRegistration.allCases.enumerated() {
+            let entry = NSMenuItem(title: registration.title, action: #selector(copyRegistration(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = index
+            submenu.addItem(entry)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func copyRegistration(_ sender: NSMenuItem) {
+        guard AgentRegistration.allCases.indices.contains(sender.tag) else { return }
+        controller.copyRegistration(AgentRegistration.allCases[sender.tag])
     }
 
     /// マイク（あなた）のオン／オフ。

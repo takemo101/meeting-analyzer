@@ -34,6 +34,8 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case captureStopped(Speaker)
     /// その発言者の認識が失敗した。他の流れは続く。
     case transcriptionFailed(Speaker, String)
+    /// 「あなた」の発話が、直近の「相手」の発話とほとんど同じ。相手の声が、マイクへ回り込んでいる疑い（ヘッドホンの案内）。セッションにつき 1 回。
+    case possibleEcho
 }
 
 public struct LiveSessionOutcome: Sendable, Equatable {
@@ -63,6 +65,8 @@ public actor LiveSession {
     private var segmentActive = false
     private var stopping = false
     private var ticker: Task<Void, Never>?
+    private var echo = EchoDetector()
+    private var echoReported = false
 
     private struct Running {
         let stream: LiveInputStream
@@ -168,7 +172,12 @@ public actor LiveSession {
 
     private func ingest(_ update: TranscriptionUpdate, speaker: Speaker, origin: TimeInterval) {
         guard segmentActive else { return }
-        pipeline.ingest(TranscriptionUpdate(text: update.text, isFinal: update.isFinal, start: update.start + origin, end: update.end + origin), speaker: speaker)
+        let shifted = TranscriptionUpdate(text: update.text, isFinal: update.isFinal, start: update.start + origin, end: update.end + origin)
+        pipeline.ingest(shifted, speaker: speaker)
+        if echo.observe(speaker: speaker, key: "\(speaker.rawValue)-\(shifted.start)", text: shifted.text, at: shifted.end), !echoReported {
+            echoReported = true
+            notify(.possibleEcho)
+        }
     }
 
     /// 取り込みを止め、認識が残りを確定して終わるのを待つ。待ちすぎたら、打ち切る。

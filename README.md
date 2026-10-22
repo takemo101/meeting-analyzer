@@ -18,8 +18,8 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 
 | できる | まだ |
 |---|---|
-| メニューバーのアプリから、取り込む音声（マイク・システム音声の全体またはアプリ）を選び、同意を確認して、開始・一時停止・再開・終了する。オンデバイスで文字にし、エージェントへ渡す窓口（Unix ドメインソケット）へ流し、記録を書く | **画面の取り込み**（SPEC §3.5）、自動終了、エコーが効かないときのヘッドホンの案内 |
-| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。実機では未確認） | omp・pi・agy・opencode での実機確認（opencode の登録方法は未調査） |
+| メニューバーのアプリから、取り込む音声（マイク・システム音声の全体またはアプリ）を選び、同意を確認して、開始・一時停止・再開・終了する。オンデバイスで文字にし、エージェントへ渡す窓口（Unix ドメインソケット）へ流し、記録を書く | **画面の取り込み**（SPEC §3.5）、自動終了。エコーの疑いは、メニューでヘッドホンを案内する（検出の当たりは未確認） |
+| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。実機では未確認）。メニューから、登録コマンドをコピー | omp・agy・opencode での確認（pi は接続まで確認済み） |
 | 音声ファイルの文字起こし（`transcribe`）・再生（`replay`）・この Mac で使えるかの確認（`doctor`） | |
 
 マイク・システム音声の実取り込み（権限を含む）と、メニューからの開始〜終了の操作は、実機での人間の確認がまだ済んでいない（[検証手順と記録](docs/verification.md)）。
@@ -43,6 +43,8 @@ just e2e            # 実機の native E2E（CLI・本物の音声と認識・�
 
 ### 1. エージェントに、MCP サーバーを登録する（一度だけ）
 
+メニューの「エージェントに登録（コピー）」から、実行ファイルのパスを入れたコマンドをコピーして、ターミナルで実行できる（Claude Code・pi・agy・opencode・omp）。手で書くときは、次のとおり。
+
 実行ファイルは `build/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer`（以下 `$EXE`。絶対パスで登録する）。MCP サーバーは、標準入出力で話す stdio のサーバーで、コマンドは `$EXE mcp`。
 
 ```sh
@@ -54,7 +56,7 @@ claude mcp add meeting-analyzer-channel -- "$EXE" mcp --channel
 claude --dangerously-load-development-channels server:meeting-analyzer-channel
 ```
 
-omp・pi・agy・opencode は、それぞれの MCP の登録（`omp`／`opencode` の `mcp add`、設定ファイル）で、コマンド `$EXE`・引数 `mcp` の stdio サーバーとして登録する（このアプリでの実機確認はまだ）。エージェントの設定ファイルは、自動では書き換えない。
+pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・agy（`agy mcp add …`）・opencode（`opencode mcp add --global …`）も、同じ形で登録できる。omp は `~/.omp/agent/mcp.json` に stdio サーバーを足す。**確認済みなのは、Claude Code（`get_events`）と、pi（接続とツールの一覧）だけ**。エージェントの設定ファイルは、自動では書き換えない。
 
 アプリが後から起動しても、エージェントを起動し直す必要はない（`mcp` が、窓口へつなぎ直す）。
 

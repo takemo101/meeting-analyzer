@@ -110,3 +110,48 @@ struct AudioSelectionTests {
         #expect(AudioSelection(microphone: false, system: .off).summary == "未選択")
     }
 }
+
+@Suite("EchoDetector: 相手の声のマイクへの回り込みの疑い")
+struct EchoDetectorTests {
+    private let sentence = "来週のリリースの件ですがテスト環境はいつ使えますか"
+
+    /// 発話を 1 つ見て、疑うかを返す（`#expect` の中では、変更する呼び出しを書けないので）。
+    private func see(_ detector: inout EchoDetector, _ speaker: Speaker, _ key: String, _ text: String, at time: TimeInterval) -> Bool {
+        detector.observe(speaker: speaker, key: key, text: text, at: time)
+    }
+
+    @Test("あなたの発話が、直近の相手の発話とほとんど同じなら、疑う（句読点・空白・一部の欠けがあっても）")
+    func detectsLeak() {
+        var detector = EchoDetector()
+        let first = see(&detector, .others, "o1", sentence, at: 10)
+        let full = see(&detector, .you, "y1", "来週のリリースの件ですが、テスト環境は いつ使えますか。", at: 11)
+        let partial = see(&detector, .you, "y2", "リリースの件ですがテスト環境はいつ", at: 12)
+        #expect(!first)
+        #expect(full)
+        #expect(partial, "マイクが、一部だけ拾っても")
+    }
+
+    @Test("無関係な発話・短い相づち・時間がたった相手の発話は、疑わない")
+    func ignoresUnrelated() {
+        var detector = EchoDetector()
+        _ = see(&detector, .others, "o1", sentence, at: 10)
+        let unrelated = see(&detector, .you, "y1", "金曜までに見積もりを出しておきます", at: 11)
+        let short = see(&detector, .you, "y2", "はい", at: 11)
+        let stale = see(&detector, .you, "y3", sentence, at: 21)
+        var empty = EchoDetector()
+        let none = see(&empty, .you, "y", sentence, at: 1)
+        #expect(!unrelated)
+        #expect(!short)
+        #expect(!stale, "10 秒より前の相手の発話は、比べない")
+        #expect(!none, "相手の発話がまだ無い")
+    }
+
+    @Test("相手の同じ発話は、最新の本文で置き換わる（途中の本文が古く残らない）")
+    func upsertsOthers() {
+        var detector = EchoDetector()
+        _ = see(&detector, .others, "o1", "今日は", at: 10)
+        _ = see(&detector, .others, "o1", sentence, at: 11)
+        let leak = see(&detector, .you, "y1", sentence, at: 12)
+        #expect(leak)
+    }
+}

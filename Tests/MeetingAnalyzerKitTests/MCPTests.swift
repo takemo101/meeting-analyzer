@@ -178,3 +178,39 @@ struct MCPServerTests {
         #expect(wire.notifications.isEmpty)
     }
 }
+
+@Suite("AgentRegistration: エージェントへの登録の文")
+struct AgentRegistrationTests {
+    private let exe = "/Users/me/Applications/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer"
+
+    @Test("コマンドは、実行ファイルのパスを 1 語として渡し、mcp を付ける。エージェントごとの書式が違う")
+    func commands() {
+        #expect(AgentRegistration.claudeCode.text(executable: exe) == "claude mcp add meeting-analyzer -- '\(exe)' mcp")
+        #expect(AgentRegistration.pi.text(executable: exe) == "pi mcp add meeting-analyzer -- '\(exe)' mcp")
+        #expect(AgentRegistration.agy.text(executable: exe) == "agy mcp add meeting-analyzer -- '\(exe)' mcp")
+        #expect(AgentRegistration.opencode.text(executable: exe) == "opencode mcp add --global meeting-analyzer -- '\(exe)' mcp")
+    }
+
+    @Test("Channels は、別の名前で --channel を付けて登録し、開発用の許可つきの起動も添える")
+    func channel() {
+        let lines = AgentRegistration.claudeCodeChannel.text(executable: exe).split(separator: "\n").map(String.init)
+        #expect(lines == [
+            "claude mcp add meeting-analyzer-channel -- '\(exe)' mcp --channel",
+            "claude --dangerously-load-development-channels server:meeting-analyzer-channel",
+        ])
+    }
+
+    @Test("空白や引用符を含むパスも、シェルで 1 語として読まれる")
+    func quoting() {
+        #expect(AgentRegistration.shellQuote("/Users/o'brien/My Apps/x") == "'/Users/o'\\''brien/My Apps/x'")
+        let text = AgentRegistration.claudeCode.text(executable: "/a b/it's")
+        #expect(text == "claude mcp add meeting-analyzer -- '/a b/it'\\''s' mcp")
+    }
+
+    @Test("omp の設定は、mcpServers の中に、stdio・command・args を持つ JSON")
+    func ompJSON() throws {
+        let object = try #require(JSONSerialization.jsonObject(with: Data(AgentRegistration.omp.text(executable: exe).utf8)) as? [String: Any])
+        let server = try #require((object["mcpServers"] as? [String: Any])?["meeting-analyzer"] as? [String: Any])
+        #expect(server["type"] as? String == "stdio" && server["command"] as? String == exe && server["args"] as? [String] == ["mcp"])
+    }
+}

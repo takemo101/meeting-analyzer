@@ -30,6 +30,8 @@ enum FailureText {
             return speaker == .you ? "マイクの取り込みが止まりました" : "システム音声の取り込みが止まりました（取り込み先のアプリを確認）"
         case .transcriptionFailed(let speaker, _):
             return "\(speaker.displayName)の文字起こしが止まりました"
+        case .possibleEcho:
+            return "相手の声がマイクに入っている可能性があります。ヘッドホンを使うと確実です"
         }
     }
 }

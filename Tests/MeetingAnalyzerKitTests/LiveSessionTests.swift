@@ -208,6 +208,31 @@ struct LiveSessionTests {
         #expect(await session.phase == .ended(.user))
     }
 
+    @Test("あなたの発話が相手の発話とほとんど同じなら、回り込みの疑いを 1 回だけ知らせる。会議は続く")
+    func echoIsReportedOnce() async throws {
+        let rig = Rig()
+        let session = rig.session()
+        try await session.start()
+        rig.fake.emit(.others, "来週のリリースの件ですがテスト環境はいつ使えますか", 0, 3)
+        rig.fake.emit(.you, "来週のリリースの件ですがテスト環境はいつ使えますか", 0.2, 3.2)
+        rig.fake.emit(.you, "来週のリリースの件ですがテスト環境はいつ使えますか。", 0.2, 3.5)
+        #expect(await eventually { rig.notices.all.contains(.possibleEcho) })
+        let outcome = try await session.end(reason: .user)
+        #expect(rig.notices.all.filter { $0 == .possibleEcho }.count == 1)
+        #expect(outcome.utterances == 2, "疑っても、発話は消さない")
+    }
+
+    @Test("無関係な発話では、回り込みを知らせない")
+    func noEchoNotice() async throws {
+        let rig = Rig()
+        let session = rig.session()
+        try await session.start()
+        rig.fake.emit(.others, "来週のリリースの件ですがテスト環境はいつ使えますか", 0, 3)
+        rig.fake.emit(.you, "金曜までに見積もりを出しておきます", 3.5, 6)
+        _ = try await session.end(reason: .user)
+        #expect(rig.notices.all.isEmpty)
+    }
+
     @Test("取り込みが勝手に止まったら知らせる。利用者が止めたときは知らせない")
     func unexpectedStopIsReported() async throws {
         let rig = Rig()
