@@ -20,6 +20,10 @@ run: build
 install: build
     ./scripts/install.sh
 
+# install で入れたアプリとコマンド（meeting-analyzer）を取り除く。実行中なら終了する。会議の記録・エージェントの設定・OS の許可には触れない
+uninstall:
+    ./scripts/uninstall.sh
+
 # ビルドして、実行ファイルを CLI として呼ぶ（例: just cli doctor / just cli replay sample.aiff --hold 60）
 cli *args: build
     "{{exe}}" "$@"

@@ -12,29 +12,12 @@ cd "$(dirname "$0")/.."
 SRC=build/MeetingAnalyzer.app
 [ -d "$SRC" ] || { echo "install.sh: $SRC がありません（先に just build）" >&2; exit 1; }
 
-DEST_DIR="${INSTALL_DIR:-$HOME/Applications}"
-mkdir -p "$DEST_DIR"
-# 実行中のプロセスのコマンド行は、シンボリックリンクを解決した実パスなので、それに合わせる（例: /tmp は /private/tmp）。
-DEST_DIR="$(cd "$DEST_DIR" && pwd -P)"
-DEST="$DEST_DIR/MeetingAnalyzer.app"
-EXE="$DEST/Contents/MacOS/MeetingAnalyzer"
+# shellcheck source=scripts/install-lib.sh
+. scripts/install-lib.sh
+mkdir -p "${INSTALL_DIR:-$HOME/Applications}"
+resolve_install_paths
 
-# 引数なしで起動したアプリ本体だけを探す（コマンド行が、実行ファイルのパスと完全に一致するもの）。
-running_pids() {
-    ps -axo pid=,command= | awk -v exe="$EXE" '{ pid = $1; $1 = ""; sub(/^ /, ""); if ($0 == exe) print pid }'
-}
-
-pids="$(running_pids)"
-if [ -n "$pids" ]; then
-    echo "実行中のアプリを終了します: $pids"
-    # shellcheck disable=SC2086
-    kill -TERM $pids
-    for _ in $(seq 1 100); do
-        [ -z "$(running_pids)" ] && break
-        sleep 0.1
-    done
-    [ -z "$(running_pids)" ] || { echo "install.sh: 10 秒たっても終了しません（置き換えません）" >&2; exit 1; }
-fi
+stop_running_app || { echo "install.sh: 10 秒たっても終了しません（置き換えません）" >&2; exit 1; }
 
 rm -rf "$DEST"
 ditto "$SRC" "$DEST"
@@ -50,12 +33,12 @@ if [ -z "${NO_OPEN:-}" ]; then
     if [ -n "$(running_pids)" ]; then echo "起動しました（メニューバーの波形のアイコン）"
     else echo "install.sh: 起動を確認できませんでした（open \"$DEST\" で起動してください）" >&2; exit 1; fi
 fi
-if [ -n "${BIN_DIR:-}" ] || [ -z "${INSTALL_DIR:-}" ]; then
-    BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-    mkdir -p "$BIN_DIR"
-    ln -sfn "$EXE" "$BIN_DIR/meeting-analyzer"
-    echo "コマンド:  $BIN_DIR/meeting-analyzer（Claude Code を起動: meeting-analyzer claude）"
-    case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "注: $BIN_DIR が PATH にありません。シェルの設定に足してください" >&2 ;; esac
+BIN="$(resolve_bin_dir)"
+if [ -n "$BIN" ]; then
+    mkdir -p "$BIN"
+    ln -sfn "$EXE" "$BIN/meeting-analyzer"
+    echo "コマンド:  $BIN/meeting-analyzer（Claude Code を起動: meeting-analyzer claude）"
+    case ":$PATH:" in *":$BIN:"*) ;; *) echo "注: $BIN が PATH にありません。シェルの設定に足してください" >&2 ;; esac
 fi
 echo "手で登録するなら（Claude Code の例）: claude mcp add meeting-analyzer -- \"$EXE\" mcp"
 echo "注: ad-hoc 署名のため、入れ直すたびに、マイク・画面収録の許可が外れることがある"
