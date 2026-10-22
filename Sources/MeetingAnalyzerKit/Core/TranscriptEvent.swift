@@ -17,8 +17,8 @@ public struct CaptionUpdate: Codable, Equatable, Sendable {
 
 /// 文字起こしの流れの出来事。エージェントへ渡す JSON の形（SPEC §3.7）。
 public enum TranscriptEvent: Equatable, Sendable {
-    /// セッションの開始。
-    case started(sessionId: String, title: String, startedAt: String, sources: [String])
+    /// セッションの開始。`preset` は、本人が選んだ、この会話の分析のしかた（SPEC §3.11）。
+    case started(sessionId: String, title: String, startedAt: String, sources: [String], preset: PresetInfo? = nil)
     /// 字幕のバッチ。`sequence` は 1 から連続する。`screenshot` は、前の送信から画面が変わったときの、画面の JPEG の絶対パス。
     case captions(sessionId: String, sequence: Int, updates: [CaptionUpdate], screenshot: String? = nil)
     /// セッションの終了。エージェントは、これを受けて、サマリーを出す（SPEC §3.8）。
@@ -26,7 +26,7 @@ public enum TranscriptEvent: Equatable, Sendable {
 
     public var sessionId: String {
         switch self {
-        case .started(let id, _, _, _), .captions(let id, _, _, _), .ended(let id, _, _, _, _, _, _, _, _): return id
+        case .started(let id, _, _, _, _), .captions(let id, _, _, _), .ended(let id, _, _, _, _, _, _, _, _): return id
         }
     }
 
@@ -48,8 +48,8 @@ public enum TranscriptEvent: Equatable, Sendable {
         return .captions(sessionId: sessionId.uuidString.lowercased(), sequence: sequence, updates: updates, screenshot: screenshot)
     }
 
-    public static func started(sessionId: UUID, title: String, startedAt: Date, sources: [Speaker]) -> TranscriptEvent {
-        .started(sessionId: sessionId.uuidString.lowercased(), title: title, startedAt: ISO8601DateFormatter().string(from: startedAt), sources: sources.map(\.rawValue))
+    public static func started(sessionId: UUID, title: String, startedAt: Date, sources: [Speaker], preset: PresetInfo? = nil) -> TranscriptEvent {
+        .started(sessionId: sessionId.uuidString.lowercased(), title: title, startedAt: ISO8601DateFormatter().string(from: startedAt), sources: sources.map(\.rawValue), preset: preset)
     }
 
     public static func ended(
@@ -68,7 +68,7 @@ public enum TranscriptEvent: Equatable, Sendable {
 
 extension TranscriptEvent: Codable {
     private enum Key: String, CodingKey {
-        case kind, sessionId, title, startedAt, sources, sequence, updates, screenshot, reason, endedAt, durationSeconds, batches, utterances, transcriptPath
+        case kind, sessionId, title, startedAt, sources, sequence, updates, screenshot, reason, endedAt, durationSeconds, batches, utterances, transcriptPath, preset
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,7 +76,7 @@ extension TranscriptEvent: Codable {
         let sessionId = try c.decode(String.self, forKey: .sessionId)
         switch try c.decode(String.self, forKey: .kind) {
         case "started":
-            self = .started(sessionId: sessionId, title: try c.decode(String.self, forKey: .title), startedAt: try c.decode(String.self, forKey: .startedAt), sources: try c.decode([String].self, forKey: .sources))
+            self = .started(sessionId: sessionId, title: try c.decode(String.self, forKey: .title), startedAt: try c.decode(String.self, forKey: .startedAt), sources: try c.decode([String].self, forKey: .sources), preset: try c.decodeIfPresent(PresetInfo.self, forKey: .preset))
         case "captions":
             self = .captions(sessionId: sessionId, sequence: try c.decode(Int.self, forKey: .sequence), updates: try c.decode([CaptionUpdate].self, forKey: .updates), screenshot: try c.decodeIfPresent(String.self, forKey: .screenshot))
         case "ended":
@@ -96,8 +96,8 @@ extension TranscriptEvent: Codable {
         try c.encode(kind, forKey: .kind)
         try c.encode(sessionId, forKey: .sessionId)
         switch self {
-        case .started(_, let title, let startedAt, let sources):
-            try c.encode(title, forKey: .title); try c.encode(startedAt, forKey: .startedAt); try c.encode(sources, forKey: .sources)
+        case .started(_, let title, let startedAt, let sources, let preset):
+            try c.encode(title, forKey: .title); try c.encode(startedAt, forKey: .startedAt); try c.encode(sources, forKey: .sources); try c.encodeIfPresent(preset, forKey: .preset)
         case .captions(_, let sequence, let updates, let screenshot):
             try c.encode(sequence, forKey: .sequence); try c.encode(updates, forKey: .updates); try c.encodeIfPresent(screenshot, forKey: .screenshot)
         case .ended(_, let title, let reason, let startedAt, let endedAt, let duration, let batches, let utterances, let path):

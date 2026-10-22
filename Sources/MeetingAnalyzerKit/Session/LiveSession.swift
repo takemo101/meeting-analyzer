@@ -98,7 +98,7 @@ public actor LiveSession {
         title: String, speakers: [Speaker], inputs: LiveInputs, sink: any EventSink, store: SessionStore?,
         policy: BatchingPolicy = .standard, clock: @escaping @Sendable () -> Date = { Date() },
         tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5),
-        screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10,
+        screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10, preset: PresetInfo? = nil,
         notify: @escaping @Sendable (LiveSessionNotice) -> Void
     ) {
         let startedAt = clock()
@@ -116,7 +116,7 @@ public actor LiveSession {
         self.screenshots = screenshots
         self.screenInterval = screenInterval
         self.screenMinGap = screenMinGap
-        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy)
+        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset)
     }
 
     public var phase: SessionLifecycle.Phase { lifecycle.phase }

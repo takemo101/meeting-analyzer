@@ -51,6 +51,18 @@ public struct ReplayOptions: Equatable {
     public var hold: Double
     /// 再生を始める前に、エージェントがつながるのを待つ秒数の上限（つながったら、すぐ始める）。
     public var wait: Double
+    /// 開始の出来事で渡す、分析のプリセットの ID（SPEC §3.11）。無指定なら、既定。
+    public var preset: String?
+
+    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil) {
+        self.file = file
+        self.speaker = speaker
+        self.title = title
+        self.locale = locale
+        self.hold = hold
+        self.wait = wait
+        self.preset = preset
+    }
 }
 
 public enum Command: Equatable {
@@ -58,6 +70,8 @@ public enum Command: Equatable {
     case help
     case version
     case doctor(locale: String)
+    /// 選べる分析のプリセットの一覧（SPEC §3.11）。
+    case presets
     case transcribe(file: String, locale: String)
     case replay(ReplayOptions)
     /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
@@ -76,12 +90,14 @@ public enum CommandParser {
         switch first {
         case "--help", "-h", "help": return rest.isEmpty ? .success(.help) : .failure(.usage("help に引数はありません"))
         case "--version", "-v": return rest.isEmpty ? .success(.version) : .failure(.usage("--version に引数はありません"))
+        case "presets":
+            return options(rest, allowed: [], positional: 0).map { _ in .presets }
         case "doctor":
             return options(rest, allowed: ["--locale"], positional: 0).map { .doctor(locale: $0.values["--locale"] ?? defaultLocale) }
         case "transcribe":
             return options(rest, allowed: ["--locale"], positional: 1).map { .transcribe(file: $0.positional[0], locale: $0.values["--locale"] ?? defaultLocale) }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait"], positional: 1).flatMap { parsed in
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
                 var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
@@ -94,7 +110,7 @@ public enum CommandParser {
                 return .success(.replay(ReplayOptions(
                     file: parsed.positional[0], speaker: speaker,
                     title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"]
                 )))
             }
         case _ where LaunchableAgent(rawValue: first) != nil:

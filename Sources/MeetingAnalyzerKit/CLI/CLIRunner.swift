@@ -31,6 +31,7 @@ public struct CLIRunner {
     private let replaceProcess: @Sendable (String, [String]) -> Int32
     private let setEnvironment: @Sendable ([String: String]) -> Void
     private let executablePath: @Sendable () -> String
+    private let presetStore: PresetStore
     private let outStyle: TerminalStyle
     private let errStyle: TerminalStyle
     /// 標準出力・標準エラーが端末なら、人が読む形で出す。そうでなければ（パイプ・ファイル）、JSON（SPEC §3.9）。
@@ -45,6 +46,7 @@ public struct CLIRunner {
         replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
         executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path },
         setEnvironment: @escaping @Sendable ([String: String]) -> Void = { for (name, value) in $0 { setenv(name, value, 1) } },
+        presetStore: PresetStore? = nil,
         outIsTerminal: Bool = false,
         errIsTerminal: Bool = false
     ) {
@@ -55,6 +57,7 @@ public struct CLIRunner {
         self.replaceProcess = replaceProcess
         self.setEnvironment = setEnvironment
         self.executablePath = executablePath
+        self.presetStore = presetStore ?? PresetStore.standard(environment: environment)
         self.outIsTerminal = outIsTerminal
         self.errIsTerminal = errIsTerminal
         self.outStyle = .detect(isTerminal: outIsTerminal, environment: environment)
@@ -69,6 +72,7 @@ public struct CLIRunner {
             case .help: out(CLIView.help(outStyle))
             case .version: out("\(AppInfo.name) \(AppInfo.version)")
             case .doctor(let locale): try await doctor(locale)
+            case .presets: listPresets()
             case .transcribe(let file, let locale): try await transcribe(file, locale)
             case .replay(let options): try await replay(options)
             case .launch(let agent, let arguments): try launch(agent, arguments)
@@ -98,6 +102,19 @@ public struct CLIRunner {
     private func doctor(_ localeId: String) async throws {
         let readiness = await SpeechReadiness.check(locale: Locale(identifier: localeId))
         out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
+    }
+
+    /// 選べるプリセット。端末では表、パイプでは 1 行 1 件の JSON（読めなかったファイルは、`skipped` つきで続ける）。
+    private func listPresets() {
+        let (presets, skipped) = presetStore.load()
+        if outIsTerminal {
+            out(CLIView.presets(presets, skipped: skipped, userDirectory: presetStore.userDirectory.path, outStyle))
+            return
+        }
+        for preset in presets {
+            out(Self.json(["id": preset.id, "name": preset.name, "source": preset.source == .user ? "user" : "builtin", "description": preset.summary]))
+        }
+        for item in skipped { out(Self.json(["skipped": item.file, "reason": item.reason])) }
     }
 
     private func readableFile(_ path: String) throws -> URL {
@@ -146,6 +163,13 @@ public struct CLIRunner {
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
+        var preset: PresetInfo?
+        if let id = options.preset {
+            guard let found = presetStore.all().first(where: { $0.id == id }) else { throw CLIError.input("プリセットが見つかりません: \(id)（meeting-analyzer presets で一覧を見られます）") }
+            preset = found.info
+        } else {
+            preset = presetStore.resolve(id: nil)?.info
+        }
         let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         do { try hub.start() } catch let error as HubError { throw error.cliError }
         defer { hub.stop() }
@@ -153,7 +177,7 @@ public struct CLIRunner {
         let deadline = Date().addingTimeInterval(options.wait)
         while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
 
-        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)))
+        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset)
         pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {

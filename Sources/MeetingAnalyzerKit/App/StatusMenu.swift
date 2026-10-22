@@ -51,6 +51,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             menu.addItem(systemItem())
             menu.addItem(screenItem())
             menu.addItem(batchModeItem())
+            menu.addItem(presetItem())
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
@@ -169,6 +170,33 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         guard BatchMode.allCases.indices.contains(sender.tag) else { return }
         controller.setBatchMode(BatchMode.allCases[sender.tag])
     }
+
+    /// 分析のしかた：プリセット（解説・提案・サマリーの出し方）。同梱のものと、自分のフォルダのもの。
+    private func presetItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "分析のプリセット: " + controller.presetName, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        let selected = controller.presetStore.resolve(id: controller.presetID)?.id
+        for preset in controller.presets() {
+            let entry = NSMenuItem(title: preset.name + (preset.source == .user ? "（自分）" : ""), action: #selector(selectPreset(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = preset.id
+            entry.toolTip = preset.summary.isEmpty ? nil : preset.summary
+            entry.state = preset.id == selected ? .on : .off
+            submenu.addItem(entry)
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(action("プリセットのフォルダを開く（自分のものを足す）", #selector(openPresetFolder)))
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func selectPreset(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        controller.setPreset(id)
+    }
+
+    @objc private func openPresetFolder() { controller.openPresetFolder() }
 
     /// マイク（本人）のオン／オフ。
     private func microphoneItem() -> NSMenuItem {

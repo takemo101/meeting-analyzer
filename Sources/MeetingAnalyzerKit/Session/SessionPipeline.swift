@@ -24,7 +24,11 @@ public final class SessionPipeline: @unchecked Sendable {
         var version = 0
     }
 
-    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard) {
+    /// 選んだ分析のしかた。開始の出来事で、エージェントへ渡す。
+    private let preset: PresetInfo?
+
+    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard, preset: PresetInfo? = nil) {
+        self.preset = preset
         self.sessionId = sessionId
         self.title = title
         self.startedAt = startedAt
@@ -38,7 +42,7 @@ public final class SessionPipeline: @unchecked Sendable {
 
     /// セッションの開始を知らせる（取り込む流れ付き）。
     public func begin(sources: [Speaker]) {
-        sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources))
+        sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset))
     }
 
     /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。

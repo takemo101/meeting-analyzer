@@ -13,7 +13,7 @@
 - [構成説明](docs/architecture.md)：Module の責務・状態の所有・時間と並行・失敗の扱い。
 - [検証手順と記録](docs/verification.md)：SPEC の受け入れ条件を観測する方法、実際に確認した範囲、人間の確認が要る範囲。
 - [macOS 共通検証スキル](.agents/skills/verifying-macos-apps/SKILL.md) と [meeting-analyzer 固有レシピ](.agents/skills/verifying-meeting-analyzer/SKILL.md)：実機の検証では両方を読む。共通の操作・期待値・証拠判定を実在するケース／コマンドへ対応付け、SPEC の条件や実施権限を増減しない。
-- [エージェント向け skill](skills/meeting-analyzer/SKILL.md)：会議の終了の合図を受けたエージェントが、サマリーを出す手順。製品の動作の一部なので、SPEC §3.8 と合わせて保つ。
+- [エージェント向け skill](skills/meeting-analyzer/SKILL.md)：このアプリを使うのに必要な最小限（データの扱い・出来事の形・境界）。分析のしかた（解説・提案・サマリー）は、[プリセット](docs/presets.md)（`presets/`）。どちらも製品の動作の一部なので、SPEC §3.8・§3.11 と合わせて保つ。
 
 ## 作業開始と実施権限
 

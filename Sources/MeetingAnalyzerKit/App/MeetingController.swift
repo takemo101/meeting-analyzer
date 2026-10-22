@@ -21,6 +21,9 @@ final class MeetingController {
     private(set) var batchMode = BatchMode.utterance
     /// 画面の取り込み（SPEC §3.5）。開始のたびに選ぶ（保存しない）。
     private(set) var screen = ScreenSelection.off
+    /// 分析のしかた（プリセット。SPEC §3.11）。開始のたびに選ぶ（保存しない）。
+    private(set) var presetID = AnalysisPreset.defaultID
+    let presetStore: PresetStore
     var onChange: (() -> Void)?
 
     /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
@@ -33,6 +36,7 @@ final class MeetingController {
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.environment = environment
+        presetStore = PresetStore.standard(environment: environment)
         hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
     }
 
@@ -70,6 +74,24 @@ final class MeetingController {
         guard state == .idle else { return }
         screen = selection
         onChange?()
+    }
+
+    /// 選べるプリセット（同梱と、自分のフォルダのもの）。
+    func presets() -> [AnalysisPreset] { presetStore.all() }
+
+    /// 選んでいるプリセットの名前（選んだものが無くなっていれば、既定）。
+    var presetName: String { presetStore.resolve(id: presetID)?.name ?? "なし" }
+
+    func setPreset(_ id: String) {
+        guard state == .idle else { return }
+        presetID = id
+        onChange?()
+    }
+
+    /// 自分のプリセットを置くフォルダを開く（無ければ、テンプレートつきで作る）。
+    func openPresetFolder() {
+        guard let folder = presetStore.prepareUserDirectory() else { notice = "プリセットのフォルダを作れません"; return }
+        NSWorkspace.shared.open(folder)
     }
 
     func setBatchMode(_ mode: BatchMode) {
@@ -156,6 +178,7 @@ final class MeetingController {
             policy: batchMode.policy,
             screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
             screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
+            preset: presetStore.resolve(id: presetID)?.info,
             notify: notify
         )
         do {

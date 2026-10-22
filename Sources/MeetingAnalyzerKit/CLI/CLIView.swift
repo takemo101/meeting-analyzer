@@ -23,10 +23,11 @@ enum CLIView {
         ], label: command))
         lines.append("")
         lines += style.section("調べる・試す", style.table([
+            ("presets", ["選べる分析のプリセット（解説・提案・サマリーの出し方）を一覧にする。自分のプリセットは、フォルダに置く"]),
             ("doctor [--locale L]", ["その言語のオンデバイス認識が、この Mac で使えるか調べる（既定 ja_JP）"]),
             ("transcribe <音声ファイル> [--locale L]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))
@@ -90,6 +91,18 @@ enum CLIView {
     }
 
     // MARK: 調べる・試す
+
+    static func presets(_ presets: [AnalysisPreset], skipped: [PresetStore.Skipped], userDirectory: String, _ style: TerminalStyle) -> String {
+        var rows: [(name: String, text: [String])] = presets.map { preset in
+            (preset.id, [style.bold(preset.name) + (preset.source == .user ? style.dim("（自分）") : "") + (preset.id == AnalysisPreset.defaultID ? style.dim("  既定") : "")] + (preset.summary.isEmpty ? [] : [style.dim(preset.summary)]))
+        }
+        if presets.isEmpty { rows = [("", [style.warning("プリセットがありません")])] }
+        var lines = [style.bold("分析のプリセット")] + style.table(rows, label: style.cyan).map { "  " + $0 }
+        for item in skipped { lines.append("  " + style.warning("\(item.file)：\(item.reason)")) }
+        lines.append("")
+        lines.append(style.dim("自分のプリセット：\(userDirectory)/ に、`<ID>.md` で置く（メニューの「プリセットのフォルダを開く」でも開ける）"))
+        return lines.joined(separator: "\n")
+    }
 
     static func doctor(_ readiness: SpeechReadiness, _ style: TerminalStyle) -> String {
         let status: String

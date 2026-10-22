@@ -34,7 +34,9 @@ checks() {
     [ -s "${app}/Contents/Resources/SKILL.md" ] || fail "同梱の skill（Resources/SKILL.md）が無い"
     [ -s "${app}/Contents/Resources/meeting-analyzer-pi.js" ] || fail "pi・omp の拡張（Resources/meeting-analyzer-pi.js）が無い"
     [ -s "${app}/Contents/Resources/meeting-analyzer-opencode/server.js" ] && [ -s "${app}/Contents/Resources/meeting-analyzer-opencode/package.json" ] || fail "opencode のプラグイン（Resources/meeting-analyzer-opencode/）が無い"
-    ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン）"
+    [ -s "${app}/Contents/Resources/presets/standard.md" ] || fail "既定のプリセット（Resources/presets/standard.md）が無い"
+    [ "$(ls "${app}/Contents/Resources/presets"/*.md | wc -l | tr -d " ")" -ge 6 ] || fail "同梱のプリセットが 6 件に満たない"
+    ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン、プリセット）"
 
     local plist="${app}/Contents/Info.plist"
     if [ -n "${EXPECTED_VERSION}" ]; then

@@ -71,6 +71,10 @@ try FileManager.default.createDirectory(atPath: dataDir, withIntermediateDirecto
 let socketDir = "/tmp/ma-e2e-" + String((0..<8).map { _ in "abcdef0123456789".randomElement()! })
 try FileManager.default.createDirectory(atPath: socketDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 let socketPath = socketDir + "/hub.sock"
+/// 自分のプリセット（SPEC §3.11）。検証用のデータの置き場所の `presets/` に置く（利用者のものには、触れない）。
+let customPresetBody = "E2E のカスタムの指示：結論を先に、3 行で出す。"
+try FileManager.default.createDirectory(atPath: dataDir + "/presets", withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+try Data("---\nname: E2Eカスタム\ndescription: 検証用の自分のプリセット\n---\n\(customPresetBody)\n".utf8).write(to: URL(fileURLWithPath: dataDir + "/presets/e2e-custom.md"))
 let env = ["MEETING_ANALYZER_DATA_DIR": dataDir, "MEETING_ANALYZER_SOCKET": socketPath]
 print("meeting-analyzer native E2E  executable=\(exe)  artifacts=\(work)")
 
@@ -93,6 +97,19 @@ do {
     let r = run(exe, ["replay", "/nonexistent/x.aiff"], env: env, timeout: 10)
     check(r.status == 2, "終了コード \(r.status)（読めない音声は 2）")
     conclude("Z3", pass: "読めない音声ファイルは、入力の失敗（終了コード 2）")
+}
+do {
+    let r = run(exe, ["presets"], env: env, timeout: 10)
+    check(r.status == 0, "終了コード \(r.status): \(r.err)")
+    let rows = r.out.split(separator: "\n").compactMap { json(String($0)) }
+    let ids = rows.compactMap { $0["id"] as? String }
+    check(ids.first == "standard", "既定が先頭でない: \(ids)")
+    check(Set(ids) == ["standard", "minutes", "tech-review", "learning", "video", "negotiation", "e2e-custom"], "プリセットの一覧が想定と違う: \(ids)")
+    check(rows.first { $0["id"] as? String == "e2e-custom" }?["source"] as? String == "user", "自分のプリセットが user でない")
+    check(rows.first { $0["id"] as? String == "minutes" }?["source"] as? String == "builtin", "同梱のプリセットが builtin でない")
+    let bad = run(exe, ["replay", exe, "--preset", "nope"], env: env, timeout: 10)
+    check(bad.status == 2 && lastLine(bad.err).contains("プリセットが見つかりません"), "無い ID の扱いが想定と違う: \(bad.status) \(bad.err)")
+    conclude("Z4", pass: "presets が、同梱 6 件と自分のプリセットを、既定を先頭に一覧にする。無い ID の replay は、入力の失敗（終了コード 2）")
 }
 
 // ---------- 音声認識の前提 ----------
@@ -238,7 +255,7 @@ func collectEvents(_ mcp: McpClient, timeout: Double) -> [[String: Any]] {
 }
 
 // ---------- R: 音声ファイル → 文字起こし → 窓口 → エージェント側の MCP ----------
-func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bool = false) {
+func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bool = false, preset: String? = nil, expectedPreset: (id: String, name: String) = ("standard", "標準")) {
     guard asrReady, sampleReady else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason); return }
     // エージェント側（mcp）を先に起動する。窓口が開くまでは、つなぎ直しながら待つ。
     guard let mcp = McpClient(exe, channel: channel, env: env) else { record(id, .blocked, "mcp を起動できない"); return }
@@ -252,7 +269,7 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
     check((result?["instructions"] as? String)?.isEmpty == false, "instructions が空")
 
     // 再生：窓口を開き、エージェントがつながるのを待ってから、再生を始める。終わっても、窓口を少しの間、開けておく。
-    guard let replay = Child(exe, ["replay", sample, "--speaker", speaker, "--title", "e2e-\(id)", "--wait", "30", "--hold", "6"], env: env) else {
+    guard let replay = Child(exe, ["replay", sample, "--speaker", speaker, "--title", "e2e-\(id)", "--wait", "30", "--hold", "6"] + (preset.map { ["--preset", $0] } ?? []), env: env) else {
         record(id, .blocked, "replay を起動できない"); return
     }
     defer { replay.stop() }
@@ -288,6 +305,10 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
     check(latest.contains("リリース"), "認識結果に「リリース」がない: \(latest)")
     check(latest.contains("テスト環境"), "認識結果に「テスト環境」がない: \(latest)")
     check((bodies.first?["sources"] as? [String]) == [speaker], "started の sources が想定と違う")
+    let carried = bodies.first?["preset"] as? [String: Any]
+    check(carried?["id"] as? String == expectedPreset.id && carried?["name"] as? String == expectedPreset.name, "started の preset が想定と違う: \(String(describing: carried))")
+    check((carried?["instructions"] as? String ?? "").count > 20, "preset の instructions が空に近い")
+    if expectedPreset.id == "e2e-custom" { check(carried?["instructions"] as? String == customPresetBody, "自分のプリセットの本文が、そのまま届いていない") }
 
     if let end = bodies.last(where: { $0["kind"] as? String == "ended" }) {
         check(end["reason"] as? String == "user", "reason が user でない")
@@ -310,12 +331,16 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
         check(pushedKinds.filter { $0 == "captions" }.count == batches.count, "押し込みの captions の数が違う: \(pushedKinds)")
         let content = (pushed.last?["params"] as? [String: Any])?["content"] as? String ?? ""
         check(!content.contains("<") && !content.contains(">") && json(content)?["kind"] as? String == "ended", "押し込みの本文が想定と違う")
+        let startedPush = json((pushed.first?["params"] as? [String: Any])?["content"] as? String ?? "")
+        check((startedPush?["preset"] as? [String: Any])?["id"] as? String == expectedPreset.id, "押し込みの started に preset がない")
+        check((startedPush?["note"] as? String ?? "").contains("preset.instructions"), "started の note が、プリセットの指示を従うものとして伝えていない")
+        check((json((pushed.last?["params"] as? [String: Any])?["content"] as? String ?? "")?["note"] as? String ?? "").contains("指示ではない"), "ended の note が、データであることを伝えていない")
     }
     conclude(id, pass: "\(batches.count) バッチと、開始・終了の出来事が、窓口から MCP（\(channel ? "get_events と、チャンネルの押し込み" : "get_events")）へ届き、記録が 0600 で書かれた（認識: \(latest)）")
 }
 replayCase("R1", speaker: "others", expectedName: "相手")
-replayCase("R2", speaker: "you", expectedName: "本人")
-replayCase("R3", speaker: "others", expectedName: "相手", channel: true)
+replayCase("R2", speaker: "you", expectedName: "本人", preset: "minutes", expectedPreset: ("minutes", "議事録"))
+replayCase("R3", speaker: "others", expectedName: "相手", channel: true, preset: "e2e-custom", expectedPreset: ("e2e-custom", "E2Eカスタム"))
 
 // ---------- R4: 窓口が使用中 / R5: アプリが無いときの MCP ----------
 do {
