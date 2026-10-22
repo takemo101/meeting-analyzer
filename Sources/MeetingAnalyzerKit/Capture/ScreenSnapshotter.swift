@@ -62,6 +62,22 @@ public struct ScreenSnapshotter: Sendable {
             var lastError: Error?
             for index in ranked.prefix(5) {
                 let window = content.windows[index]
+                // フルスクリーンのウィンドウは、ウィンドウ単位でなく、**ディスプレイの合成結果から、そのアプリのウィンドウだけ**を切り出す。
+                // ウィンドウ単位の撮影は、フルスクリーンの動画で、中身が、枠の 95% ほどの大きさで左下に寄り、上と右に空白が出た（実機の診断ログ）。
+                // ディスプレイの合成結果（実際に見えている絵）なら、そのずれがない、と考える。そのアプリのウィンドウだけなので、他のアプリ・通知は写らない。
+                if candidates[index].isOnScreen, let application = window.owningApplication,
+                   let display = content.displays.first(where: { WindowPicker.fillsDisplay(window: window.frame, display: $0.frame) && $0.frame.intersects(window.frame) }) {
+                    let source = window.frame.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+                    log("try display=\(display.displayID) +app=\(bundleID) window=\(window.windowID) sourceRect=\(Self.describe(source)) displayFrame=\(Self.describe(display.frame))")
+                    do {
+                        let image = try await capture(filter: SCContentFilter(display: display, including: [application], exceptingWindows: []), size: source.size, sourceRect: source)
+                        log("captured display+app window=\(window.windowID) image=\(image.width)x\(image.height)")
+                        return image
+                    } catch {
+                        log("failed display+app window=\(window.windowID) \(Self.describe(error))")
+                        lastError = error
+                    }
+                }
                 let filter = SCContentFilter(desktopIndependentWindow: window)
                 // 撮る範囲の大きさは、OS が教える `contentRect`（ウィンドウの枠と、見えている内容が違うとき、実際の内容の大きさ）。無ければ、枠の大きさ。
                 let rect = filter.contentRect
@@ -84,12 +100,13 @@ public struct ScreenSnapshotter: Sendable {
         }
     }
 
-    private func capture(filter: SCContentFilter, size: CGSize) async throws -> CGImage {
+    private func capture(filter: SCContentFilter, size: CGSize, sourceRect: CGRect? = nil) async throws -> CGImage {
         let scale = min(1, Double(maxEdge) / Double(max(size.width, size.height)))
         let configuration = SCStreamConfiguration()
         configuration.width = max(1, Int((size.width * scale).rounded()))
         configuration.height = max(1, Int((size.height * scale).rounded()))
         configuration.showsCursor = false
+        if let sourceRect { configuration.sourceRect = sourceRect }
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 

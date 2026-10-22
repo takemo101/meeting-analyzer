@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import MeetingAnalyzerKit
 
@@ -31,6 +32,16 @@ struct WindowPickerTests {
     func ignoresNonWindows() {
         let candidates = [window("com.google.Chrome", layer: 25), window("com.google.Chrome", 30, 30), window("other.app")]
         #expect(WindowPicker.ranked(candidates, bundleID: "com.google.Chrome", processIDs: []).isEmpty)
+    }
+
+    @Test("フルスクリーンの判定：幅・高さとも、ディスプレイの 97% 以上（メニューバーの分だけ小さい枠 2560×1410 も、フルスクリーン）。最大化のウィンドウ（2560×1322）は、違う")
+    func fillsDisplay() {
+        let display = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        #expect(WindowPicker.fillsDisplay(window: CGRect(x: 0, y: 30, width: 2560, height: 1410), display: display))
+        #expect(WindowPicker.fillsDisplay(window: display, display: display))
+        #expect(!WindowPicker.fillsDisplay(window: CGRect(x: 0, y: 118, width: 2560, height: 1322), display: display), "最大化（ツールバーの分、低い）")
+        #expect(!WindowPicker.fillsDisplay(window: CGRect(x: 100, y: 100, width: 1400, height: 900), display: display))
+        #expect(!WindowPicker.fillsDisplay(window: display, display: .zero), "ディスプレイの大きさが 0 なら、違う")
     }
 
     @Test("本体が別のデスクトップ（フルスクリーン）にあるあいだ、画面に出ている細い補助のウィンドウ（上端の帯など）は撮らない。本体の大きさの 2 割に満たないものは、候補にしない")

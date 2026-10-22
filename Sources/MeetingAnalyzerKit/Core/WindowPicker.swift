@@ -1,3 +1,5 @@
+import CoreGraphics
+
 /// 画面の取り込みで撮るウィンドウの選び方。ScreenCaptureKit から分けた、純粋な規則（試験できる形）。
 public struct WindowCandidate: Sendable, Equatable {
     public let bundleID: String?
@@ -18,6 +20,13 @@ public struct WindowCandidate: Sendable, Equatable {
 }
 
 public enum WindowPicker {
+    /// ウィンドウが、ディスプレイをほぼいっぱいに占めているか（フルスクリーン）。幅・高さとも、ディスプレイの 97% 以上。
+    /// （メニューバーの分だけ、枠が少し小さいことがある：実機の 2560×1440 で、フルスクリーンの枠は 2560×1410。）
+    public static func fillsDisplay(window: CGRect, display: CGRect) -> Bool {
+        guard display.width > 0, display.height > 0 else { return false }
+        return window.width >= display.width * 0.97 && window.height >= display.height * 0.97
+    }
+
     /// 選んだアプリの、通常のウィンドウ（レイヤー 0・小さすぎない）。アプリは、bundle ID か、起動中のプロセス ID のどちらかで照合する
     /// （bundle ID が一致しない子プロセスのウィンドウも、同じアプリとして扱う）。
     public static func appWindows(_ windows: [WindowCandidate], bundleID: String, processIDs: Set<Int32>) -> [WindowCandidate] {
