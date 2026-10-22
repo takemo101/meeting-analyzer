@@ -29,10 +29,21 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 - macOS 26 以降、Apple silicon。Swift 6（Xcode または Command Line Tools）。外部パッケージはない。
 - 開発用：`just`（任意。なければ `scripts/` を直接実行）。E2E には、`say` の日本語の声 Kyoko も使う。
 
+## ダウンロード（リリースの DMG）
+
+[Releases](https://github.com/takemo101/meeting-analyzer/releases) から、版ごとの `MeetingAnalyzer-X.Y.Z.dmg`（と `.sha256`）をダウンロードできる。
+
+1. DMG を開き、MeetingAnalyzer を「Applications」へドラッグする。
+2. 初回は、署名が ad-hoc（Developer ID の署名・公証なし）のため、Gatekeeper に止められる。右クリック →「開く」、または `xattr -dr com.apple.quarantine /Applications/MeetingAnalyzer.app`。
+3. コマンド（`meeting-analyzer claude` など）を使うなら、`mkdir -p ~/.local/bin && ln -sf /Applications/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer ~/.local/bin/meeting-analyzer`。
+
+照合：`shasum -a 256 -c MeetingAnalyzer-X.Y.Z.dmg.sha256`。作り方（タグ → DMG）は [開発手順](docs/development.md#リリース) を参照。
+
 ## ビルドと実行
 
 ```sh
 just build          # build/MeetingAnalyzer.app（Apple silicon、ad-hoc 署名）
+just dmg            # build/MeetingAnalyzer.dmg（リリースと同じ手順。検査つき）
 just run            # メニューバーのアプリとして起動する（Dock・ウィンドウには出ない）
 just uninstall      # install で入れたアプリとコマンドを取り除く（記録・エージェントの設定・OS の許可は残す）
 just install        # ~/Applications へ入れて起動する（INSTALL_DIR で場所、NO_OPEN=1 で起動なし。実行中の同じアプリは、終了して置き換える）

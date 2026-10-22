@@ -28,7 +28,7 @@ else
     # ad-hoc 署名は、既定では、署名の識別（指定要件）が実行ファイルのハッシュ（cdhash）になり、ビルドのたびに変わる。
     # マイク・画面収録の許可は、この要件に紐づくので、入れ直すたびに、設定ではオンに見えても、無効になる。
     # そこで、指定要件を bundle ID だけにして、ビルドが変わっても、同じアプリとして扱われるようにする（手元の開発用。
-    # 同じ ID で ad-hoc 署名した別のコードも、同じ許可を得るので、配布物には使わない）。
+    # 同じ ID で ad-hoc 署名した別のコードも、同じ許可を得る。Developer ID の署名をしない配布（DMG）も、更新のたびに許可が無効にならないよう、同じ方式にしている）。
     codesign --force --sign - -r="designated => identifier \"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")\"" "$APP"
 fi
 

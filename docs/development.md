@@ -34,6 +34,7 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 | レシピ | 内容 |
 |---|---|
 | `just build` | `./scripts/build.sh`。`build/MeetingAnalyzer.app`（Apple silicon）を ad-hoc 署名で作る。`VERSION=X.Y.Z` で版を指定でき、`SIGN_IDENTITY` を渡すと Developer ID で署名する |
+| `just dmg` | `./scripts/dmg.sh` で `build/MeetingAnalyzer.dmg`（アプリと /Applications へのリンク入り）を作り、`./scripts/verify-dmg.sh` で検査する（リリースのワークフローと同じ）。`VERSION=X.Y.Z` でアプリの版を指定できる |
 | `just run` | ビルドして `open` で起動する。メニューバーに常駐し、Dock・ウィンドウには出ない。終了はメニューの「終了」 |
 | `just install` | ビルドして、`~/Applications/MeetingAnalyzer.app` へ入れて、**起動する**（`./scripts/install.sh`。管理者権限は不要。`INSTALL_DIR` で場所、`NO_OPEN=1` で起動なし）。同じ場所で実行中のアプリ本体は、SIGTERM で終了させてから置き換え、入れたあとに起動し直す（エージェントが起動した `mcp` には触れない）。署名が ad-hoc なので、入れ直すたびに、マイク・画面収録の許可が外れることがある。コマンド `meeting-analyzer` を `BIN_DIR`（既定 `~/.local/bin`）へ、シンボリックリンクで置く（`INSTALL_DIR` を変えているときは、`BIN_DIR` を渡さない限り置かない）。登録コマンドは出力に出る |
 | `just uninstall` | `./scripts/uninstall.sh`。`just install` で入れたアプリ（`INSTALL_DIR`）と、それを指すコマンドのシンボリックリンク（`BIN_DIR`。別のものを指していれば残す）を取り除く。実行中なら、SIGTERM で終了させる。既定の場所のときは、**マイク・画面収録の許可も取り消す**（`tccutil reset`。bundle ID に紐づくので、`INSTALL_DIR` を変えているときは、`RESET_PERMISSIONS=1` を渡したときだけ）。**会議の記録・エージェントの設定（MCP の登録）には触れない**（取り除き方を、出力に出す） |
@@ -45,6 +46,19 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 - 版は、`Resources/Info.plist` と `AppInfo.version` の 2 か所。単体テストが、一致を確認する。版を上げるときは、両方を変える。
 - 生成物は `build/`（Git 対象外）。
 - `swift build` で、`ld: warning: search path '…/CommandLineTools/Developer/…' not found` が出ることがある。Command Line Tools だけの環境で出る警告で、動作には影響しない。
+
+## リリース
+
+タグ `vX.Y.Z` を push すると、GitHub Actions（[release.yml](../.github/workflows/release.yml)）が、DMG を作って GitHub Release に添付する。版ごとに、`MeetingAnalyzer-X.Y.Z.dmg` と `.sha256` をダウンロードできる。
+
+1. `Resources/Info.plist`（`CFBundleShortVersionString`・`CFBundleVersion`）と `AppInfo.version` を、新しい版へ上げて、main に入れる（単体テストが、2 か所の一致を確認する）。
+2. main の commit にタグを付けて、push する：`git tag vX.Y.Z <mainのcommit> && git push origin vX.Y.Z`。
+3. ワークフローが、**Info.plist の版がタグと一致すること**、**タグの commit が main に含まれること**を確かめ、単体テスト → DMG の作成 → 検査（`verify-dmg.sh`）→ `.sha256` → Release の作成、の順に進む。どれかが失敗したら、Release は作らない。
+4. 変更点は、Release の自動生成の説明（`--generate-notes`）。インストール手順の定型文が、その前に付く。
+
+- Release を作らない確認：Actions タブ → release → Run workflow（または、関係するファイルを変える Pull Request）。DMG をアーティファクトに残し、ダウンロードして SHA-256 を照合するところまで確かめる。
+- 署名は ad-hoc（鍵・公証の認証情報は、ワークフローに渡さない）。Developer ID の署名・公証を足すときは、利用者の判断で、secrets と手順を決めてから。
+- ローカルで同じ DMG を作る：`just dmg`。
 
 ## mikan の Issue 進行
 

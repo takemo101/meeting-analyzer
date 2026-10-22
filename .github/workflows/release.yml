@@ -1,0 +1,201 @@
+# リリース：タグ vX.Y.Z の push で、DMG をビルドして GitHub Release に添付する。バージョンごとに、DMG（と SHA-256）をダウンロードできる。
+#
+#   タグ vX.Y.Z の push（例：git tag v0.1.0 <main の commit> && git push origin v0.1.0）
+#       Resources/Info.plist の版がタグと一致し、タグの commit が main に含まれているときだけ、Release を作る
+#   手動実行（Actions タブ → Run workflow。タグを選んでも同じ）
+#       Release は作らない。DMG をアーティファクトに残し、handoff ジョブが、Release のジョブと同じ手順でダウンロードして SHA-256 を照合する（ドライラン）
+#   Pull Request（リリースに関わるファイルを変えたとき）
+#       同じドライラン。ワークフロー自体は、マージ前に、この経路で検証できる
+# 署名は ad-hoc のまま。署名・公証の鍵や認証情報（secrets）は、このワークフローに渡さない。
+# 権限は最小：ビルドとテストは contents: read、Release の作成だけ contents: write。
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/build.sh"
+      - "scripts/dmg.sh"
+      - "scripts/verify-dmg.sh"
+      - "scripts/test.sh"
+      - "Package.swift"
+      - "Resources/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, test and inspect the DMG
+    runs-on: macos-26
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      asset: ${{ steps.meta.outputs.asset }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # タグの commit が main に含まれるかを調べるため、全部の履歴を取る
+
+      - name: Work out the version and the file name
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}   # PR は、一時的なマージ commit ではなく、PR の commit をファイル名に使う
+        run: |
+          plist_version="$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)"
+          if [ "${EVENT_NAME}" = "push" ] && [ "${REF_TYPE}" = "tag" ]; then
+            if ! [[ "${REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "タグ ${REF_NAME} は vX.Y.Z の形ではありません" >&2
+              exit 1
+            fi
+            version="${REF_NAME#v}"
+            # アプリの版（ソースの Info.plist と、`AppInfo.version`）が、タグと一致していること。版を上げる変更を main に入れてから、タグを付ける。
+            for key in CFBundleShortVersionString CFBundleVersion; do
+              value="$(plutil -extract "${key}" raw Resources/Info.plist)"
+              if [ "${value}" != "${version}" ]; then
+                echo "Resources/Info.plist の ${key}（${value}）が、タグの版 ${version} と違います。版を上げる変更を main に入れてから、タグを付けてください。" >&2
+                exit 1
+              fi
+            done
+            asset="MeetingAnalyzer-${version}.dmg"
+          else
+            # ドライラン（手動実行・Pull Request。手動実行をタグの上で起動しても、ここ）。ファイル名に commit を入れて、リリースと見分ける。
+            version="${plist_version}"
+            asset="MeetingAnalyzer-dev-${SHA:0:7}.dmg"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "asset=${asset}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version} asset=${asset}"
+
+      - name: The tagged commit must be on main
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          if ! git merge-base --is-ancestor "${SHA}" origin/main; then
+            echo "タグの commit ${SHA} は main に含まれていません。Release は作りません。" >&2
+            exit 1
+          fi
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Unit tests
+        run: ./scripts/test.sh
+
+      - name: Build the DMG
+        run: ./scripts/dmg.sh
+
+      - name: Inspect the DMG
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: ./scripts/verify-dmg.sh build/MeetingAnalyzer.dmg "${VERSION}"
+
+      - name: Name the file and write its SHA-256
+        env:
+          ASSET: ${{ steps.meta.outputs.asset }}
+        run: |
+          mkdir -p dist
+          cp build/MeetingAnalyzer.dmg "dist/${ASSET}"
+          (cd dist && shasum -a 256 "${ASSET}" > "${ASSET}.sha256")
+          cat "dist/${ASSET}.sha256"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.asset }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  handoff:
+    name: Check the artifact hand-off (no release)
+    needs: build
+    if: github.event_name != 'push' || github.ref_type != 'tag'   # Release を作らない実行だけ。Release のジョブと同じ手順で、受け渡しを確かめる
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.asset }}
+          path: dist
+
+      - name: Check the downloaded files   # release ジョブの同名のステップと、同じ内容に保つ（両方を一緒に直す）
+        env:
+          ASSET: ${{ needs.build.outputs.asset }}
+        run: |
+          cd dist
+          ls -l
+          sha256sum -c "${ASSET}.sha256"
+
+  release:
+    name: Publish the GitHub Release
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'   # 手動実行は、タグの上で起動しても、Release を作らない
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # Release の作成だけに、書き込みを許す
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.asset }}
+          path: dist
+
+      - name: Check the downloaded files   # handoff ジョブの同名のステップと、同じ内容に保つ（両方を一緒に直す）
+        env:
+          ASSET: ${{ needs.build.outputs.asset }}
+        run: |
+          cd dist
+          ls -l
+          sha256sum -c "${ASSET}.sha256"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          ASSET: ${{ needs.build.outputs.asset }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## インストール
+          1. DMG を開き、MeetingAnalyzer を「Applications」へドラッグします。
+          2. 初回の起動は、署名が ad-hoc（Developer ID の署名・公証なし）のため、macOS の Gatekeeper に止められます。MeetingAnalyzer を右クリック →「開く」、または次のコマンドで検疫属性を外してください。
+
+             ```sh
+             xattr -dr com.apple.quarantine /Applications/MeetingAnalyzer.app
+             ```
+
+          3. コマンド（`meeting-analyzer claude` など）を使うときは、次で PATH の通った場所へリンクを作ります。
+
+             ```sh
+             mkdir -p ~/.local/bin && ln -sf /Applications/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer ~/.local/bin/meeting-analyzer
+             ```
+
+          macOS 26 以降、Apple silicon。使い方は [README](https://github.com/takemo101/meeting-analyzer#readme) を参照してください。マイク・画面収録の許可は、アプリの「開始」を押したときに、OS が確認します。
+
+          ダウンロードしたファイルは、`.sha256` と照合できます：`shasum -a 256 -c MeetingAnalyzer-*.dmg.sha256`
+
+          ## 変更点
+          EOF
+          gh release create "${TAG}" "dist/${ASSET}" "dist/${ASSET}.sha256" \
+            --repo "${REPO}" \
+            --verify-tag \
+            --title "meeting-analyzer ${VERSION}" \
+            --notes "$(cat notes.md)" \
+            --generate-notes

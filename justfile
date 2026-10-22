@@ -12,6 +12,11 @@ default:
 build:
     ./scripts/build.sh
 
+# build/MeetingAnalyzer.dmg を作って検査する（リリースのワークフローと同じ手順。VERSION=X.Y.Z でアプリの版を指定）
+dmg:
+    ./scripts/dmg.sh
+    ./scripts/verify-dmg.sh build/MeetingAnalyzer.dmg "${VERSION:-$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)}"
+
 # ビルドして、メニューバーのアプリとして起動する。Dock にもウィンドウにも出ない（終了はメニューバーの項目から）
 run: build
     open "{{app}}"
