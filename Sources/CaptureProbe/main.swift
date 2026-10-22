@@ -124,7 +124,7 @@ let system = SystemAudioCapture()
 if let path = options.file { tasks.append(run(name: "file", buffers: fileBuffers(path))); out("ファイルを実時間で流す") }
 do {
     if options.mic { tasks.append(run(name: "you", buffers: try await mic.start())); out("マイク（ボイス処理）を開始") }
-    if !options.apps.isEmpty { tasks.append(run(name: "others", buffers: try await system.start(bundleIDs: options.apps))); out("システム音声を開始: \(options.apps.joined(separator: ", "))") }
+    if !options.apps.isEmpty { tasks.append(run(name: "others", buffers: try await system.start(target: .apps(options.apps)))); out("システム音声を開始: \(options.apps.joined(separator: ", "))") }
 } catch {
     mic.stop(); await system.stop()
     fail("取り込みを始められません: \(error)")

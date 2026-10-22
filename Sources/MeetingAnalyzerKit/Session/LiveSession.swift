@@ -57,6 +57,8 @@ public actor LiveSession {
     private let inputs: LiveInputs
     private let sender: any BridgeSending
     private let store: SessionStore?
+    /// 取り込む流れ（選んだ音声）。空では開始できない。
+    private let speakers: [Speaker]
     private let pipeline: SessionPipeline
     private let clock: @Sendable () -> Date
     private let tickInterval: Duration
@@ -77,7 +79,7 @@ public actor LiveSession {
     }
 
     public init(
-        meetingId: String, inputs: LiveInputs, sender: any BridgeSending, store: SessionStore?,
+        meetingId: String, speakers: [Speaker], inputs: LiveInputs, sender: any BridgeSending, store: SessionStore?,
         policy: BatchingPolicy = .standard, clock: @escaping @Sendable () -> Date = { Date() },
         tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5),
         notify: @escaping @Sendable (LiveSessionNotice) -> Void
@@ -87,6 +89,7 @@ public actor LiveSession {
         self.sessionId = sessionId
         self.meetingId = meetingId
         self.startedAt = startedAt
+        self.speakers = speakers
         self.inputs = inputs
         self.sender = sender
         self.store = store
@@ -104,6 +107,7 @@ public actor LiveSession {
     /// 開始する。ブリッジの確認 → 取り込みの開始（権限の確認は、ここで OS が出す）。失敗したら、何も始めず、待機のまま。
     public func start() async throws {
         guard lifecycle.phase == .idle else { throw LiveSessionError.invalidState(lifecycle.phase) }
+        guard !speakers.isEmpty else { throw LiveSessionError.failed("取り込む音声が選ばれていません") }
         do { try await sender.health() } catch let error as BridgeError { throw LiveSessionError.bridge(error) }
         try await beginSegment()
         try? lifecycle.start()
@@ -153,11 +157,11 @@ public actor LiveSession {
 
     private func elapsed() -> TimeInterval { clock().timeIntervalSince(startedAt) }
 
-    /// あなた・相手の流れを開く。片方が開けなければ、開いたほうも止めて、失敗を返す。
+    /// 選んだ流れ（あなた・相手）を開く。どれかが開けなければ、開いたほうも止めて、失敗を返す。
     private func beginSegment() async throws {
         var opened: [Speaker: (LiveInputStream, TimeInterval)] = [:]
         do {
-            for speaker in Speaker.allCases {
+            for speaker in speakers {
                 let stream = try await inputs.open(speaker)
                 // 音声の秒数の原点は、取り込みが始まった時刻（会議の開始からの経過）。一時停止をはさんでも、時刻が続く。
                 opened[speaker] = (stream, elapsed())

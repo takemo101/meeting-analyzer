@@ -3,7 +3,7 @@ import CoreMedia
 import Foundation
 import ScreenCaptureKit
 
-/// 取り込める会議アプリの 1 つ（システム音声の選択肢）。
+/// 取り込めるアプリの 1 つ（システム音声の選択肢）。
 public struct CaptureApp: Sendable, Equatable {
     public let bundleID: String
     public let name: String
@@ -14,7 +14,15 @@ public enum ScreenRecordingPermission {
     public static var isGranted: Bool { CGPreflightScreenCaptureAccess() }
 }
 
-/// 選んだアプリのシステム音声の取り込み（「相手」）。他のアプリの音（動画・通知音）と、このアプリ自身の音は混ぜない。音声はメモリ上だけで扱い、書き出さない。
+/// システム音声の取り込み先。
+public enum SystemAudioTarget: Sendable, Equatable {
+    /// Mac から出ている音すべて。
+    case allApps
+    /// 選んだアプリ（bundle ID）の音だけ。
+    case apps([String])
+}
+
+/// システム音声の取り込み（「相手」）。全体、または選んだアプリだけ。このアプリ自身の音は混ぜない。音声はメモリ上だけで扱い、書き出さない。
 public final class SystemAudioCapture: NSObject, @unchecked Sendable {
     private var stream: SCStream?
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
@@ -39,17 +47,24 @@ public final class SystemAudioCapture: NSObject, @unchecked Sendable {
         }
     }
 
-    /// 取り込みを始める。`bundleIDs` のアプリが出す音だけを流す。
-    public func start(bundleIDs: [String]) async throws -> AsyncStream<AVAudioPCMBuffer> {
+    /// 取り込みを始める。権限が未確認なら、OS の許可の確認が出る（利用者の開始の操作の中だけで呼ぶ）。
+    public func start(target: SystemAudioTarget) async throws -> AsyncStream<AVAudioPCMBuffer> {
         let content = try await Self.shareableContent()
-        let apps = content.applications.filter { bundleIDs.contains($0.bundleIdentifier) }
-        guard !apps.isEmpty else {
-            throw CaptureError.targetNotFound("選んだアプリが起動していません: \(bundleIDs.joined(separator: ", "))")
-        }
         guard let display = content.displays.first else {
             throw CaptureError.targetNotFound("画面が見つかりません")
         }
-        let filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
+        let filter: SCContentFilter
+        switch target {
+        case .allApps:
+            // Mac から出ている音すべて。このアプリ自身の音は、`excludesCurrentProcessAudio` で除く。
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        case .apps(let bundleIDs):
+            let apps = content.applications.filter { bundleIDs.contains($0.bundleIdentifier) }
+            guard !apps.isEmpty else {
+                throw CaptureError.targetNotFound("選んだアプリが起動していません: \(bundleIDs.joined(separator: ", "))")
+            }
+            filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
+        }
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true

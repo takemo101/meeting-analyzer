@@ -86,3 +86,27 @@ struct TranscriptTests {
         #expect(Transcript.clock(-5) == "00:00")
     }
 }
+
+@Suite("AudioSelection: 取り込む音声の選択")
+struct AudioSelectionTests {
+    @Test("マイクとシステム音声を、それぞれ選ぶ。流れは、あなた・相手の順")
+    func speakers() {
+        #expect(AudioSelection(microphone: true, system: .off).speakers == [.you])
+        #expect(AudioSelection(microphone: false, system: .all).speakers == [.others])
+        #expect(AudioSelection(microphone: true, system: .app(bundleID: "com.apple.Safari", name: "Safari")).speakers == [.you, .others])
+    }
+
+    @Test("何も選ばなければ空で、開始できない。既定はマイクだけ")
+    func emptyAndDefault() {
+        #expect(AudioSelection(microphone: false, system: .off).isEmpty)
+        #expect(AudioSelection().speakers == [.you])
+        #expect(!AudioSelection().isEmpty)
+    }
+
+    @Test("説明は、選んだ音声を示す")
+    func summary() {
+        #expect(AudioSelection(microphone: true, system: .all).summary == "マイク＋システム全体")
+        #expect(AudioSelection(microphone: false, system: .app(bundleID: "x", name: "Safari")).summary == "Safari")
+        #expect(AudioSelection(microphone: false, system: .off).summary == "未選択")
+    }
+}

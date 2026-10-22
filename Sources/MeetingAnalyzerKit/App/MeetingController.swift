@@ -15,7 +15,8 @@ final class MeetingController {
     private(set) var state: State = .idle { didSet { onChange?() } }
     /// 失敗・知らせ（メニューの 1 行）。次の開始、または会議の終了で更新する。
     private(set) var notice: String? { didSet { onChange? () } }
-    private(set) var selectedApp: CaptureApp?
+    /// 取り込む音声の選択。開始のたびに選ぶ（保存しない。SPEC §5）。
+    private(set) var selection = AudioSelection()
     var onChange: (() -> Void)?
 
     private var session: LiveSession?
@@ -27,7 +28,7 @@ final class MeetingController {
 
     var hasActiveMeeting: Bool { session != nil }
 
-    /// 取り込める会議アプリの候補。起動中の通常のアプリ（権限は要らない）。このアプリ自身は除く。
+    /// システム音声に選べるアプリの候補。起動中の通常のアプリ（権限は要らない）。このアプリ自身は除く。
     func candidateApps() -> [CaptureApp] {
         var seen = Set<String>()
         let own = Bundle.main.bundleIdentifier
@@ -39,9 +40,15 @@ final class MeetingController {
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
 
-    func select(_ app: CaptureApp) {
+    func setMicrophone(_ enabled: Bool) {
         guard state == .idle else { return }
-        selectedApp = app
+        selection.microphone = enabled
+        onChange?()
+    }
+
+    func setSystem(_ source: SystemSource) {
+        guard state == .idle else { return }
+        selection.system = source
         onChange?()
     }
 
@@ -49,11 +56,11 @@ final class MeetingController {
 
     func start() {
         guard state == .idle else { return }
-        guard let app = selectedApp else { notice = "会議アプリを選んでください"; return }
-        guard ConsentPrompt.confirm(appName: app.name) else { return }
+        guard !selection.isEmpty else { notice = "取り込む音声を選んでください"; return }
+        guard ConsentPrompt.confirm(selection: selection) else { return }
         notice = nil
         state = .working("開始処理中…")
-        Task { await begin(app) }
+        Task { await begin(selection) }
     }
 
     func pause() {
@@ -103,7 +110,7 @@ final class MeetingController {
 
     // MARK: 内部
 
-    private func begin(_ app: CaptureApp) async {
+    private func begin(_ selection: AudioSelection) async {
         let endpoint: BridgeEndpoint
         switch makeEndpoint() {
         case .failure(let message): fail(message); return
@@ -113,8 +120,9 @@ final class MeetingController {
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
         let session = LiveSession(
-            meetingId: Self.meetingName(app: app.name),
-            inputs: .device(appBundleIDs: [app.bundleID], locale: Locale(identifier: CommandParser.defaultLocale)),
+            meetingId: Self.meetingName(selection: selection),
+            speakers: selection.speakers,
+            inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale)),
             sender: BridgeClient(endpoint: endpoint),
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
             notify: notify
@@ -153,12 +161,12 @@ final class MeetingController {
 
     private func fail(_ failure: StartFailure) { fail(failure.message) }
 
-    /// 会議の名前。エージェントが会議を区別できる程度（アプリ名と開始時刻）。
-    static func meetingName(app: String, now: Date = Date()) -> String {
+    /// 会議の名前。エージェントが区別できる程度（取り込む音声と開始時刻）。
+    static func meetingName(selection: AudioSelection, now: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return "\(app) \(formatter.string(from: now))"
+        return "\(selection.summary) \(formatter.string(from: now))"
     }
 }
 

@@ -71,10 +71,10 @@ private struct Rig {
     let notices = Notices()
     let store = SessionStore(root: root())
 
-    func session(policy: BatchingPolicy = .standard, tick: Duration = .seconds(60)) -> LiveSession {
+    func session(speakers: [Speaker] = [.you, .others], policy: BatchingPolicy = .standard, tick: Duration = .seconds(60)) -> LiveSession {
         let clock = self.clock, notices = self.notices
         return LiveSession(
-            meetingId: "テスト会議", inputs: fake.inputs, sender: sender, store: store, policy: policy,
+            meetingId: "テスト会議", speakers: speakers, inputs: fake.inputs, sender: sender, store: store, policy: policy,
             clock: { clock.now }, tickInterval: tick, notify: { notices.add($0) }
         )
     }
@@ -147,6 +147,26 @@ struct LiveSessionTests {
         await #expect(throws: LiveSessionError.invalidState(.ended(.user))) { try await session.start() }
         await #expect(throws: LiveSessionError.invalidState(.ended(.user))) { try await session.end(reason: .user) }
         #expect(rig.sender.ends.count == 1)
+    }
+
+    @Test("選んだ音声だけを開く。マイクだけなら、システム音声は開かない")
+    func opensOnlySelectedSpeakers() async throws {
+        let rig = Rig()
+        let session = rig.session(speakers: [.you])
+        try await session.start()
+        rig.fake.emit(.you, "自分だけ", final: true, 0, 1)
+        _ = try await session.end(reason: .user)
+        #expect(rig.fake.opened == [.you])
+        #expect(rig.sender.batches.flatMap(\.updates).map(\.speakerName) == ["あなた"])
+    }
+
+    @Test("何も選ばれていなければ、開始できず、何も開かない")
+    func emptySelectionCannotStart() async {
+        let rig = Rig()
+        let session = rig.session(speakers: [])
+        await #expect(throws: LiveSessionError.failed("取り込む音声が選ばれていません")) { try await session.start() }
+        #expect(rig.fake.opened.isEmpty)
+        #expect(await session.phase == .idle)
     }
 
     @Test("ブリッジが使えないなら、取り込みを始めない")

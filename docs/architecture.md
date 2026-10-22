@@ -37,7 +37,8 @@ flowchart TD
 
 | ディレクトリ | ファイル | 責務 | 持つ状態 |
 |---|---|---|---|
-| `Core/` | `Speaker`、`Utterance` | 発言者（あなた／相手と表示名）と、1 つの発話（番号・本文・確定か・開始秒・版）。`key`（発言者と番号）が upsert の単位 | なし（値型） |
+| `Core/` | `AudioSelection`、`SystemSource` | 取り込む音声の選択（マイクのオン／オフ、システム音声のオフ／全体／アプリ）。流れ（あなた・相手）と、開始できるか・説明を決める純粋な規則 | なし（値型） |
+| | `Speaker`、`Utterance` | 発言者（あなた／相手と表示名）と、1 つの発話（番号・本文・確定か・開始秒・版）。`key`（発言者と番号）が upsert の単位 | なし（値型） |
 | | `Batcher`、`BatchingPolicy` | 送るべき時を決める純粋な規則（SPEC §3.6）。`observe`（更新を受ける）・`isDue`・`takeBatch`・`flush`。**時計を持たず、`now`（秒）を引数で受ける**ので、時間を進めずにテストできる | 最新の発話・未送信の並び・最後の変化／送信の時刻・境界 |
 | | `SessionLifecycle`、`EndReason` | 会議の状態遷移（待機・実行中・一時停止・終了）。順序以外は `TransitionError`。終了後は開始し直せない | `phase` |
 | | `Transcript` | 会議全体の記録。upsert で溜め、開始時刻順に並べ、エージェントが読む Markdown にする | 発話の辞書 |
@@ -46,19 +47,19 @@ flowchart TD
 | | `BridgeEndpoint` | 送り先。`parse` が、`http://127.0.0.1`／`localhost` だけ・トークン 32 文字以上・空白なしを、境界で一度だけ検査して型にする | なし |
 | | `BridgeClient`、`BridgeSending`、`BridgeError` | `/health`・`/captions`・`/end`。応答を `BridgeError`（接続できない・認証・受け付けられない・拒否）に分類する。`BridgeSending` は、差し替えが要る箇所（テスト）だけのプロトコル | `URLSession` |
 | `Platform/` | `RuntimePaths`、`TokenStore`、`SessionStore` | 置き場所（環境変数が優先）、トークンの読み取り（保存・表示しない）、記録の書き込み（ディレクトリ 0700・ファイル 0600）。失敗は `Result` | なし |
-| `Capture/` | `MicrophoneCapture`、`SystemAudioCapture`、`CaptureApp`、`CaptureError` | マイク（`AVAudioEngine`。ボイス処理＝エコー除去を有効にし、他のアプリの音の抑え込みを最小にする）と、選んだアプリのシステム音声（ScreenCaptureKit。自分の音は除く）を、`AsyncStream<AVAudioPCMBuffer>` で流す。音声はメモリ上だけ。権限の確認（`MicrophoneCapture.isAuthorized`、`ScreenRecordingPermission.isGranted`）は要求をしない。`start` は、権限が未確認なら OS の確認を出すので、利用者の開始の操作の中だけで呼ぶ | `AVAudioEngine`／`SCStream`（取り込み中だけ） |
+| `Capture/` | `MicrophoneCapture`、`SystemAudioCapture`、`SystemAudioTarget`、`CaptureApp`、`CaptureError` | マイク（`AVAudioEngine`。ボイス処理＝エコー除去を有効にし、他のアプリの音の抑え込みを最小にする）と、システム音声（ScreenCaptureKit。全体、または選んだアプリ。自分の音は除く）を、`AsyncStream<AVAudioPCMBuffer>` で流す。音声はメモリ上だけ。権限の確認（`MicrophoneCapture.isAuthorized`、`ScreenRecordingPermission.isGranted`）は要求をしない。`start` は、権限が未確認なら OS の確認を出すので、利用者の開始の操作の中だけで呼ぶ | `AVAudioEngine`／`SCStream`（取り込み中だけ） |
 | `Transcription/`（ライブ） | `updates(forLive:)`、`AudioFormatConverter` | バッファの流れを `SpeechAnalyzer` の入力へ渡す。形式の変換（多チャンネルは先頭のみ）を含む。実時間の入力では `.fastResults` が要る（[検証記録](verification.md#実施記録)）。更新の `start`／`end` は、その流れの最初のバッファを 0 とした秒数 | なし |
 | `Session/` | `LiveSession`、`LiveInputs`、`LiveInputStream`、`LiveSessionNotice` | ライブの会議 1 つ。`SessionLifecycle`・取り込みの流れ・`SessionPipeline`・時間を組み立てる。開始（ブリッジの確認 → 取り込み）・一時停止（取り込みを止め、残りを確定して送り切る）・再開（時刻が続く）・終了（取り込みを止める → 出し切り → 記録 → 合図）。会議を止めない失敗は `LiveSessionNotice` で知らせる。`LiveInputs` が、発言者ごとの「取り込み＋認識」の差し替え口（実機は `DeviceInputs`、テストは偽の流れ） | `SessionLifecycle`、`SessionPipeline`、発言者ごとの実行中の流れ、tick のタスク |
 | `Session/` | `SessionPipeline` | 「更新 → 発話（番号・版） → バッチ → ブリッジ」と、終了の手順（出し切り → 記録 → 合図）。入力がファイルの再生でもライブでも、同じ流れを通す。時計は、更新が持つ秒数 | 発言者ごとの番号、`Batcher`、`Transcript`、送ったバッチ数 |
 | `CLI/` | `Command`、`CommandParser`、`CLIError` | 引数を一度だけ検査して `Command` にする。失敗は終了コードを持つ `CLIError` | なし |
 | | `CLIRunner` | `Command` の実行。標準出力・標準エラー・文字起こし・送信の部品を差し替えられる（検証とテスト用）。**失敗の見せ方（JSON・終了コード）を決める唯一の場所** | なし |
 | `App/` | `Launch`（`MeetingAnalyzerApp`、`AppDelegate`） | 起動の入口。引数なしなら、アクセサリ（Dock に出ない）として起動し、メニューバーの項目を置く。CLI なら、実行して終了コードを返す。SIGTERM・メニューの終了は、同じ道（実行中の会議を `appQuit` で終えてから終了）を通す | `StatusMenu`、`MeetingController` |
-| | `MeetingController` | メニューの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・選んだ会議アプリ）だけを持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ |
+| | `MeetingController` | メニューの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込む音声の選択）だけを持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ |
 | | `StatusMenu`、`ConsentPrompt`、`FailureText` | メニュー（開くたびに状態から作り直す）、同意の確認（3 項目のチェックで「開始」が有効になる）、失敗の文言。**利用者への見せ方を決める境界** | メニューバーの項目 |
 
 ### 取り込みと会議の接続
 
-- 実機の入力は `LiveInputs.device(appBundleIDs:locale:)`（`Session/DeviceInputs.swift`）。言語が使えなければ、取り込みを始める前に断る。
+- 実機の入力は `LiveInputs.device(system:locale:)`（`Session/DeviceInputs.swift`）。言語が使えなければ、取り込みを始める前に断る。
 - **時計**：音声の秒数は、流れごとに 0 から始まる。`LiveSession` は、各流れの原点を「取り込みが始まった時刻（会議の開始からの経過）」とし、更新の秒数に足して `SessionPipeline` へ渡す。一時停止をはさんでも、時刻（記録の `[mm:ss]`、`timestamp`）が続く。`tick` は、実時間（会議の開始からの経過）で、0.25 秒ごとに、**実行中のときだけ**回す。
 - `CaptureProbe`（実行ファイル）は、取り込みの実験用で、製品の CLI ではない。マイク・システム音声・音声ファイルを実時間で認識し、遅延と音量を測る。
 
@@ -112,7 +113,7 @@ flowchart TD
 | 空白だけの更新 | 無視する |
 | 会議の途中で、片方の取り込み・認識が止まった | `LiveSessionNotice`（メニューの 1 行）で知らせる。もう片方と会議は続く（利用者が、終了するか決める） |
 | 会議の途中で、字幕の送信に失敗 | 知らせを出し、会議は続く。そのバッチは届かないが、記録には残る |
-| 開始できない（ブリッジ・権限・言語・会議アプリ） | 何も始めず（開いた取り込みも止める）、待機のまま。ダイアログで原因と対処を示す |
+| 開始できない（ブリッジ・権限・言語・選んだアプリ） | 何も始めず（開いた取り込みも止める）、待機のまま。ダイアログで原因と対処を示す |
 | 終了の合図が届かなかった | 送り切り・記録・合図を、失敗しても順に試す（記録は残す）。届かなかったことと、記録のパスを、ダイアログで伝える |
 | 想定外のエラー | `internal` として、終了コード 1 で返す（握り潰さない） |
 

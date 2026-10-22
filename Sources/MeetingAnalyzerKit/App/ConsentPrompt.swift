@@ -9,12 +9,12 @@ enum ConsentPrompt {
         "送信先のエージェント（例：Claude Code）の、データの取り扱いを確認した",
     ]
 
-    /// 「開始」が選ばれたら true。
-    static func confirm(appName: String) -> Bool {
+    /// 「開始」が選ばれたら true。取り込む音声（選択）を、ダイアログに示す。
+    static func confirm(selection: AudioSelection) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "「\(appName)」の会議を、文字にして始めます"
-        alert.informativeText = "マイク（あなた）と「\(appName)」の音声（相手）を、この Mac の中で文字にして、ローカルのエージェントへ送ります。音声は保存も送信もしません。会議の終了で、記録を保存し、エージェントへ終了を知らせます。次を確認してください。"
+        alert.messageText = "音声を文字にして始めます（\(selection.summary)）"
+        alert.informativeText = "\(sourceText(selection))を、この Mac の中で文字にして、ローカルのエージェントへ送ります。音声は保存も送信もしません。終了で、記録を保存し、エージェントへ終了を知らせます。次を確認してください。"
         let start = alert.addButton(withTitle: "開始")
         alert.addButton(withTitle: "キャンセル")
         start.isEnabled = false
@@ -30,6 +30,17 @@ enum ConsentPrompt {
         alert.accessoryView = stack
 
         return withExtendedLifetime(gate) { alert.runModal() == .alertFirstButtonReturn }
+    }
+
+    private static func sourceText(_ selection: AudioSelection) -> String {
+        var parts: [String] = []
+        if selection.microphone { parts.append("マイク（あなた）") }
+        switch selection.system {
+        case .off: break
+        case .all: parts.append("Mac から出ている音すべて（相手。動画や通知音も含む）")
+        case .app(_, let name): parts.append("「\(name)」の音声（相手）")
+        }
+        return parts.joined(separator: "と")
     }
 
     @MainActor
