@@ -22,11 +22,18 @@ public enum AgentLauncher {
 
     /// `claude` に渡す引数（コマンド名を除く）。利用者の引数を先頭に置き、こちらの指定を最後に付ける
     /// （`--dangerously-load-development-channels` は、後ろの引数をいくつでも取る形なので、最後でないと、利用者の最初の発言を飲み込む）。
-    static func claudeArguments(userArguments: [String], executable: String, environment: [String: String]) -> [String] {
-        userArguments + [
+    static func claudeArguments(userArguments: [String], executable: String, environment: [String: String], skillPath: String? = nil) -> [String] {
+        userArguments + (skillPath.map { ["--append-system-prompt-file", $0] } ?? []) + [
             "--mcp-config", mcpConfig(executable: executable, environment: environment),
             "--dangerously-load-development-channels", "server:\(AgentRegistration.channelServerName)",
         ]
+    }
+
+    /// アプリに同梱した skill（`Contents/Resources/SKILL.md`）。実行ファイルは `Contents/MacOS/` にある（シンボリックリンク経由でも、実パスで探す）。無ければ nil。
+    static func bundledSkillPath(executable: String) -> String? {
+        let resources = URL(fileURLWithPath: executable).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources")
+        let skill = resources.appendingPathComponent("SKILL.md").path
+        return FileManager.default.isReadableFile(atPath: skill) ? skill : nil
     }
 
     /// 窓口の場所を、環境変数で変えているときは、検証・隔離のための起動とみなす（実際のアプリは、起動しない）。

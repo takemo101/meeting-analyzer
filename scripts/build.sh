@@ -11,6 +11,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 BIN="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$BIN/MeetingAnalyzer" "$APP/Contents/MacOS/MeetingAnalyzer"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# エージェントへ渡す skill を、同梱する（`meeting-analyzer claude` が、システムプロンプトへ足す）。
+cp skills/meeting-analyzer/SKILL.md "$APP/Contents/Resources/SKILL.md"
 # VERSION=X.Y.Z を渡すと、アプリの版にする（署名の前に書き換える）。未指定なら、Info.plist のまま。
 if [ -n "${VERSION:-}" ]; then
     [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "build.sh: VERSION は X.Y.Z の形で指定してください: $VERSION" >&2; exit 1; }

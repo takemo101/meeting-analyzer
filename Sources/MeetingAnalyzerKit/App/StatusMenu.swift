@@ -49,6 +49,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .idle:
             menu.addItem(microphoneItem())
             menu.addItem(systemItem())
+            menu.addItem(batchModeItem())
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
@@ -111,6 +112,27 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func copyRegistration(_ sender: NSMenuItem) {
         guard AgentRegistration.allCases.indices.contains(sender.tag) else { return }
         controller.copyRegistration(AgentRegistration.allCases[sender.tag])
+    }
+
+    /// エージェントへ渡す、まとめ方（発話の区切り／会話の区切り／約 30 秒／約 5 秒）。
+    private func batchModeItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "転送のまとめ方: " + controller.batchMode.title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for (index, mode) in BatchMode.allCases.enumerated() {
+            let entry = NSMenuItem(title: mode.title, action: #selector(selectBatchMode(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = index
+            entry.state = mode == controller.batchMode ? .on : .off
+            submenu.addItem(entry)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func selectBatchMode(_ sender: NSMenuItem) {
+        guard BatchMode.allCases.indices.contains(sender.tag) else { return }
+        controller.setBatchMode(BatchMode.allCases[sender.tag])
     }
 
     /// マイク（あなた）のオン／オフ。

@@ -102,7 +102,8 @@ public struct CLIRunner {
         FileHandle.standardError.write(Data((ready
             ? "meeting-analyzer: Claude Code を起動します（文字起こしは、チャンネルで届きます）\n"
             : "meeting-analyzer: アプリ（窓口）に接続できません。Claude Code は起動しますが、アプリを起動するまで、文字起こしは届きません\n").utf8))
-        let arguments = AgentLauncher.claudeArguments(userArguments: userArguments, executable: executablePath(), environment: environment)
+        let executable = executablePath()
+        let arguments = AgentLauncher.claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: AgentLauncher.bundledSkillPath(executable: executable))
         let code = replaceProcess("claude", arguments)
         throw CLIError.agent(code == ENOENT
             ? "claude が見つかりません（Claude Code を入れて、PATH を通してください）"

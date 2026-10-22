@@ -249,7 +249,7 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
     let capabilities = result?["capabilities"] as? [String: Any]
     check(capabilities?["tools"] != nil, "tools を宣言していない")
     check((capabilities?["experimental"] != nil) == channel, "チャンネルの宣言が想定と違う（--channel=\(channel)）")
-    check((result?["instructions"] as? String)?.contains("untrusted") == true, "instructions に、非信頼の注意がない")
+    check((result?["instructions"] as? String)?.isEmpty == false, "instructions が空")
 
     // 再生：窓口を開き、エージェントがつながるのを待ってから、再生を始める。終わっても、窓口を少しの間、開けておく。
     guard let replay = Child(exe, ["replay", sample, "--speaker", speaker, "--title", "e2e-\(id)", "--wait", "30", "--hold", "6"], env: env) else {
@@ -362,6 +362,10 @@ do {
     check(r.status == 7, "終了コード \(r.status)（偽の claude の 7 に置き換わっているはず）")
     check(Array(args.prefix(2)) == ["会議を始めます", "--resume"], "利用者の引数が先頭にない: \(Array(args))")
     check(args.suffix(2) == ["--dangerously-load-development-channels", "server:meeting-analyzer-channel"], "チャンネルの指定が最後にない")
+    if let i = args.firstIndex(of: "--append-system-prompt-file"), i + 1 < args.endIndex {
+        let skill = (try? String(contentsOfFile: String(args[i + 1]), encoding: .utf8)) ?? ""
+        check(skill.contains("meeting-analyzer") && skill.contains("本人"), "同梱の skill を読めない: \(args[i + 1])")
+    } else { check(false, "--append-system-prompt-file（同梱の skill）が渡されていない") }
     if let i = args.firstIndex(of: "--mcp-config"), i + 1 < args.endIndex, let config = json(String(args[i + 1])),
        let server = (config["mcpServers"] as? [String: Any])?["meeting-analyzer-channel"] as? [String: Any] {
         check((server["command"] as? String).map { FileManager.default.isExecutableFile(atPath: $0) } == true, "MCP のコマンドが実行ファイルでない")

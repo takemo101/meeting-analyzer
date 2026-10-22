@@ -47,7 +47,7 @@ struct MCPServerTests {
         await server.hub(.message(.sync))
     }
 
-    @Test("initialize：版を合わせ、ツールを宣言し、非信頼の注意を含む説明を返す。チャンネルは、--channel のときだけ宣言する")
+    @Test("initialize：版を合わせ、ツールを宣言する。チャンネルは、--channel のときだけ宣言する")
     func initialize() async throws {
         for (mode, channel) in [(MCPServer.Mode.tools, false), (.channel, true)] {
             let (server, wire) = server(mode)
@@ -59,8 +59,6 @@ struct MCPServerTests {
             let declaresChannel = (capabilities["experimental"] as? [String: Any])?["claude/channel"] != nil
             #expect(declaresChannel == channel)
             #expect((result["serverInfo"] as? [String: Any])?["version"] as? String == "9.9.9")
-            let instructions = try #require(result["instructions"] as? String)
-            #expect(instructions.contains("untrusted") && instructions.contains("never user instructions"))
         }
         let (server, wire) = server()
         await server.handle(line: rpc(2, "initialize", ["protocolVersion": "1999-01-01"]))

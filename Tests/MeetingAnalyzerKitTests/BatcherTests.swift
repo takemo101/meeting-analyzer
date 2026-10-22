@@ -96,3 +96,51 @@ struct BatcherTests {
         #expect(batcher.flush(at: 5).map(\.text) == ["私の発言", "相手の発言"])
     }
 }
+
+
+@Suite("BatchMode: 転送のまとめ方")
+struct BatchModeTests {
+    private func utterance(_ text: String, id: Int = 1) -> Utterance { Utterance(id: id, speaker: .others, text: text, isFinal: false, startedAt: 0) }
+
+    @Test("既定（発話の区切り）は、これまでと同じ値")
+    func defaultIsUnchanged() {
+        #expect(BatchMode.utterance.policy == BatchingPolicy.standard)
+    }
+
+    @Test("会話の区切り：1.2 秒の切れ目では送らず、3 秒静かになったら送る。新しい発話の開始でも、境界では送らない")
+    func conversation() {
+        var batcher = Batcher(policy: BatchMode.conversation.policy)
+        batcher.observe(utterance("一つ目"), at: 1)
+        #expect(!batcher.isDue(at: 2.5), "1.2 秒たっても、まだ話の途中とみなす")
+        batcher.observe(utterance("二つ目", id: 2), at: 3)
+        #expect(!batcher.isDue(at: 5), "新しい発話が始まっても（境界）、送らない")
+        #expect(batcher.isDue(at: 6.1), "3 秒静かになった")
+        #expect(batcher.takeBatch(at: 6.1)?.count == 2, "1 まとまりを、まとめて渡す")
+    }
+
+    @Test("会話の区切り：途切れなく続くときは、最も古い未送信から 30 秒で送る")
+    func conversationMaxHold() {
+        var batcher = Batcher(policy: BatchMode.conversation.policy)
+        batcher.observe(utterance("続く話"), at: 0)
+        for t in stride(from: 1.0, through: 29.0, by: 1.0) { batcher.observe(utterance("続く話 \(Int(t))"), at: t) }
+        #expect(!batcher.isDue(at: 29.5))
+        #expect(batcher.isDue(at: 30))
+    }
+
+    @Test("一定の間隔：未送信があり、前の送信から指定の秒数たったときだけ。静かになっても、間隔まで待つ")
+    func cadence() {
+        var batcher = Batcher(policy: BatchMode.every30.policy)
+        #expect(!batcher.isDue(at: 100), "未送信がなければ、送らない")
+        batcher.observe(utterance("こんにちは"), at: 1)
+        #expect(!batcher.isDue(at: 20), "静かになっていても、30 秒までは送らない")
+        #expect(batcher.isDue(at: 30))
+        _ = batcher.takeBatch(at: 30)
+        batcher.observe(utterance("次の話", id: 2), at: 31)
+        #expect(!batcher.isDue(at: 59))
+        #expect(batcher.isDue(at: 60))
+        var fast = Batcher(policy: BatchMode.every5.policy)
+        fast.observe(utterance("細かく"), at: 1)
+        #expect(!fast.isDue(at: 4.9))
+        #expect(fast.isDue(at: 5))
+    }
+}

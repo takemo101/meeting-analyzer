@@ -7,14 +7,17 @@ public struct BatchingPolicy: Sendable, Equatable {
     public var maxHold: TimeInterval
     /// 新しい発話が始まったとき、前の発話を送るが、直前の送信からこの秒数は空ける。
     public var boundaryGap: TimeInterval
-    /// 1 回に送る発話の最大数（ブリッジの上限）。
+    /// 1 回に送る発話の最大数。
     public var maxUpdates: Int
+    /// 一定の間隔で送るとき、その秒数（未送信があれば、前の送信からこの秒数たったら送る）。`nil` なら、静けさ・保持・境界で決める。
+    public var cadence: TimeInterval?
 
-    public init(quiet: TimeInterval = 1.2, maxHold: TimeInterval = 10, boundaryGap: TimeInterval = 3, maxUpdates: Int = 64) {
+    public init(quiet: TimeInterval = 1.2, maxHold: TimeInterval = 10, boundaryGap: TimeInterval = 3, maxUpdates: Int = 64, cadence: TimeInterval? = nil) {
         self.quiet = quiet
         self.maxHold = maxHold
         self.boundaryGap = boundaryGap
         self.maxUpdates = maxUpdates
+        self.cadence = cadence
     }
 
     public static let standard = BatchingPolicy()
@@ -54,6 +57,7 @@ public struct Batcher: Sendable {
     /// 今、送るべきか。
     public func isDue(at now: TimeInterval) -> Bool {
         guard let since = pendingSince else { return false }
+        if let cadence = policy.cadence { return now - lastSent >= cadence }
         return now - lastChange >= policy.quiet
             || now - since >= policy.maxHold
             || (boundary && now - lastSent >= policy.boundaryGap)

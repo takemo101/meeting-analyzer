@@ -17,6 +17,8 @@ final class MeetingController {
     private(set) var notice: String? { didSet { onChange? () } }
     /// 取り込む音声の選択。開始のたびに選ぶ（保存しない。SPEC §5）。
     private(set) var selection = AudioSelection()
+    /// エージェントへ渡す、まとめ方（SPEC §3.6）。開始のたびに選ぶ（保存しない）。
+    private(set) var batchMode = BatchMode.utterance
     var onChange: (() -> Void)?
 
     /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
@@ -59,6 +61,12 @@ final class MeetingController {
     func setMicrophone(_ enabled: Bool) {
         guard state == .idle else { return }
         selection.microphone = enabled
+        onChange?()
+    }
+
+    func setBatchMode(_ mode: BatchMode) {
+        guard state == .idle else { return }
+        batchMode = mode
         onChange?()
     }
 
@@ -136,6 +144,7 @@ final class MeetingController {
             inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale)),
             sink: hub,
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
+            policy: batchMode.policy,
             notify: notify
         )
         do {
