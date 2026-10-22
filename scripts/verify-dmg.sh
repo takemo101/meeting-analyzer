@@ -33,7 +33,8 @@ checks() {
 
     [ -s "${app}/Contents/Resources/SKILL.md" ] || fail "同梱の skill（Resources/SKILL.md）が無い"
     [ -s "${app}/Contents/Resources/meeting-analyzer-pi.js" ] || fail "pi・omp の拡張（Resources/meeting-analyzer-pi.js）が無い"
-    ok "同梱物（skill、pi・omp の拡張）"
+    [ -s "${app}/Contents/Resources/meeting-analyzer-opencode/server.js" ] && [ -s "${app}/Contents/Resources/meeting-analyzer-opencode/package.json" ] || fail "opencode のプラグイン（Resources/meeting-analyzer-opencode/）が無い"
+    ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン）"
 
     local plist="${app}/Contents/Info.plist"
     if [ -n "${EXPECTED_VERSION}" ]; then

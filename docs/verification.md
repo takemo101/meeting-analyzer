@@ -224,3 +224,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **確認（ローカル）**：`just dmg` で DMG を作り、`verify-dmg.sh` が通る（DMG の整合、アプリと /Applications へのリンク、同梱の skill と拡張、版、arm64、マウントしたアプリの `--version`、`codesign --verify --deep --strict`）。
 - **確認（GitHub Actions、ドライラン）**：Actions の手動実行（`workflow_dispatch`、`macos-26`）で、単体テスト → DMG の作成 → 検査 → `.sha256` → アーティファクトのアップロード → 別ジョブでのダウンロードと SHA-256 照合が、すべて通った（所要 約 1 分 20 秒）。Release のジョブは、タグでないので、想定どおり、動かなかった。
 - **未確認**：**タグの push による Release の作成**（`release` ジョブの `gh release create`）は、まだ一度も動かしていない。最初のタグで確かめる。DMG を、別の Mac で開いたときの Gatekeeper の挙動と、ダウンロードした DMG から入れたアプリでの権限（マイク・画面収録）の保持。
+
+### 2026-10-22 — opencode への字幕の押し込み（v2 プラグイン）
+
+- **背景**：opencode にも、Claude Code・pi・omp と同じ、字幕の自動の押し込みが欲しい。
+- **調べたこと（実機の opencode v2.1.2）**：プラグインは、**ディレクトリ**（`package.json` の `exports["./server"]`）で、既定の export は `{id, setup}`。ファイル 1 つや、v1 の形（`server` 関数）は、読み込みに失敗する（`--print-logs` の `failed to load plugin`）。型定義（公開の `@opencode-ai/plugin` は v1 の型）に無い、実行時のコンテキスト `ctx.session`（`list`・`prompt`・…）・`ctx.event`・`ctx.location` がある。`session.prompt` の入力は、エラーメッセージ（`Missing key at ["text"]`）から、`{sessionID, text}` と分かった（推測を含む）。`OPENCODE_CONFIG_CONTENT` の `plugin`（ディレクトリ）・`instructions`（skill）は、その起動だけに効き、利用者の設定・プラグイン（oh-my-opencode-slim）とも足し合わされる。ただし、既定の共有バックグラウンドサービスには届かないので、`--standalone` が要る。
+- **確認（実機、隔離した設定・合成音声）**：`meeting-analyzer opencode run --auto "…sleep 12…"` ＋ `replay --wait`。プラグインがつながり、`started`・`captions`・`ended` が、セッションのメッセージ（`<channel …>`）として届いた。ターンの最中に届いたものは積まれ、終わってから、モデルが処理した（`session export` で、メッセージの並びを確認）。直接プラグインを載せた別の実行では、モデルが `ended` の記録のパスを読んで、要約を返した。単体 136 件 pass、E2E 13/13 pass（C2 に、`--standalone`、プラグインと skill の設定を確認する項目を追加）。途中の 1 回は、プロバイダーの 503（`Endpoint is unavailable`）で失敗した（こちらの不具合ではない。再実行で通った）。
+- **未確認**：対話の画面（TUI）での見え方。複数のセッションを開いているときに、押し込み先（いちばん最近に更新されたもの）が、画面に出ているものと一致するか。`--standalone` による、普段の使い方（共有サービス）との違い。
+- **agy**：外から会話へメッセージを入れる拡張の仕組みは、まだ見つけていない（`agy plugin` は、skill 等の部品。`--input-format stream-json` は、非対話の print モードだけ）。押し込みは、今は未対応。

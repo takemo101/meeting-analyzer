@@ -386,7 +386,7 @@ do {
     for name in ["pi", "omp", "agy", "opencode"] {
         let argsFile = work + "/\(name)-args.txt"
         let stub = stubDir + "/" + name
-        try Data("#!/bin/bash\nprintf '%s\\n' \"$@\" > '\(argsFile)'\nexit 7\n".utf8).write(to: URL(fileURLWithPath: stub))
+        try Data("#!/bin/bash\nprintf '%s\\n' \"$@\" > '\(argsFile)'\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > '\(argsFile).env'\nexit 7\n".utf8).write(to: URL(fileURLWithPath: stub))
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stub)
     }
     let path = stubDir + ":/usr/bin:/bin"
@@ -403,6 +403,16 @@ do {
         check(r1.status == 7, "\(setup.name): 終了コード \(r1.status)（偽のエージェントの 7 に置き換わるはず）: \(r1.err)")
         let args = ((try? String(contentsOfFile: work + "/\(setup.name)-args.txt", encoding: .utf8)) ?? "").split(separator: "\n", omittingEmptySubsequences: false).map(String.init).dropLast()
         check(args.first == "hello", "\(setup.name): 利用者の引数が先頭にない: \(Array(args))")
+        check(args.contains("--standalone") == (setup.name == "opencode"), "\(setup.name): --standalone は、opencode だけ: \(Array(args))")
+        let configContent = (try? String(contentsOfFile: work + "/\(setup.name)-args.txt.env", encoding: .utf8)) ?? ""
+        if setup.name == "opencode" {
+            let config = json(configContent)
+            let plugins = config?["plugin"] as? [String] ?? []
+            check(plugins.count == 1 && FileManager.default.isReadableFile(atPath: plugins[0] + "/server.js") && FileManager.default.isReadableFile(atPath: plugins[0] + "/package.json"), "opencode: 字幕を押し込むプラグイン（ディレクトリ）が、設定に載っていない: \(configContent)")
+            check((config?["instructions"] as? [String])?.first.map { FileManager.default.isReadableFile(atPath: $0) } == true, "opencode: skill が、設定に載っていない: \(configContent)")
+        } else {
+            check(configContent.isEmpty, "\(setup.name): opencode 以外に、OPENCODE_CONFIG_CONTENT を渡してはいけない")
+        }
         let skillExpected = setup.name == "pi" || setup.name == "omp"
         check((args.contains("--append-system-prompt")) == skillExpected, "\(setup.name): skill の引き渡しが想定と違う: \(Array(args))")
         if skillExpected {
@@ -422,7 +432,7 @@ do {
         check((try? Data(contentsOf: URL(fileURLWithPath: setup.file))) == first, "\(setup.name): 登録済みなのに、設定を書き換えた")
         check(!r2.err.contains("MCP サーバーを登録") && !r2.err.contains("MCP サーバーの登録"), "\(setup.name): 2 回目も、登録・更新のメッセージが出た: \(r2.err)")
     }
-    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は、字幕を押し込む拡張と skill）の順で、エージェントに置き換わる")
+    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は、字幕を押し込む拡張と skill。opencode は、`--standalone` と、プラグイン・skill を載せた設定）の順で、エージェントに置き換わる")
 } catch { record("C2", .blocked, "偽のエージェントを用意できない: \(error)") }
 
 // ---------- A: メニューバーのアプリとして起動・終了 ----------

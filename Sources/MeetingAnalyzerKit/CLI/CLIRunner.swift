@@ -29,6 +29,7 @@ public struct CLIRunner {
     private let err: @Sendable (String) -> Void
     private let updates: UpdatesProvider
     private let replaceProcess: @Sendable (String, [String]) -> Int32
+    private let setEnvironment: @Sendable ([String: String]) -> Void
     private let executablePath: @Sendable () -> String
     private let outStyle: TerminalStyle
     private let errStyle: TerminalStyle
@@ -43,6 +44,7 @@ public struct CLIRunner {
         updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) },
         replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
         executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path },
+        setEnvironment: @escaping @Sendable ([String: String]) -> Void = { for (name, value) in $0 { setenv(name, value, 1) } },
         outIsTerminal: Bool = false,
         errIsTerminal: Bool = false
     ) {
@@ -51,6 +53,7 @@ public struct CLIRunner {
         self.err = err
         self.updates = updates
         self.replaceProcess = replaceProcess
+        self.setEnvironment = setEnvironment
         self.executablePath = executablePath
         self.outIsTerminal = outIsTerminal
         self.errIsTerminal = errIsTerminal
@@ -122,12 +125,17 @@ public struct CLIRunner {
             : AgentSetup.ensureRegistered(agent, executable: executable, environment: environment, profile: AgentLauncher.profile(in: userArguments))
         var manualText: String?
         if case .manual = registration { manualText = AgentRegistration.allCases.first { $0.title.hasPrefix(agent.rawValue) }?.text(executable: executable) }
-        err(CLIView.launch(agent: agent, appConnected: ready, registration: registration, registrationText: manualText, errStyle) + "\n")
+        let pushesToOpencode = agent == .opencode && AgentLauncher.pushesToOpencode(userArguments)
+        err(CLIView.launch(agent: agent, appConnected: ready, registration: registration, registrationText: manualText, pushes: agent != .opencode || pushesToOpencode, errStyle) + "\n")
         let arguments = AgentLauncher.arguments(
             agent: agent, userArguments: userArguments, executable: executable, environment: environment,
             skillPath: AgentLauncher.bundledSkillPath(executable: executable),
             extensionPath: AgentLauncher.bundledExtensionPath(executable: executable)
         )
+        if pushesToOpencode {
+            setEnvironment(AgentLauncher.opencodeEnvironment(
+                existing: environment["OPENCODE_CONFIG_CONTENT"], pluginPath: AgentLauncher.bundledOpencodePluginPath(executable: executable), skillPath: AgentLauncher.bundledSkillPath(executable: executable)))
+        }
         let code = replaceProcess(agent.command, arguments)
         throw CLIError.agent(code == ENOENT
             ? "\(agent.command) が見つかりません（\(agent.command) を入れて、PATH を通してください）"

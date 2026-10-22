@@ -60,7 +60,7 @@ enum CLIView {
     // MARK: エージェントの起動
 
     /// 起動の前に出す、状態の表（標準エラー）。エージェントが画面を引き継ぐ前の、数行だけ。
-    static func launch(agent: LaunchableAgent, appConnected: Bool, registration: RegistrationOutcome?, registrationText: String?, _ style: TerminalStyle) -> String {
+    static func launch(agent: LaunchableAgent, appConnected: Bool, registration: RegistrationOutcome?, registrationText: String?, pushes: Bool = true, _ style: TerminalStyle) -> String {
         var rows: [(name: String, text: [String])] = []
         rows.append(("アプリ", [appConnected
             ? style.success("接続しました")
@@ -80,6 +80,8 @@ enum CLIView {
         switch agent {
         case .claude: rows.append(("字幕", [style.success("チャンネルで、会話へ自動で届きます")]))
         case .pi, .omp: rows.append(("字幕", [style.success("拡張で、会話へ自動で届きます"), style.dim("  MCP の get_events でも読めます")]))
+        case .opencode where pushes:
+            rows.append(("字幕", [style.success("プラグインで、会話へ自動で届きます"), style.dim("  この起動は、専用のサーバー（--standalone）で動きます。MCP の get_events でも読めます")]))
         case .agy, .opencode:
             rows.append(("字幕", [style.warning("自動では届きません"), style.dim("  「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください")]))
         }

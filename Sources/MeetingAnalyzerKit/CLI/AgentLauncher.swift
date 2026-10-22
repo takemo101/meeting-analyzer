@@ -35,8 +35,42 @@ public enum AgentLauncher {
         switch agent {
         case .claude: return claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: skillPath)
         case .pi, .omp: return userArguments + (extensionPath.map { ["-e", $0] } ?? []) + (skillPath.map { ["--append-system-prompt", $0] } ?? [])
-        case .agy, .opencode: return userArguments
+        case .agy: return userArguments
+        case .opencode: return userArguments + (pushesToOpencode(userArguments) ? ["--standalone"] : [])
         }
+    }
+
+    /// opencode の、TUI を開かない（サーバーを立てない・管理用の）サブコマンド。`run` と、サブコマンドなし（TUI）だけが、字幕を受ける。
+    private static let opencodeOtherSubcommands: Set<String> = [
+        "upgrade", "update", "uninstall", "acp", "api", "debug", "auth", "mcp", "plugin", "models", "stats", "mini", "session", "service", "reload", "pair", "serve",
+    ]
+
+    /// この起動で、字幕を押し込むプラグインを載せるか（TUI と `run` だけ。`mcp list` などの管理コマンドには載せない）。
+    static func pushesToOpencode(_ userArguments: [String]) -> Bool {
+        guard let first = userArguments.first else { return true }
+        return !opencodeOtherSubcommands.contains(first)
+    }
+
+    /// opencode に、その起動だけ、字幕を押し込むプラグインと skill を載せる（環境変数 `OPENCODE_CONFIG_CONTENT`。設定ファイルは書き換えない。
+    /// 利用者の設定・プラグインとは、足し合わされる）。利用者がすでに `OPENCODE_CONFIG_CONTENT` を設定していれば、その `plugin`・`instructions` に足す。
+    /// 既存の値が JSON のオブジェクトでなければ、壊さないよう、何も足さない。
+    /// opencode は、既定では、共有のバックグラウンドサービスで動き、この環境変数が届かない。そのため、起動の引数に `--standalone`（専用のサーバー）を付ける。
+    static func opencodeEnvironment(existing: String?, pluginPath: String?, skillPath: String?) -> [String: String] {
+        guard let pluginPath else { return [:] }
+        var object: [String: Any] = [:]
+        if let existing, !existing.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let parsed = (try? JSONSerialization.jsonObject(with: Data(existing.utf8))) as? [String: Any] else { return [:] }
+            object = parsed
+        }
+        func appended(_ key: String, _ value: String) {
+            var list = (object[key] as? [Any]) ?? []
+            if !list.contains(where: { ($0 as? String) == value }) { list.append(value) }
+            object[key] = list
+        }
+        appended("plugin", pluginPath)
+        if let skillPath { appended("instructions", skillPath) }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else { return [:] }
+        return ["OPENCODE_CONFIG_CONTENT": String(decoding: data, as: UTF8.self)]
     }
 
     /// omp の名前つきプロファイル（`--profile X`／`--profile=X`）。設定ファイルの場所が変わる。
@@ -59,6 +93,9 @@ public enum AgentLauncher {
 
     /// pi・omp に、字幕を押し込む拡張（`Contents/Resources/meeting-analyzer-pi.js`）。
     static func bundledExtensionPath(executable: String) -> String? { bundledResource("meeting-analyzer-pi.js", executable: executable) }
+
+    /// opencode に、字幕を押し込むプラグイン（`Contents/Resources/meeting-analyzer-opencode/`。ディレクトリ）。
+    static func bundledOpencodePluginPath(executable: String) -> String? { bundledResource("meeting-analyzer-opencode", executable: executable) }
 
     /// 窓口の場所を、環境変数で変えているときは、検証・隔離のための起動とみなす（実際のアプリは、起動しない）。
     static func usesDefaultHub(environment: [String: String]) -> Bool {

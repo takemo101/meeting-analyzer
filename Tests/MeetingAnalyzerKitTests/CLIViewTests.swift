@@ -43,7 +43,10 @@ struct CLIViewTests {
         func banner(_ agent: LaunchableAgent) -> String { CLIView.launch(agent: agent, appConnected: true, registration: agent == .claude ? nil : .alreadyRegistered("/p"), registrationText: nil, style) }
         #expect(banner(.claude).contains("チャンネル") && !banner(.claude).contains("MCP 登録"), "Claude は、設定を書かない")
         #expect(banner(.pi).contains("拡張") && banner(.omp).contains("拡張"))
-        #expect(banner(.agy).contains("自動では届きません") && banner(.opencode).contains("自動では届きません"))
+        #expect(banner(.agy).contains("自動では届きません"))
+        #expect(banner(.opencode).contains("プラグイン") && banner(.opencode).contains("--standalone"))
+        let admin = CLIView.launch(agent: .opencode, appConnected: true, registration: .alreadyRegistered("/p"), registrationText: nil, pushes: false, style)
+        #expect(admin.contains("自動では届きません"), "管理コマンド（mcp list など）には、プラグインを載せないので、押し込みを約束しない")
         #expect(CLIView.launch(agent: .claude, appConnected: false, registration: nil, registrationText: nil, style).contains("接続できません"))
     }
 

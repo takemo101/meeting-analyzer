@@ -130,8 +130,51 @@ struct AgentSetupTests {
         #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["hello", "-e", extensionFile, "--append-system-prompt", skill])
         #expect(AgentLauncher.arguments(agent: .omp, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["-e", extensionFile, "--append-system-prompt", skill])
         #expect(AgentLauncher.arguments(agent: .agy, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == [], "拡張は、pi・omp だけ")
+        #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["hello", "--standalone"], "opencode は、専用のサーバーで動かす（利用者の引数が先頭）")
+        #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["run", "要約して"], executable: exe, environment: [:], skillPath: skill) == ["run", "要約して", "--standalone"])
+        #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["mcp", "list"], executable: exe, environment: [:], skillPath: skill) == ["mcp", "list"], "管理コマンドには、載せない")
         #expect(AgentLauncher.arguments(agent: .agy, userArguments: ["-c"], executable: exe, environment: [:], skillPath: skill) == ["-c"])
-        #expect(AgentLauncher.arguments(agent: .opencode, userArguments: [], executable: exe, environment: [:], skillPath: skill) == [])
+        #expect(AgentLauncher.arguments(agent: .opencode, userArguments: [], executable: exe, environment: [:], skillPath: skill) == ["--standalone"])
         #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: nil) == ["hello"])
+    }
+}
+
+
+@Suite("opencode: プラグインと skill を、その起動だけに載せる")
+struct OpencodeLaunchTests {
+    private func object(_ environment: [String: String]) -> [String: Any]? {
+        environment["OPENCODE_CONFIG_CONTENT"].flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+    }
+
+    @Test("何も設定していなければ、プラグインと skill だけの設定を渡す")
+    func fresh() {
+        let result = object(AgentLauncher.opencodeEnvironment(existing: nil, pluginPath: "/App/plugin", skillPath: "/App/SKILL.md"))
+        #expect(result?["plugin"] as? [String] == ["/App/plugin"])
+        #expect(result?["instructions"] as? [String] == ["/App/SKILL.md"])
+    }
+
+    @Test("利用者が OPENCODE_CONFIG_CONTENT を設定していれば、その内容を残して足す（重ねて足さない）")
+    func mergesExisting() {
+        let existing = #"{"plugin":["user-plugin"],"model":"a/b"}"#
+        let once = AgentLauncher.opencodeEnvironment(existing: existing, pluginPath: "/App/plugin", skillPath: nil)
+        let result = object(once)
+        #expect(result?["plugin"] as? [String] == ["user-plugin", "/App/plugin"])
+        #expect(result?["model"] as? String == "a/b")
+        #expect(result?["instructions"] == nil)
+        let twice = AgentLauncher.opencodeEnvironment(existing: once["OPENCODE_CONFIG_CONTENT"], pluginPath: "/App/plugin", skillPath: nil)
+        #expect(object(twice)?["plugin"] as? [String] == ["user-plugin", "/App/plugin"])
+    }
+
+    @Test("既存の値が JSON のオブジェクトでなければ、壊さないよう、何も足さない。プラグインが同梱されていなくても、何も足さない")
+    func leavesInvalidAlone() {
+        #expect(AgentLauncher.opencodeEnvironment(existing: "not json", pluginPath: "/App/plugin", skillPath: nil).isEmpty)
+        #expect(AgentLauncher.opencodeEnvironment(existing: "[1]", pluginPath: "/App/plugin", skillPath: nil).isEmpty)
+        #expect(AgentLauncher.opencodeEnvironment(existing: nil, pluginPath: nil, skillPath: "/App/SKILL.md").isEmpty)
+    }
+
+    @Test("起動の判定：TUI と run だけが載せる。管理コマンドは載せない")
+    func which() {
+        for arguments in [[], ["run", "x"], ["~/project"], ["--continue"]] { #expect(AgentLauncher.pushesToOpencode(arguments), "\(arguments)") }
+        for arguments in [["mcp", "list"], ["auth", "login"], ["serve"], ["plugin", "list"]] { #expect(!AgentLauncher.pushesToOpencode(arguments), "\(arguments)") }
     }
 }
