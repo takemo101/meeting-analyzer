@@ -22,18 +22,15 @@ struct AgentSetupTests {
         #expect(AgentSetup.configURL(.omp, environment: env.merging(["PI_CONFIG_DIR": ".omp-x"]) { $1 }).path == "/h/.omp-x/agent/mcp.json")
         #expect(AgentSetup.configURL(.omp, environment: env, profile: "work").path == "/h/.omp/profiles/work/agent/mcp.json", "プロファイルは、PI_CODING_AGENT_DIR より優先")
         #expect(AgentSetup.configURL(.omp, environment: env.merging(["OMP_PROFILE": "w", "PI_CODING_AGENT_DIR": "/p"]) { $1 }).path == "/h/.omp/profiles/w/agent/mcp.json")
-        #expect(AgentSetup.configURL(.agy, environment: env).path == "/h/.gemini/config/mcp_config.json")
         #expect(AgentSetup.configURL(.opencode, environment: env).path == "/h/.config/opencode/opencode.json")
         #expect(AgentSetup.configURL(.opencode, environment: env.merging(["XDG_CONFIG_HOME": "/x"]) { $1 }).path == "/x/opencode/opencode.json")
     }
 
-    @Test("エントリの形は、各エージェントの設定の書式（pi・agy：command と args／omp：type つき／opencode：mcp の map、command は配列）")
+    @Test("エントリの形は、各エージェントの設定の書式（pi：command と args／omp：type つき／opencode：mcp の map、command は配列）")
     func entryShapes() throws {
         func object(_ agent: LaunchableAgent) throws -> [String: Any] { try #require(JSONSerialization.jsonObject(with: Data(AgentSetup.entryJSON(agent, executable: exe).utf8)) as? [String: Any]) }
-        for agent in [LaunchableAgent.pi, .agy] {
-            let entry = try object(agent)
-            #expect(entry["command"] as? String == exe && entry["args"] as? [String] == ["mcp"] && entry["type"] == nil)
-        }
+        let pi = try object(.pi)
+        #expect(pi["command"] as? String == exe && pi["args"] as? [String] == ["mcp"] && pi["type"] == nil)
         let omp = try object(.omp)
         #expect(omp["type"] as? String == "stdio" && omp["command"] as? String == exe && omp["args"] as? [String] == ["mcp"] && omp["enabled"] as? Bool == true)
         let opencode = try object(.opencode)
@@ -43,7 +40,7 @@ struct AgentSetupTests {
 
     @Test("設定ファイルが無ければ作り、あるなら、他の内容を残して 1 件だけ足す。2 回目は何も書かない")
     func registerOnce() throws {
-        for agent in [LaunchableAgent.pi, .omp, .agy, .opencode] {
+        for agent in [LaunchableAgent.pi, .omp, .opencode] {
             let home = try tempHome()
             defer { try? FileManager.default.removeItem(at: home) }
             let env = ["HOME": home.path]
@@ -119,7 +116,7 @@ struct AgentSetupTests {
         guard case .manual = AgentSetup.ensureRegistered(.opencode, executable: exe, environment: env) else { Issue.record("jsonc not manual"); return }
     }
 
-    @Test("omp の --profile は、引数から読む。pi・omp には skill を、システムプロンプトへ足す。agy・opencode には足さない")
+    @Test("omp の --profile は、引数から読む。pi・omp には skill を、システムプロンプトへ足す。opencode は、設定の instructions で渡す")
     func launchArguments() {
         #expect(AgentLauncher.profile(in: ["x", "--profile", "work"]) == "work")
         #expect(AgentLauncher.profile(in: ["--profile=dev"]) == "dev")
@@ -129,11 +126,9 @@ struct AgentSetupTests {
         let extensionFile = "/App/Contents/Resources/meeting-analyzer-pi.js"
         #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["hello", "-e", extensionFile, "--append-system-prompt", skill])
         #expect(AgentLauncher.arguments(agent: .omp, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["-e", extensionFile, "--append-system-prompt", skill])
-        #expect(AgentLauncher.arguments(agent: .agy, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == [], "拡張は、pi・omp だけ")
         #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["hello", "--standalone"], "opencode は、専用のサーバーで動かす（利用者の引数が先頭）")
         #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["run", "要約して"], executable: exe, environment: [:], skillPath: skill) == ["run", "要約して", "--standalone"])
         #expect(AgentLauncher.arguments(agent: .opencode, userArguments: ["mcp", "list"], executable: exe, environment: [:], skillPath: skill) == ["mcp", "list"], "管理コマンドには、載せない")
-        #expect(AgentLauncher.arguments(agent: .agy, userArguments: ["-c"], executable: exe, environment: [:], skillPath: skill) == ["-c"])
         #expect(AgentLauncher.arguments(agent: .opencode, userArguments: [], executable: exe, environment: [:], skillPath: skill) == ["--standalone"])
         #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: nil) == ["hello"])
     }

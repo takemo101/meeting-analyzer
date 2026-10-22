@@ -6,7 +6,6 @@ public enum AgentRegistration: CaseIterable, Sendable {
     case claudeCode
     case claudeCodeChannel
     case pi
-    case agy
     case opencode
     case omp
 
@@ -15,7 +14,6 @@ public enum AgentRegistration: CaseIterable, Sendable {
         case .claudeCode: return "Claude Code"
         case .claudeCodeChannel: return "Claude Code（自動で届ける: Channels）"
         case .pi: return "pi"
-        case .agy: return "agy"
         case .opencode: return "opencode（opencode.json の mcp に追加）"
         case .omp: return "omp（~/.omp/agent/mcp.json に追加）"
         }
@@ -36,8 +34,6 @@ public enum AgentRegistration: CaseIterable, Sendable {
             return "claude mcp add \(Self.channelServerName) -- \(exe) mcp --channel\nclaude --dangerously-load-development-channels server:\(Self.channelServerName)"
         case .pi:
             return "pi mcp add \(Self.serverName) -- \(exe) mcp"
-        case .agy:
-            return "agy mcp add \(Self.serverName) -- \(exe) mcp"
         case .opencode:
             return Self.opencodeJSON(executable: executable)
         case .omp:

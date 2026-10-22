@@ -4,7 +4,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 
 - 取り込む音声を選ぶ：**マイク**（本人）と、**システム音声**（相手。Mac から出ている音の全体、または選んだアプリ）。Mac のオンデバイスの音声認識で文字にする。**音声は保存も送信もしない。**
 - 特定のサービスに依存しない。Mac で音が出るもの（会議・動画・通話）が対象。ブラウザの拡張機能は要らない。
-- このプロジェクト単体で完結する。エージェントへ渡す受け口は、同じ実行ファイルの MCP サーバー（`meeting-analyzer mcp`）。Claude Code・omp・pi・agy・opencode など、MCP を使えるエージェントに登録する。
+- このプロジェクト単体で完結する。エージェントへ渡す受け口は、同じ実行ファイルの MCP サーバー（`meeting-analyzer mcp`）。Claude Code・omp・pi・opencode など、MCP を使えるエージェントに登録する。
 
 ```
 アプリ（メニューバー）── Unix ドメインソケット ──> meeting-analyzer mcp（MCP）──> エージェント
@@ -19,7 +19,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 | できる | まだ |
 |---|---|
 | メニューバーのアプリから、取り込む音声（マイク・システム音声の全体またはアプリ）を選び、開始・一時停止・再開・終了する。オンデバイスで文字にし、エージェントへ渡す窓口（Unix ドメインソケット）へ流し、記録を書く | 自動終了。エコーの疑いは、メニューでヘッドホンを案内する（検出の当たりは未確認） |
-| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。合成音声で、字幕の自動の到着と、終了の出来事でのエージェントの反応を確認済み）。メニューから、登録コマンドをコピー | omp・agy・opencode での確認（pi は接続まで確認済み） |
+| エージェント側の MCP サーバー（`mcp`）：`get_events`（pull。Claude Code で実機確認済み）、`--channel`（push。Claude Code の Channels。合成音声で、字幕の自動の到着と、終了の出来事でのエージェントの反応を確認済み）。メニューから、登録コマンドをコピー | omp の MCP の接続での確認（pi は接続まで確認済み） |
 | 音声ファイルの文字起こし（`transcribe`）・再生（`replay`）・この Mac で使えるかの確認（`doctor`） | |
 
 マイク・システム音声の実取り込み（権限を含む）と、メニューからの開始〜終了の操作は、実機での人間の確認がまだ済んでいない（[検証手順と記録](docs/verification.md)）。
@@ -65,15 +65,15 @@ meeting-analyzer claude "今日の打ち合わせを聞いて、気になる点�
 - MCP の設定は、その起動だけに渡す（Claude Code の設定ファイルは、書き換えない）。字幕は、チャンネルで自動で届く。
 - Channels には、開発用の許可（`--dangerously-load-development-channels`）が付く。起動時に「Loading development channels」の警告が出たら、「1. I am using this for local development」を選ぶ。
 - 起動後に `server:meeting-analyzer-channel · no MCP server configured with that name` と表示されても、字幕の自動の到着は動く（`--mcp-config` で、その起動だけに渡した設定を、Claude Code の起動時の確認が、設定済みの一覧に数えないための表示。実機で、字幕と終了の出来事が `← meeting-analyzer-channel: …` として届き、Claude Code が反応することを確認した）。
-- **pi・omp・agy・opencode も、同じ形で起動できる**：`meeting-analyzer pi`／`omp`／`agy`／`opencode`（引数は、そのまま渡す）。**初回だけ、そのエージェントの設定ファイルへ、`meeting-analyzer` の MCP サーバーを自動で登録する**（他の内容は、そのまま。最初に、元のファイルを `*.meeting-analyzer.bak` へ控える。登録済みなら、何も書かない。コメントを含む設定は、書かずに、手で足す文を示す）。登録先：pi＝`~/.pi/agent/mcp.json`、omp＝`~/.omp/agent/mcp.json`、agy＝`~/.gemini/config/mcp_config.json`、opencode＝`~/.config/opencode/opencode.json`。
+- **pi・omp・opencode も、同じ形で起動できる**：`meeting-analyzer pi`／`omp`／`opencode`（引数は、そのまま渡す）。**初回だけ、そのエージェントの設定ファイルへ、`meeting-analyzer` の MCP サーバーを自動で登録する**（他の内容は、そのまま。最初に、元のファイルを `*.meeting-analyzer.bak` へ控える。登録済みなら、何も書かない。コメントを含む設定は、書かずに、手で足す文を示す）。登録先：pi＝`~/.pi/agent/mcp.json`、omp＝`~/.omp/agent/mcp.json`、opencode＝`~/.config/opencode/opencode.json`。
 - **字幕が自動で届くのは、Claude Code（Channels）、pi、omp、opencode**。pi と omp には、アプリに同梱した拡張（`-e`）を渡す。opencode には、同梱のプラグインを、その起動だけ載せる（環境変数 `OPENCODE_CONFIG_CONTENT`。設定ファイルは書き換えない）。拡張・プラグインが、アプリの窓口へつなぎ、字幕と終了の出来事を、セッションのメッセージとして押し込み、エージェントが動き出す。
 - **opencode は、この起動だけ、専用のサーバー（`--standalone`）で動く**（既定の共有のバックグラウンドサービスには、環境変数が届かないため）。`opencode mcp list` などの管理コマンドは、そのまま。
-- agy は、自動では届かない。エージェントに、「meeting-analyzer の get_events で、会話の内容を見て」のように頼むと、取りに行く。
-- 確認済み：pi・omp は、拡張が、字幕を受け取ること（実機の `--mode rpc`）。pi は、モデルが出来事を受けて動き出すことも。opencode は、実機で、字幕が会話へ届き、モデルが処理すること。agy は、`agy mcp list` で登録。
+- agy は対象外（外から会話へメッセージを入れる仕組みが無く、自動の押し込みができないため）。
+- 確認済み：pi・omp は、拡張が、字幕を受け取ること（実機の `--mode rpc`）。pi は、モデルが出来事を受けて動き出すことも。opencode は、実機で、字幕が会話へ届き、モデルが処理すること。
 
 ### 1. エージェントに、MCP サーバーを手で登録する（`meeting-analyzer <名前>` を使うなら不要）
 
-メニューの「エージェントに登録（コピー）」から、実行ファイルのパスを入れたコマンドをコピーして、ターミナルで実行できる（Claude Code・pi・agy・opencode・omp）。手で書くときは、次のとおり。
+メニューの「エージェントに登録（コピー）」から、実行ファイルのパスを入れたコマンドをコピーして、ターミナルで実行できる（Claude Code・pi・opencode・omp）。手で書くときは、次のとおり。
 
 実行ファイルは `build/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer`（以下 `$EXE`。絶対パスで登録する）。MCP サーバーは、標準入出力で話す stdio のサーバーで、コマンドは `$EXE mcp`。
 
@@ -86,7 +86,7 @@ claude mcp add meeting-analyzer-channel -- "$EXE" mcp --channel
 claude --dangerously-load-development-channels server:meeting-analyzer-channel
 ```
 
-pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・agy（`agy mcp add …`）・opencode（`opencode mcp add --global …`）も、同じ形で登録できる。omp は `~/.omp/agent/mcp.json` に stdio サーバーを足す。**確認済みなのは、Claude Code（`get_events`）と、pi（接続とツールの一覧）だけ**。エージェントの設定ファイルは、自動では書き換えない。
+pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・opencode（`opencode mcp add --global …`）も、同じ形で登録できる。omp は `~/.omp/agent/mcp.json` に stdio サーバーを足す。**確認済みなのは、Claude Code（`get_events`）と、pi（接続とツールの一覧）だけ**。エージェントの設定ファイルは、自動では書き換えない。
 
 アプリが後から起動しても、エージェントを起動し直す必要はない（`mcp` が、窓口へつなぎ直す）。
 

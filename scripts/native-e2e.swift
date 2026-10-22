@@ -378,12 +378,12 @@ do {
     conclude(id, pass: "claude は、利用者の引数 → MCP の設定（--channel・窓口の場所）→ チャンネルの指定の順で渡して置き換わり、無ければ終了コード 5")
 } catch { record("C1", .blocked, "偽の claude を用意できない: \(error)") }
 
-// ---------- C2: pi・omp・agy・opencode を、コマンド 1 つで起動する（設定へ MCP サーバーを自動で登録。エージェントは、偽物に置き換える） ----------
+// ---------- C2: pi・omp・opencode を、コマンド 1 つで起動する（設定へ MCP サーバーを自動で登録。エージェントは、偽物に置き換える） ----------
 do {
     let id = "C2"
     let stubDir = work + "/stub-agents"
     try FileManager.default.createDirectory(atPath: stubDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    for name in ["pi", "omp", "agy", "opencode"] {
+    for name in ["pi", "omp", "opencode"] {
         let argsFile = work + "/\(name)-args.txt"
         let stub = stubDir + "/" + name
         try Data("#!/bin/bash\nprintf '%s\\n' \"$@\" > '\(argsFile)'\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > '\(argsFile).env'\nexit 7\n".utf8).write(to: URL(fileURLWithPath: stub))
@@ -394,7 +394,6 @@ do {
     let setups: [(name: String, env: [String: String], file: String, container: String)] = [
         ("pi", ["PI_CODING_AGENT_DIR": work + "/pi-cfg"], work + "/pi-cfg/mcp.json", "mcpServers"),
         ("omp", ["PI_CODING_AGENT_DIR": work + "/omp-cfg"], work + "/omp-cfg/mcp.json", "mcpServers"),
-        ("agy", ["HOME": work + "/agy-home"], work + "/agy-home/.gemini/config/mcp_config.json", "mcpServers"),
         ("opencode", ["XDG_CONFIG_HOME": work + "/xdg", "HOME": work + "/oc-home"], work + "/xdg/opencode/opencode.json", "mcp"),
     ]
     for setup in setups {
@@ -432,7 +431,7 @@ do {
         check((try? Data(contentsOf: URL(fileURLWithPath: setup.file))) == first, "\(setup.name): 登録済みなのに、設定を書き換えた")
         check(!r2.err.contains("MCP サーバーを登録") && !r2.err.contains("MCP サーバーの登録"), "\(setup.name): 2 回目も、登録・更新のメッセージが出た: \(r2.err)")
     }
-    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は、字幕を押し込む拡張と skill。opencode は、`--standalone` と、プラグイン・skill を載せた設定）の順で、エージェントに置き換わる")
+    conclude(id, pass: "pi・omp・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は、字幕を押し込む拡張と skill。opencode は、`--standalone` と、プラグイン・skill を載せた設定）の順で、エージェントに置き換わる")
 } catch { record("C2", .blocked, "偽のエージェントを用意できない: \(error)") }
 
 // ---------- A: メニューバーのアプリとして起動・終了 ----------

@@ -30,12 +30,11 @@ public enum AgentLauncher {
     }
 
     /// 起動する引数（コマンド名を除く）。利用者の引数を先頭に置く。skill は、`--append-system-prompt` を持つエージェント（pi・omp）には、そのシステムプロンプトへ足す。
-    /// ほかのエージェント（agy・opencode）は、MCP の `instructions` が、同じ内容の短い版を伝える。
+    /// opencode は、skill を、設定の `instructions` で渡す（`opencodeEnvironment`）。
     static func arguments(agent: LaunchableAgent, userArguments: [String], executable: String, environment: [String: String], skillPath: String?, extensionPath: String? = nil) -> [String] {
         switch agent {
         case .claude: return claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: skillPath)
         case .pi, .omp: return userArguments + (extensionPath.map { ["-e", $0] } ?? []) + (skillPath.map { ["--append-system-prompt", $0] } ?? [])
-        case .agy: return userArguments
         case .opencode: return userArguments + (pushesToOpencode(userArguments) ? ["--standalone"] : [])
         }
     }

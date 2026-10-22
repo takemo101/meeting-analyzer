@@ -62,7 +62,7 @@ public enum Command: Equatable {
     case replay(ReplayOptions)
     /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
     case mcp(channel: Bool)
-    /// エージェント（Claude Code・pi・omp・agy・opencode）を、このアプリの MCP サーバーつきで起動する。`arguments` は、そのままエージェントへ渡す。
+    /// エージェント（Claude Code・pi・omp・opencode）を、このアプリの MCP サーバーつきで起動する。`arguments` は、そのままエージェントへ渡す。
     case launch(agent: LaunchableAgent, arguments: [String])
 }
 

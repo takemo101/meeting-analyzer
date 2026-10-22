@@ -18,7 +18,7 @@ enum CLIView {
         lines += style.section("エージェントを起動する", style.table([
             ("claude [引数...]", ["Claude Code を、このアプリつきで起動する（設定ファイルは書き換えない）。", "字幕は、チャンネルで、会話へ自動で届く"]),
             ("pi|omp [引数...]", ["設定へ MCP サーバーを登録して（初回・場所が変わったときだけ）起動する。", "字幕は、拡張で、会話へ自動で届く"]),
-            ("agy|opencode [引数...]", ["設定へ MCP サーバーを登録して（同上）起動する。", "字幕は、エージェントが get_events で取りに行く"]),
+            ("opencode [引数...]", ["設定へ MCP サーバーを登録して（同上）起動する。字幕は、プラグインで、会話へ自動で届く", "（この起動だけ、専用のサーバー --standalone で動く）"]),
             ("mcp [--channel]", ["エージェント向けの MCP サーバー（標準入出力）。--channel で、Claude Code の Channels の通知も出す"]),
         ], label: command))
         lines.append("")
@@ -82,7 +82,7 @@ enum CLIView {
         case .pi, .omp: rows.append(("字幕", [style.success("拡張で、会話へ自動で届きます"), style.dim("  MCP の get_events でも読めます")]))
         case .opencode where pushes:
             rows.append(("字幕", [style.success("プラグインで、会話へ自動で届きます"), style.dim("  この起動は、専用のサーバー（--standalone）で動きます。MCP の get_events でも読めます")]))
-        case .agy, .opencode:
+        case .opencode:
             rows.append(("字幕", [style.warning("自動では届きません"), style.dim("  「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください")]))
         }
         let table = style.table(rows, label: style.dim)

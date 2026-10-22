@@ -5,7 +5,6 @@ public enum LaunchableAgent: String, CaseIterable, Sendable {
     case claude
     case pi
     case omp
-    case agy
     case opencode
 
     /// 実行するコマンド名（PATH から探す）。
@@ -50,8 +49,6 @@ enum AgentSetup {
                 directory = home.appendingPathComponent("\(value("PI_CONFIG_DIR") ?? ".omp")/agent", isDirectory: true)
             }
             return directory.appendingPathComponent("mcp.json")
-        case .agy:
-            return home.appendingPathComponent(".gemini/config/mcp_config.json")
         case .opencode:
             let base = value("XDG_CONFIG_HOME").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? home.appendingPathComponent(".config", isDirectory: true)
             let directory = base.appendingPathComponent("opencode", isDirectory: true)
