@@ -21,40 +21,50 @@ public struct ScreenSnapshotter: Sendable {
         } catch {
             throw CaptureError.permissionDenied(.screenRecording, Self.permissionText(error))
         }
-        let filter: SCContentFilter
-        let size: CGSize
         switch selection {
         case .off:
             throw CaptureError.failed("画面の取り込みが選ばれていません")
         case .display:
             guard let display = content.displays.first else { throw CaptureError.targetNotFound("画面が見つかりません") }
-            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-            size = CGSize(width: display.width, height: display.height)
+            do {
+                return try await capture(filter: SCContentFilter(display: display, excludingApplications: [], exceptingWindows: []), size: CGSize(width: display.width, height: display.height))
+            } catch {
+                throw CaptureError.failed("画面を撮れません: \(Self.describe(error))")
+            }
         case .app(let bundleID, let name):
             let processIDs = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map(\.processIdentifier))
             let candidates = content.windows.map {
                 WindowCandidate(bundleID: $0.owningApplication?.bundleIdentifier, processID: $0.owningApplication?.processID ?? -1, layer: $0.windowLayer,
                                 width: $0.frame.width, height: $0.frame.height, isOnScreen: $0.isOnScreen)
             }
-            guard let index = WindowPicker.pick(candidates, bundleID: bundleID, processIDs: processIDs) else {
-                let all = WindowPicker.appWindows(candidates, bundleID: bundleID, processIDs: processIDs)
-                let running = !processIDs.isEmpty
-                throw CaptureError.targetNotFound("「\(name)」の撮れるウィンドウがありません（\(running ? "起動中" : "起動していません")。通常のウィンドウ \(all.count) 件。最小化していないか、確認してください）")
+            let ranked = WindowPicker.ranked(candidates, bundleID: bundleID, processIDs: processIDs)
+            guard !ranked.isEmpty else {
+                throw CaptureError.targetNotFound("「\(name)」の撮れるウィンドウがありません（\(processIDs.isEmpty ? "起動していません" : "起動中")。通常のウィンドウ 0 件。最小化していないか、確認してください）")
             }
-            let window = content.windows[index]
-            filter = SCContentFilter(desktopIndependentWindow: window)
-            size = window.frame.size
+            // 先頭（画面に出ている、いちばん大きいもの）が撮れなくても、次の候補を試す（最大 5 件）。
+            var lastError: Error?
+            for index in ranked.prefix(5) {
+                let window = content.windows[index]
+                do { return try await capture(filter: SCContentFilter(desktopIndependentWindow: window), size: window.frame.size) } catch { lastError = error }
+            }
+            let visible = ranked.filter { candidates[$0].isOnScreen }.count
+            throw CaptureError.failed("「\(name)」のウィンドウを撮れません（候補 \(ranked.count) 件、うち画面に出ているもの \(visible) 件）: \(lastError.map(Self.describe) ?? "原因不明")")
         }
+    }
+
+    private func capture(filter: SCContentFilter, size: CGSize) async throws -> CGImage {
         let scale = min(1, Double(maxEdge) / Double(max(size.width, size.height)))
         let configuration = SCStreamConfiguration()
         configuration.width = max(1, Int((size.width * scale).rounded()))
         configuration.height = max(1, Int((size.height * scale).rounded()))
         configuration.showsCursor = false
-        do {
-            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
-        } catch {
-            throw CaptureError.failed("画面を撮れません: \(error.localizedDescription)")
-        }
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    /// 原因を切り分けられるよう、OS のエラーの種類と番号も付ける（例：`com.apple.ScreenCaptureKit.SCStreamErrorDomain -3802`）。
+    private static func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(error.localizedDescription)（\(nsError.domain) \(nsError.code)）"
     }
 
     private static func permissionText(_ error: Error) -> String {

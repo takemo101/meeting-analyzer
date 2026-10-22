@@ -24,11 +24,12 @@ public enum WindowPicker {
         windows.filter { ($0.bundleID == bundleID || processIDs.contains($0.processID)) && $0.layer == 0 && $0.width > 50 && $0.height > 50 }
     }
 
-    /// 撮るウィンドウの位置（`windows` の添字）。画面に出ているものを優先し、その中で、いちばん大きいもの。
-    /// 画面に出ているものが無ければ、別のデスクトップ・フルスクリーンにあるものの中で、いちばん大きいもの。無ければ nil。
-    public static func pick(_ windows: [WindowCandidate], bundleID: String, processIDs: Set<Int32>) -> Int? {
+    /// 撮る候補の位置（`windows` の添字）を、試す順に並べる。画面に出ているものが先（大きい順）、そのあとに、別のデスクトップ・フルスクリーン・最小化のもの（大きい順）。
+    /// 先頭が撮れなくても、次を試せるように、全部を返す。
+    public static func ranked(_ windows: [WindowCandidate], bundleID: String, processIDs: Set<Int32>) -> [Int] {
         let matching = windows.indices.filter { appWindows([windows[$0]], bundleID: bundleID, processIDs: processIDs).count == 1 }
-        let visible = matching.filter { windows[$0].isOnScreen }
-        return (visible.isEmpty ? matching : visible).max { windows[$0].width * windows[$0].height < windows[$1].width * windows[$1].height }
+        let area = { (index: Int) in windows[index].width * windows[index].height }
+        let order = { (a: Int, b: Int) in area(a) > area(b) }
+        return matching.filter { windows[$0].isOnScreen }.sorted(by: order) + matching.filter { !windows[$0].isOnScreen }.sorted(by: order)
     }
 }
