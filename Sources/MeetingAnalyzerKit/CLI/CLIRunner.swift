@@ -30,6 +30,11 @@ public struct CLIRunner {
     private let updates: UpdatesProvider
     private let replaceProcess: @Sendable (String, [String]) -> Int32
     private let executablePath: @Sendable () -> String
+    private let outStyle: TerminalStyle
+    private let errStyle: TerminalStyle
+    /// 標準出力・標準エラーが端末なら、人が読む形で出す。そうでなければ（パイプ・ファイル）、JSON（SPEC §3.9）。
+    private let outIsTerminal: Bool
+    private let errIsTerminal: Bool
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -37,7 +42,9 @@ public struct CLIRunner {
         err: @escaping @Sendable (String) -> Void,
         updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) },
         replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
-        executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path }
+        executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path },
+        outIsTerminal: Bool = false,
+        errIsTerminal: Bool = false
     ) {
         self.environment = environment
         self.out = out
@@ -45,14 +52,18 @@ public struct CLIRunner {
         self.updates = updates
         self.replaceProcess = replaceProcess
         self.executablePath = executablePath
+        self.outIsTerminal = outIsTerminal
+        self.errIsTerminal = errIsTerminal
+        self.outStyle = .detect(isTerminal: outIsTerminal, environment: environment)
+        self.errStyle = .detect(isTerminal: errIsTerminal, environment: environment)
     }
 
-    /// 終了コードを返す。失敗は、標準エラーに 1 行の JSON（`{"ok":false,"code":...,"message":...}`）で出す。
+    /// 終了コードを返す。失敗は、標準エラーへ出す（端末なら、人が読む形。そうでなければ、1 行の JSON `{"ok":false,"code":...,"message":...}`）。
     public func run(_ command: Command) async -> Int32 {
         do {
             switch command {
             case .gui: return 0   // 呼び出し側（App）が処理する
-            case .help: out(helpText)
+            case .help: out(CLIView.help(outStyle))
             case .version: out("\(AppInfo.name) \(AppInfo.version)")
             case .doctor(let locale): try await doctor(locale)
             case .transcribe(let file, let locale): try await transcribe(file, locale)
@@ -62,12 +73,17 @@ public struct CLIRunner {
             }
             return 0
         } catch let error as CLIError {
-            err(Self.json(["ok": false, "code": error.code, "message": error.message]))
-            return error.exitCode
+            return report(error)
         } catch {
-            err(Self.json(["ok": false, "code": "internal", "message": "\(error)"]))
+            err(errIsTerminal ? CLIView.failure(.input("\(error)"), errStyle) : Self.json(["ok": false, "code": "internal", "message": "\(error)"]))
             return 1
         }
+    }
+
+    /// 失敗を、標準エラーへ出し、終了コードを返す。
+    public func report(_ error: CLIError) -> Int32 {
+        err(errIsTerminal ? CLIView.failure(error, errStyle) : Self.json(["ok": false, "code": error.code, "message": error.message]))
+        return error.exitCode
     }
 
     static func json(_ object: [String: Any]) -> String {
@@ -78,7 +94,7 @@ public struct CLIRunner {
 
     private func doctor(_ localeId: String) async throws {
         let readiness = await SpeechReadiness.check(locale: Locale(identifier: localeId))
-        out(Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
+        out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
     }
 
     private func readableFile(_ path: String) throws -> URL {
@@ -91,7 +107,7 @@ public struct CLIRunner {
         let file = try readableFile(path)
         do {
             for try await update in updates(file, Locale(identifier: localeId)) where update.isFinal {
-                out(Self.json(["text": update.text, "isFinal": true, "start": update.start, "end": update.end]))
+                out(outIsTerminal ? CLIView.transcript(text: update.text, start: update.start, end: update.end, outStyle) : Self.json(["text": update.text, "isFinal": true, "start": update.start, "end": update.end]))
             }
         } catch let error as TranscriptionError { throw error.cliError }
     }
@@ -101,25 +117,12 @@ public struct CLIRunner {
     private func launch(_ agent: LaunchableAgent, _ userArguments: [String]) throws {
         let executable = executablePath()
         let ready = AgentLauncher.ensureAppRunning(environment: environment)
-        var lines = [ready
-            ? "meeting-analyzer: \(agent.command) を起動します"
-            : "meeting-analyzer: アプリ（窓口）に接続できません。\(agent.command) は起動しますが、アプリを起動するまで、文字起こしは届きません"]
-        if agent == .claude {
-            lines[0] += "（文字起こしは、チャンネルで届きます）"
-        } else {
-            switch AgentSetup.ensureRegistered(agent, executable: executable, environment: environment, profile: AgentLauncher.profile(in: userArguments)) {
-            case .alreadyRegistered: break
-            case .registered(let path, let backedUp): lines.append("meeting-analyzer: MCP サーバーを登録しました: \(path)" + (backedUp ? "（元のファイルは *.meeting-analyzer.bak に控えました）" : ""))
-            case .updated(let path, let backedUp): lines.append("meeting-analyzer: MCP サーバーの登録を、このアプリの場所へ更新しました: \(path)" + (backedUp ? "（元のファイルは *.meeting-analyzer.bak に控えました）" : ""))
-            case .manual(let path, let reason):
-                let registration = AgentRegistration.allCases.first { $0.title.hasPrefix(agent.rawValue) }
-                lines.append("meeting-analyzer: MCP サーバーを自動で登録できませんでした（\(reason): \(path)）。手で足してください:\n\(registration?.text(executable: executable) ?? "")")
-            }
-            lines.append(agent == .pi || agent == .omp
-                ? "meeting-analyzer: 字幕は、拡張で、自動で届きます（アプリが動いていれば）。MCP の get_events でも読めます"
-                : "meeting-analyzer: 字幕は、自動では届きません。\(agent.command) に「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください（自動の押し込みは Claude Code・pi・omp だけ）")
-        }
-        FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+        let registration = agent == .claude
+            ? nil
+            : AgentSetup.ensureRegistered(agent, executable: executable, environment: environment, profile: AgentLauncher.profile(in: userArguments))
+        var manualText: String?
+        if case .manual = registration { manualText = AgentRegistration.allCases.first { $0.title.hasPrefix(agent.rawValue) }?.text(executable: executable) }
+        err(CLIView.launch(agent: agent, appConnected: ready, registration: registration, registrationText: manualText, errStyle) + "\n")
         let arguments = AgentLauncher.arguments(
             agent: agent, userArguments: userArguments, executable: executable, environment: environment,
             skillPath: AgentLauncher.bundledSkillPath(executable: executable),
@@ -154,9 +157,13 @@ public struct CLIRunner {
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
         let event = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
         guard case .ended(let sessionId, _, _, _, _, let duration, let batches, let utterances, let path) = event else { return }
-        var summary: [String: Any] = ["ok": true, "sessionId": sessionId, "batches": batches, "utterances": utterances, "durationSeconds": duration]
-        if let path { summary["transcriptPath"] = path }
-        out(Self.json(summary))
+        if outIsTerminal {
+            out(CLIView.replaySummary(sessionId: sessionId, utterances: utterances, batches: batches, duration: TimeInterval(duration), path: path, outStyle))
+        } else {
+            var summary: [String: Any] = ["ok": true, "sessionId": sessionId, "batches": batches, "utterances": utterances, "durationSeconds": duration]
+            if let path { summary["transcriptPath"] = path }
+            out(Self.json(summary))
+        }
         if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }
     }
 }

@@ -11,8 +11,6 @@ public enum LaunchableAgent: String, CaseIterable, Sendable {
     /// 実行するコマンド名（PATH から探す）。
     public var command: String { rawValue }
 
-    /// 字幕が、エージェントの会話へ、自動で押し込まれるか。Claude Code の Channels だけ。ほかは、エージェントが `get_events` で取りに行く。
-    public var pushes: Bool { self == .claude }
 }
 
 public enum RegistrationOutcome: Equatable, Sendable {

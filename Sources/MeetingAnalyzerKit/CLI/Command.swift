@@ -104,7 +104,7 @@ public enum CommandParser {
             if rest == ["--channel"] { return .success(.mcp(channel: true)) }
             return .failure(.usage("mcp に渡せるのは --channel だけです"))
         default:
-            return .failure(.usage("知らないコマンドです: \(first)。meeting-analyzer --help を見てください"))
+            return .failure(.usage("知らないコマンドです: \(first)"))
         }
     }
 
@@ -135,27 +135,3 @@ public enum CommandParser {
         return .success(parsed)
     }
 }
-
-public let helpText = """
-meeting-analyzer — Mac の音声（マイク・システム音声）を文字にして、コーディングエージェントへ渡します
-
-使い方
-  meeting-analyzer                         メニューバーのアプリを起動する
-  meeting-analyzer mcp [--channel]         エージェント向けの MCP サーバー（標準入出力）。実行中のアプリから、文字起こしを受けて渡す。
-                                           --channel で、Claude Code の Channels の通知（push）も出す
-  meeting-analyzer claude [claude の引数...]  Claude Code を、このアプリの MCP サーバー（Channels）つきで起動する（設定ファイルは書き換えない）。
-                                           アプリが動いていなければ、入れてあるアプリを起動する
-  meeting-analyzer pi|omp|agy|opencode [引数...]
-                                           そのエージェントの設定へ、MCP サーバーを自動で登録して（初回・場所が変わったときだけ。
-                                           書くのは meeting-analyzer の 1 件だけ）、起動する。字幕は get_events で取りに行く形
-  meeting-analyzer doctor [--locale L]     この Mac で、その言語のオンデバイス認識が使えるか調べる（既定 ja_JP）
-  meeting-analyzer transcribe <音声ファイル> [--locale L]
-                                           文字起こしの結果を、1 行 1 件の JSON で標準出力へ出す
-  meeting-analyzer replay <音声ファイル> [--speaker you|others] [--title <名前>] [--locale L] [--wait <秒>] [--hold <秒>]
-                                           音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。
-                                           --wait：エージェントがつながるのを、再生の前に待つ（上限）／--hold：再生のあと、窓口を開けておく
-  meeting-analyzer --version | --help
-
-終了コード  0 成功 / 1 使い方 / 2 入力 / 3 窓口（ハブ） / 4 文字起こし / 5 エージェントを起動できない
-窓口        <データの置き場所>/hub.sock（Unix ドメインソケット。MEETING_ANALYZER_SOCKET で変更）
-"""

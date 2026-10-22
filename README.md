@@ -107,13 +107,13 @@ pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・agy（`agy mcp add …`）
 ```sh
 $EXE claude [claude の引数...]            # Claude Code を、MCP サーバー（チャンネル）つきで起動する
 $EXE mcp [--channel]                      # エージェント向けの MCP サーバー（標準入出力）
-$EXE doctor                               # {"installed":true,"locale":"ja_JP","supported":true}
-$EXE transcribe sample.aiff               # 確定した結果を 1 行 1 件の JSON で出す
+$EXE doctor                               # この Mac で、その言語のオンデバイス認識が使えるか
+$EXE transcribe sample.aiff               # 確定した結果を出す（パイプなら 1 行 1 件の JSON）
 $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイルをセッションとして再生し、窓口を開ける
 $EXE --help
 ```
 
-- 失敗は、標準エラーの 1 行の JSON と、終了コード（1 使い方・2 入力・3 窓口・4 文字起こし・5 エージェントを起動できない）で返す。
+- 端末へ出すときは、人が読む形（見出し・表・`✔`/`!`/`✖`。色は `NO_COLOR` で消せる）。パイプ・ファイルへ出すときは JSON（失敗は、標準エラーの 1 行）。終了コードは、1 使い方・2 入力・3 窓口・4 文字起こし・5 エージェントを起動できない。
 - アプリの窓口は `~/Library/Application Support/MeetingAnalyzer/hub.sock`（`MEETING_ANALYZER_SOCKET` で変更）。`replay` は、同じ窓口を開けるので、アプリが起動していると使えない（終了コード 3）。
 
 ## プライバシー

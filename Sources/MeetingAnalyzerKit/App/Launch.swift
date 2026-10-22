@@ -37,15 +37,21 @@ public enum MeetingAnalyzerApp {
     public static func runCLI(_ arguments: [String]) async -> Int32 {
         switch CommandParser.parse(arguments) {
         case .failure(let error):
-            FileHandle.standardError.write(Data((CLIRunner.json(["ok": false, "code": error.code, "message": error.message]) + "\n").utf8))
-            return error.exitCode
+            return makeRunner().report(error)
         case .success(let command):
-            let runner = CLIRunner(
-                out: { FileHandle.standardOutput.write(Data(($0 + "\n").utf8)) },
-                err: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
-            )
-            return await runner.run(command)
+            return await makeRunner().run(command)
         }
+    }
+
+
+    /// 標準出力・標準エラーが端末なら、人が読む形で出す（そうでなければ JSON）。
+    private static func makeRunner() -> CLIRunner {
+        CLIRunner(
+            out: { FileHandle.standardOutput.write(Data(($0 + "\n").utf8)) },
+            err: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
+            outIsTerminal: isatty(STDOUT_FILENO) == 1,
+            errIsTerminal: isatty(STDERR_FILENO) == 1
+        )
     }
 
     public static func isGUILaunch(_ arguments: [String]) -> Bool {
