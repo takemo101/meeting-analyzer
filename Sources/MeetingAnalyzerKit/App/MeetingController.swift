@@ -81,7 +81,6 @@ final class MeetingController {
     func start() {
         guard state == .idle else { return }
         guard !selection.isEmpty else { notice = "取り込む音声を選んでください"; return }
-        guard ConsentPrompt.confirm(selection: selection) else { return }
         notice = nil
         state = .working("開始処理中…")
         Task { await begin(selection) }

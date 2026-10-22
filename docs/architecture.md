@@ -60,7 +60,7 @@ flowchart TD
 | | `CLIRunner` | `Command` の実行（`mcp` は `MCPRunner` へ）。標準出力・標準エラー・文字起こしの部品を差し替えられる（検証とテスト用）。**失敗の見せ方（JSON・終了コード）を決める唯一の場所** | なし |
 | `App/` | `Launch`（`MeetingAnalyzerApp`、`AppDelegate`） | 起動の入口。引数なしなら、アクセサリ（Dock に出ない）として起動し、メニューバーの項目を置く。CLI なら、実行して終了コードを返す。SIGTERM・メニューの終了は、同じ道（実行中の会議を `appQuit` で終えてから終了）を通す | `StatusMenu`、`MeetingController` |
 | | `MeetingController` | メニューの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込む音声の選択）だけを持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ |
-| | `StatusMenu`、`ConsentPrompt`、`FailureText` | メニュー（開くたびに状態から作り直す）、同意の確認（3 項目のチェックで「開始」が有効になる）、失敗の文言。**利用者への見せ方を決める境界** | メニューバーの項目 |
+| | `StatusMenu`、`FailureText` | メニュー（開くたびに状態から作り直す）、失敗の文言。**利用者への見せ方を決める境界**。開始は、確認のダイアログなしで、すぐ始まる | メニューバーの項目 |
 
 ### 取り込みと会議の接続
 

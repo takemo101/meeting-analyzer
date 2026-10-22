@@ -49,7 +49,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .idle:
             menu.addItem(microphoneItem())
             menu.addItem(systemItem())
-            let start = action("開始…", #selector(start))
+            let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
         case .running:
