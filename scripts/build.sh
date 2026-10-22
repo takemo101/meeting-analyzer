@@ -19,6 +19,9 @@ cp integrations/pi/meeting-analyzer.js "$APP/Contents/Resources/meeting-analyzer
 cp -R integrations/opencode "$APP/Contents/Resources/meeting-analyzer-opencode"
 # 分析のプリセット（解説・提案・サマリーの出し方。メニューで選ぶ。SPEC §3.11）。自分のプリセットは、データの置き場所の presets/ に置く。
 cp -R presets "$APP/Contents/Resources/presets"
+# プリセットを作る・直すための skill（エージェントの skill フォルダへ、コピーして使う。docs/presets.md）。
+mkdir -p "$APP/Contents/Resources/skills"
+cp -R skills/meeting-analyzer-presets "$APP/Contents/Resources/skills/meeting-analyzer-presets"
 # VERSION=X.Y.Z を渡すと、アプリの版にする（署名の前に書き換える）。未指定なら、Info.plist のまま。
 if [ -n "${VERSION:-}" ]; then
     [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "build.sh: VERSION は X.Y.Z の形で指定してください: $VERSION" >&2; exit 1; }

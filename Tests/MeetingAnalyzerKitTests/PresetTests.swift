@@ -200,3 +200,31 @@ struct PresetCLITests {
         #expect(code == 2 && (err.lines.first ?? "").contains("プリセットが見つかりません: nope"), "\(err.lines)")
     }
 }
+
+@Suite("プリセットを作る skill: 例が、実際に読めること")
+struct PresetAuthoringSkillTests {
+    private func skillText() throws -> String {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("skills/meeting-analyzer-presets/SKILL.md")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    @Test("skill 自体の見出し（name・description）があり、完成例の preset が、アプリと同じ規則で読める")
+    func exampleParses() throws {
+        let text = try skillText()
+        #expect(text.hasPrefix("---\nname: meeting-analyzer-presets\ndescription: "))
+        let start = try #require(text.range(of: "```markdown\n"))
+        let end = try #require(text.range(of: "\n```", range: start.upperBound..<text.endIndex))
+        let example = String(text[start.upperBound..<end.lowerBound])
+        let preset = try AnalysisPreset.parse(id: "weekly-review", text: example, source: .user).get()
+        #expect(preset.name == "週次レビュー" && !preset.summary.isEmpty && preset.instructions.contains("終了（`ended`）"))
+    }
+
+    @Test("skill が書いている制約（8000 文字・同梱の 6 つの ID）が、実装と一致している")
+    func constraintsMatchTheCode() throws {
+        let text = try skillText()
+        #expect(text.contains("\(AnalysisPreset.maxInstructionLength) 文字") || text.contains("8000 文字"))
+        #expect(AnalysisPreset.maxInstructionLength == 8000)
+        for id in ["standard", "minutes", "tech-review", "learning", "video", "negotiation"] { #expect(text.contains("`\(id)`"), Comment(rawValue: id)) }
+    }
+}

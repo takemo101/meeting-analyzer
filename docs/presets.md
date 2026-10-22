@@ -29,6 +29,14 @@
 2. テンプレートを、`_` なしの名前（例：`my-review.md`）で保存して、中身を書く。ファイル名（拡張子なし）が、プリセットの **ID** になる。
 3. メニューを開き直すと、「（自分）」つきで並ぶ。
 
+### エージェントに作ってもらう（skill）
+
+プリセットを作る・直すための skill（`skills/meeting-analyzer-presets/`）がある。エージェントに、「議事録用のプリセットを作って」「提案のしかたを変えたい」と頼むと、用途を聞いて、正しい形のファイルを作り、`meeting-analyzer presets` で確認する。
+
+- **場所**：リポジトリの `skills/meeting-analyzer-presets/`、またはアプリの `Contents/Resources/skills/meeting-analyzer-presets/`。
+- **入れ方**：お使いのエージェントの skill のフォルダへ、コピーする。例（Claude Code）：`cp -R /Applications/MeetingAnalyzer.app/Contents/Resources/skills/meeting-analyzer-presets ~/.claude/skills/`。ほかのエージェントも、それぞれの skill の置き場所へ。
+- この skill は、会議の分析用の skill（`meeting-analyzer`。起動コマンドが自動で渡す）とは別で、**プリセットのファイルを作るときだけ**使う。
+
 ### ファイルの形
 
 ```markdown

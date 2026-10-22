@@ -16,6 +16,7 @@ meeting-analyzer の補助文書の入口。製品要件・受け入れ条件・
 | [macOS 共通検証スキル](../.agents/skills/verifying-macos-apps/SKILL.md) | アプリを問わず、実操作・期待値・証拠をどう検証し、何を主張してよいか | 製品仕様・成功履歴・追加の操作権限 |
 | [固有レシピ](../.agents/skills/verifying-meeting-analyzer/SKILL.md) | 共通手順を、現存するケース・コマンドへどう対応付けるか | 仕様や Issue 状態の複製 |
 | [エージェント向け skill](../skills/meeting-analyzer/SKILL.md) | このアプリを使うのに必要な最小限（データの扱い・出来事の形・境界） | 分析のしかた（プリセット）・製品要件（正本は SPEC §3.8・§3.11） |
+| [プリセットを作る skill](../skills/meeting-analyzer-presets/SKILL.md) | エージェントが、用途を聞いて、プリセットのファイルを、正しい形で作る手順 | プリセットの形の要件（正本は SPEC §3.11） |
 | [分析のプリセット](presets.md) | 解説・提案・サマリーの出し方を、どう選び、どう自分用に作るか | 製品要件（正本は SPEC §3.11） |
 
 文書間で矛盾を見つけた場合は、派生文書を根拠に製品要件を変更しない。SPEC の該当節とユーザーの判断を確認し、必要な修正を関係する文書へ反映する。
