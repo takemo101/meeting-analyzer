@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[ -d build/MeetingAnalyzer.app ] || ./scripts/build.sh
+# 毎回ビルドする（古いビルドに対して実行して、現在のソースの成功と取り違えないため）。
+./scripts/build.sh >/dev/null
 
 COPY=build/MeetingAnalyzerE2E.app
 rm -rf "$COPY"

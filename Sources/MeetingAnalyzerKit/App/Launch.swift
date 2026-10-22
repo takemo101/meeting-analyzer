@@ -4,10 +4,28 @@ import Foundation
 /// メニューバーのアプリ。Dock にもウィンドウにも出さず、メニューバーの項目だけを置く（SPEC §3.1）。
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let controller = MeetingController()
     private var statusMenu: StatusMenu?
+    private var termination: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusMenu = StatusMenu()
+        statusMenu = StatusMenu(controller: controller)
+        // SIGTERM も、通常の終了と同じ道（実行中の会議を `appQuit` で終える）を通す。
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        termination = source
+    }
+
+    /// 実行中・一時停止中の会議は、`appQuit` の理由で終わらせ（記録と終了の合図）、それから終了する（SPEC §3.1）。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard controller.hasActiveMeeting else { return .terminateNow }
+        Task {
+            await controller.end(reason: .appQuit)
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 

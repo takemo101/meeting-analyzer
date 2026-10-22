@@ -12,6 +12,13 @@ public enum RuntimePaths {
         if let custom = environment["MEETING_ANALYZER_DATA_DIR"], !custom.isEmpty { return URL(fileURLWithPath: custom, isDirectory: true) }
         return home.appendingPathComponent("Library/Application Support/MeetingAnalyzer", isDirectory: true)
     }
+
+    /// ブリッジの送り先。live-support の既定のポート（43821）。`LIVE_SUPPORT_PORT` で変更できる。値が不正なら既定に戻す。
+    public static func bridgeURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        var port: UInt16 = 43821
+        if let value = environment["LIVE_SUPPORT_PORT"].flatMap({ UInt16($0) }), value > 0 { port = value }
+        return "http://127.0.0.1:\(port)"
+    }
 }
 
 public enum TokenError: Error, Sendable, Equatable {
@@ -42,10 +49,17 @@ public struct SessionStore: Sendable {
         self.root = root
     }
 
+    /// `<root>/sessions/<sessionId>/transcript.md` の場所。
+    public func transcriptURL(sessionId: UUID) -> URL {
+        root.appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent(sessionId.uuidString.lowercased(), isDirectory: true)
+            .appendingPathComponent("transcript.md")
+    }
+
     /// `<root>/sessions/<sessionId>/transcript.md` を書いて、その絶対パスを返す。
     public func writeTranscript(_ markdown: String, sessionId: UUID) -> Result<URL, SessionStoreError> {
-        let directory = root.appendingPathComponent("sessions", isDirectory: true).appendingPathComponent(sessionId.uuidString.lowercased(), isDirectory: true)
-        let file = directory.appendingPathComponent("transcript.md")
+        let file = transcriptURL(sessionId: sessionId)
+        let directory = file.deletingLastPathComponent()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try Data(markdown.utf8).write(to: file, options: .atomic)

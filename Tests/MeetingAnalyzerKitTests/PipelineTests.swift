@@ -9,6 +9,7 @@ final class RecordingSender: BridgeSending, @unchecked Sendable {
     private(set) var ends: [EndEvent] = []
     var failOnBatch: Int?
     var healthError: BridgeError?
+    var endError: BridgeError?
 
     func health() async throws {
         if let healthError { throw healthError }
@@ -21,6 +22,7 @@ final class RecordingSender: BridgeSending, @unchecked Sendable {
     }
 
     func send(_ end: EndEvent) async throws {
+        if let endError { throw endError }
         ends.append(end)
         events.append("end")
     }

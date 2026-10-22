@@ -31,6 +31,7 @@ public final class SessionPipeline: @unchecked Sendable {
     }
 
     public var batchCount: Int { sequence }
+    public var utteranceCount: Int { transcript.utteranceCount }
 
     /// 時間だけが進んだとき（更新が来ない間）の確認。静けさが十分なら、溜まった発話を送る。実際の取り込みでは、定期的に呼ぶ。
     public func tick(at now: TimeInterval) async throws {
@@ -56,12 +57,22 @@ public final class SessionPipeline: @unchecked Sendable {
         while let batch = batcher.takeBatch(at: update.end) { try await deliver(batch) }
     }
 
+    /// 一時停止のとき、未送信の発話を出し切る（送るべき時を待たない）。
+    public func flushPending(at now: TimeInterval) async throws {
+        guard !finished else { return }
+        while batcher.hasPending { try await deliver(batcher.flush(at: now)) }
+    }
+
     /// 会議を終える。未送信の発話を出し切り、記録を書き、最後に終了の合図を送る。
+    /// 出し切りに失敗しても、記録は書き、終了の合図も試す。最初の失敗を、最後に投げる（失敗を握り潰さず、記録も失わない）。
     @discardableResult
     public func finish(reason: EndReason, endedAt: Date = Date(), at now: TimeInterval) async throws -> EndEvent {
         precondition(!finished, "finish は 1 回だけ")
         finished = true
-        while batcher.hasPending { try await deliver(batcher.flush(at: now)) }
+        var failure: Error?
+        while batcher.hasPending {
+            do { try await deliver(batcher.flush(at: now)) } catch { failure = failure ?? error }
+        }
         var transcriptPath: String?
         if let store, !transcript.isEmpty {
             let markdown = transcript.markdown(meetingId: meetingId, startedAt: startedAt, endedAt: endedAt)
@@ -71,7 +82,8 @@ public final class SessionPipeline: @unchecked Sendable {
             sessionId: sessionId, meetingId: meetingId, reason: reason, startedAt: startedAt, endedAt: endedAt,
             batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath
         )
-        try await sender.send(end)
+        do { try await sender.send(end) } catch { failure = failure ?? error }
+        if let failure { throw failure }
         return end
     }
 
