@@ -77,6 +77,9 @@ public struct ScreenSnapshotter: Sendable {
                 }
             }
             let visible = ranked.filter { candidates[$0].isOnScreen }.count
+            if visible == 0 {
+                throw CaptureError.failed("「\(name)」のウィンドウが、いま見えているデスクトップにありません（別のデスクトップのフルスクリーン・最小化・隠れている、など）。見えていないウィンドウは、撮れません。そのウィンドウが見えるデスクトップへ移ると、撮れます（\(lastError.map(Self.describe) ?? "原因不明")）")
+            }
             throw CaptureError.failed("「\(name)」のウィンドウを撮れません（候補 \(ranked.count) 件、うち画面に出ているもの \(visible) 件）: \(lastError.map(Self.describe) ?? "原因不明")")
         }
     }

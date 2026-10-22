@@ -272,14 +272,16 @@ public actor LiveSession {
     }
 
     /// 画面を 1 枚撮り、前に保存した画面から変化があれば（かつ、前の保存から `screenMinGap` 秒たっていれば）、縮小した JPEG にして保存し、次のバッチへ添える。
-    /// `throwing`：開始のときだけ true。撮れなければ、失敗として返す。実行中は、失敗を 1 回だけ知らせて、続ける（字幕の転送を止めない）。
+    /// `throwing`：開始のときだけ true。権限の失敗は、開始の失敗として返す。それ以外の失敗は、実行中と同じく、1 回だけ知らせて、続ける（字幕の転送を止めない）。
     private func captureScreen(throwing: Bool) async throws {
         guard let screen, let screenshots else { return }
         let snapshot: CGImage
         do {
             snapshot = try await screen.snapshot()
         } catch {
-            if throwing { throw Self.map(error) }
+            // 開始のときに止めるのは、権限の失敗だけ（許可の確認を、開始の操作の中で出すため）。ウィンドウが見えていない・撮れないときは、
+            // 会議を始めて、知らせを 1 回出し、撮れるようになるのを待つ（字幕の転送を止めない）。
+            if throwing, case let mapped = Self.map(error), case .capture(.permissionDenied) = mapped { throw mapped }
             if !screenFailureReported && !Task.isCancelled {
                 screenFailureReported = true
                 notify(.screenshotFailed(Self.screenFailureText(error)))

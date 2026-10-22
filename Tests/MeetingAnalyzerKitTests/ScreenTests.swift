@@ -240,6 +240,23 @@ struct LiveSessionScreenTests {
         #expect(notices.all == [.screenshotFailed("ウィンドウが無い")])
     }
 
+    @Test("開始のときに、ウィンドウが見えなくて撮れなくても（権限以外の失敗）、会議は始まり、知らせは 1 回。撮れるようになったら、画像が付く")
+    func startContinuesWhenTheWindowIsNotVisible() async throws {
+        let (store, root) = tempStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let screen = FakeScreen(), sink = RecordingSink(), fake = FakeInputs(), notices = Notices()
+        screen.fail(CaptureError.failed("「Google Chrome」のウィンドウが、いま見えているデスクトップにありません"))
+        let live = session(screen, sink: sink, store: store, fake: fake, notify: { notices.add($0) })
+        try await live.start()
+        #expect(await live.phase == .running, "撮れなくても、会議は始まる")
+        #expect(notices.all == [.screenshotFailed("「Google Chrome」のウィンドウが、いま見えているデスクトップにありません")])
+        screen.fail(nil)
+        for _ in 0..<300 where (try? FileManager.default.contentsOfDirectory(atPath: store.directory(sessionId: live.sessionId).path))?.isEmpty ?? true { try await Task.sleep(for: .milliseconds(10)) }
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: store.directory(sessionId: live.sessionId).path))?.count == 1, "見えるようになったら、画像が保存される")
+        #expect(notices.all.count == 1, "知らせは 1 回だけ")
+        _ = try await live.end(reason: .user)
+    }
+
     @Test("画面を選んでいなければ、撮らず、画像も添えない")
     func noScreenNoShots() async throws {
         let sink = RecordingSink(), fake = FakeInputs()
