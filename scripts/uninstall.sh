@@ -39,6 +39,11 @@ if [ -n "$LINK" ] && [ -L "$LINK" ]; then
     fi
 fi
 
+# メニューの「コマンドをインストール」で張ったリンク（/usr/local/bin）は、管理者の権限が要るので、ここでは触らない。
+if [ -L /usr/local/bin/meeting-analyzer ]; then
+    echo "注意: /usr/local/bin/meeting-analyzer が残っている場合は、アプリのメニューの「コマンド…をインストール」（チェック付き）を選んで外してから、アンインストールしてください（アプリを消したあとは、sudo rm /usr/local/bin/meeting-analyzer）"
+fi
+
 DATA="${MEETING_ANALYZER_DATA_DIR:-$HOME/Library/Application Support/MeetingAnalyzer}"
 [ -d "$DATA" ] && echo "残しています（会議の記録。不要なら、自分で削除）: $DATA"
 echo "エージェントに登録していたら、自分で外す（例: claude mcp remove meeting-analyzer）"

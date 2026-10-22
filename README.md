@@ -35,7 +35,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 
 1. DMG を開き、MeetingAnalyzer を「Applications」へドラッグする。
 2. 初回は、署名が ad-hoc（Developer ID の署名・公証なし）のため、Gatekeeper に止められる。右クリック →「開く」、または `xattr -dr com.apple.quarantine /Applications/MeetingAnalyzer.app`。
-3. コマンド（`meeting-analyzer claude` など）を使うなら、`mkdir -p ~/.local/bin && ln -sf /Applications/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer ~/.local/bin/meeting-analyzer`。
+3. コマンド（`meeting-analyzer claude` など）を使うなら、メニューバーの MeetingAnalyzer のメニューから「コマンド「meeting-analyzer」をインストール（/usr/local/bin）」を選ぶ（管理者のパスワードを求められる。もう一度選ぶと外れる）。アプリを「アプリケーション」へ移してから。
 
 照合：`shasum -a 256 -c MeetingAnalyzer-X.Y.Z.dmg.sha256`。作り方（タグ → DMG）は [開発手順](docs/development.md#リリース) を参照。
 
@@ -55,7 +55,7 @@ just e2e            # 実機の native E2E（CLI・本物の音声と認識・�
 
 ### 0. Claude Code を、コマンド 1 つで起動する（登録は不要）
 
-`just install` が、コマンド `meeting-analyzer` を `~/.local/bin` に置く（PATH に無ければ、足す）。
+`just install` が、コマンド `meeting-analyzer` を `~/.local/bin` に置く（PATH に無ければ、足す）。DMG から入れたときは、メニューの「コマンド「meeting-analyzer」をインストール」で、`/usr/local/bin` に置ける。
 
 ```sh
 meeting-analyzer claude            # アプリ（窓口）が動いていなければ起動し、Claude Code を、文字起こしのチャンネルつきで起動する

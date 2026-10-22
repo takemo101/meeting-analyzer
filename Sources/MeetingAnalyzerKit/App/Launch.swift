@@ -59,6 +59,29 @@ public enum MeetingAnalyzerApp {
         return false
     }
 
+    /// `…/X.app/Contents/MacOS/Y` の形の実行ファイルから、`X.app` のパス。その形でなければ `nil`。
+    static func bundlePath(forExecutable path: String) -> String? {
+        let marker = ".app/Contents/MacOS/"
+        guard let range = path.range(of: marker, options: .backwards) else { return nil }
+        return String(path[..<range.lowerBound]) + ".app"
+    }
+
+    /// 端末から、引数なしで実行されたとき：その端末の子ではなく、アプリとして（LaunchServices で）起動して、すぐ戻る。
+    /// 端末の子のままだと、端末が閉じると終了し、マイク・画面収録の許可の確認も、このアプリでなく、端末のものとして出てしまう。
+    /// アプリの中の実行ファイルでなければ（`swift run` など）、`false`（そのまま起動する）。
+    public static func openAppFromTerminal() -> Bool {
+        guard let executable = Bundle.main.executablePath,
+              let bundle = bundlePath(forExecutable: URL(fileURLWithPath: executable).resolvingSymlinksInPath().path) else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [bundle]
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return false }
+        FileHandle.standardOutput.write(Data("\(AppInfo.name): メニューバーのアプリを起動しました（すでに起動中なら、そのままです）\n".utf8))
+        return true
+    }
+
     /// メニューバーのアプリを起動する。終了するまで戻らない。
     @MainActor
     public static func launchGUI() {

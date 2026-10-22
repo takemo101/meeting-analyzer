@@ -11,7 +11,7 @@ enum CLIView {
         lines.append("Mac の音声（マイク・システム音声）を、Mac の中で文字にして、コーディングエージェントへ渡します。")
         lines.append("")
         lines += style.section("使い方", [
-            "\(AppInfo.name)                      メニューバーのアプリを起動する",
+            "\(AppInfo.name)                      メニューバーのアプリを起動する（端末からは、アプリとして起動して、すぐ戻る）",
             "\(AppInfo.name) <コマンド> [オプション]",
         ])
         lines.append("")

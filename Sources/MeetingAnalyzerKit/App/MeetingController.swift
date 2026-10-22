@@ -115,6 +115,17 @@ final class MeetingController {
         NSWorkspace.shared.open(folder)
     }
 
+    /// コマンド `meeting-analyzer` の状態（メニューの表示用）。
+    var commandState: CommandLineTool.State { CommandLineTool().state }
+
+    /// コマンド `meeting-analyzer` を、入れる・外す。管理者のパスワードが要るときは、OS のダイアログが出る。失敗したら、理由を見せる（取り消しは、黙って何もしない）。
+    func toggleCommand() {
+        let tool = CommandLineTool()
+        let error = tool.state == .installed ? tool.uninstall() : tool.install()
+        guard let error else { onChange?(); return }
+        Alerts.show(title: "コマンド「\(CommandLineTool.name)」を変えられませんでした", text: error)
+    }
+
     func setBatchMode(_ mode: BatchMode) {
         guard state == .idle else { return }
         batchMode = mode

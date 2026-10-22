@@ -66,6 +66,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(registrationItem())
+        menu.addItem(commandItem())
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -95,6 +96,28 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         item.target = self
         return item
     }
+
+    /// コマンド `meeting-analyzer`（`/usr/local/bin` へのリンク）を、入れる・外す。入っていれば、チェック。
+    private func commandItem() -> NSMenuItem {
+        let name = CommandLineTool.name
+        let state = controller.commandState
+        switch state {
+        case .unavailable:
+            return label("コマンド「\(name)」: アプリを「アプリケーション」へ移すと入れられます")
+        case .other(let path):
+            return label("コマンド「\(name)」: \(path) に、別のものがあります")
+        case .installed:
+            let item = action("コマンド「\(name)」をインストール（/usr/local/bin）", #selector(toggleCommand))
+            item.state = .on
+            return item
+        case .stale:
+            return action("コマンド「\(name)」を、このアプリへ付け替える", #selector(toggleCommand))
+        case .notInstalled:
+            return action("コマンド「\(name)」をインストール（/usr/local/bin）", #selector(toggleCommand))
+        }
+    }
+
+    @objc private func toggleCommand() { controller.toggleCommand() }
 
     // MARK: 選択肢のサブメニュー
 
