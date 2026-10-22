@@ -55,8 +55,9 @@ meeting-analyzer claude "今日の打ち合わせを聞いて、気になる点�
 - Channels には、開発用の許可（`--dangerously-load-development-channels`）が付く。起動時に「Loading development channels」の警告が出たら、「1. I am using this for local development」を選ぶ。
 - 起動後に `server:meeting-analyzer-channel · no MCP server configured with that name` と表示されても、字幕の自動の到着は動く（`--mcp-config` で、その起動だけに渡した設定を、Claude Code の起動時の確認が、設定済みの一覧に数えないための表示。実機で、字幕と終了の出来事が `← meeting-analyzer-channel: …` として届き、Claude Code が反応することを確認した）。
 - **pi・omp・agy・opencode も、同じ形で起動できる**：`meeting-analyzer pi`／`omp`／`agy`／`opencode`（引数は、そのまま渡す）。**初回だけ、そのエージェントの設定ファイルへ、`meeting-analyzer` の MCP サーバーを自動で登録する**（他の内容は、そのまま。最初に、元のファイルを `*.meeting-analyzer.bak` へ控える。登録済みなら、何も書かない。コメントを含む設定は、書かずに、手で足す文を示す）。登録先：pi＝`~/.pi/agent/mcp.json`、omp＝`~/.omp/agent/mcp.json`、agy＝`~/.gemini/config/mcp_config.json`、opencode＝`~/.config/opencode/opencode.json`。
-- Claude Code 以外は、字幕が**自動では届かない**（押し込みは、Claude Code の Channels だけ）。エージェントに、「meeting-analyzer の get_events で、会話の内容を見て」のように頼むと、取りに行く。
-- 確認済みなのは、pi（`pi mcp list` で接続）と agy（`agy mcp list` で登録）の、登録までです。omp・opencode は、書式から作った登録で、実機の確認はまだです。
+- **字幕が自動で届くのは、Claude Code（Channels）、pi、omp**。pi と omp には、アプリに同梱した拡張（`-e`）を渡す。拡張が、アプリの窓口へつなぎ、字幕と終了の出来事を、セッションのメッセージとして押し込み、エージェントが動き出す。
+- agy と opencode は、自動では届かない。エージェントに、「meeting-analyzer の get_events で、会話の内容を見て」のように頼むと、取りに行く。
+- 確認済み：pi・omp は、拡張が、字幕を受け取ること（実機の `--mode rpc`）。pi は、モデルが出来事を受けて動き出すことも。agy は、`agy mcp list` で登録。opencode は、書式から作った登録で、実機の確認はまだ。
 
 ### 1. エージェントに、MCP サーバーを手で登録する（`meeting-analyzer <名前>` を使うなら不要）
 

@@ -194,3 +194,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **実測**：`tccutil reset` は、アプリが LaunchServices に登録されているあいだは成功し、**アプリを削除したあとは「No such bundle identifier」で失敗する**（検証用に作った、別の bundle ID のコピーで確認）。そのため、uninstall は、取り消してから削除する順にした。
 - **確認の範囲**：取り消し→削除の順、既定でない場所では取り消さないこと、`install` の既定では取り消さないことを、検証用の bundle ID（`dev.takemo101.meeting-analyzer.e2e` など）で確認した。**利用者の本物の許可（`dev.takemo101.meeting-analyzer`）は、取り消していない**（実際の `just uninstall`・`just reset-permissions` は、実行していない）。
 - **不具合を見つけて直した**：メッセージの `$service（…）` が、全角の括弧を、変数名の一部として読み、文字化けしていた（`${service}` にした）。
+
+### 2026-10-22 — pi・omp への字幕の押し込み（拡張）
+
+- **報告**：Claude Code は字幕を受け取れるが、pi と omp は受け取れない。
+- **原因**：字幕の自動の押し込みは、Claude Code の Channels だけで、pi・omp には、その仕組みを作っていなかった（MCP の `get_events` を、エージェントが呼ばない限り、届かない）。
+- **変更**：pi・omp 共通の拡張 `integrations/pi/meeting-analyzer.js`（アプリに `Contents/Resources/meeting-analyzer-pi.js` として同梱）を作った。窓口へつなぎ、つないだあとの出来事を、セッションへ、`<channel …>` で囲んだメッセージとして `sendMessage(…, {deliverAs: "followUp", triggerTurn: true})` で押し込む（live-support の拡張と同じ API）。`meeting-analyzer pi|omp` が、`-e` で渡す。単体 120 件 pass、E2E 13/13 pass（C2 に、`-e` の引き渡しの確認を追加）。
+- **実機の pi・omp での確認**：窓口を開けた `replay --wait` と同時に、`--mode rpc -e <拡張>` で起動した。**omp**（設定の置き場所を隔離。モデルの認証が無いので、ターンは始まらない）：`started`・`captions`・`ended` の 3 件が、`customType: "meeting-analyzer"` のメッセージとして、順に届いた。**pi**：`started` が届き、**モデルが、その出来事を受けて、自分で動き出した**（skill のファイルを読み、プロジェクトの資料を読む）。このとき、モデルを実際に使った（合成の文字起こしだけ。費用は、約 0.02 ドル）。
+- **未確認**：pi・omp の対話の画面での見え方（`<channel …>` のメッセージの表示）、長い会話での挙動（ターンの最中に届く出来事が、`followUp` として積まれる量）、omp の MCP の接続（拡張とは別の経路）、agy・opencode には、押し込みの仕組みが無い（`get_events` のまま）。

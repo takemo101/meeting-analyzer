@@ -31,10 +31,10 @@ public enum AgentLauncher {
 
     /// 起動する引数（コマンド名を除く）。利用者の引数を先頭に置く。skill は、`--append-system-prompt` を持つエージェント（pi・omp）には、そのシステムプロンプトへ足す。
     /// ほかのエージェント（agy・opencode）は、MCP の `instructions` が、同じ内容の短い版を伝える。
-    static func arguments(agent: LaunchableAgent, userArguments: [String], executable: String, environment: [String: String], skillPath: String?) -> [String] {
+    static func arguments(agent: LaunchableAgent, userArguments: [String], executable: String, environment: [String: String], skillPath: String?, extensionPath: String? = nil) -> [String] {
         switch agent {
         case .claude: return claudeArguments(userArguments: userArguments, executable: executable, environment: environment, skillPath: skillPath)
-        case .pi, .omp: return userArguments + (skillPath.map { ["--append-system-prompt", $0] } ?? [])
+        case .pi, .omp: return userArguments + (extensionPath.map { ["-e", $0] } ?? []) + (skillPath.map { ["--append-system-prompt", $0] } ?? [])
         case .agy, .opencode: return userArguments
         }
     }
@@ -48,12 +48,17 @@ public enum AgentLauncher {
         return nil
     }
 
-    /// アプリに同梱した skill（`Contents/Resources/SKILL.md`）。実行ファイルは `Contents/MacOS/` にある（シンボリックリンク経由でも、実パスで探す）。無ければ nil。
-    static func bundledSkillPath(executable: String) -> String? {
+    /// アプリに同梱したファイル（`Contents/Resources/<名前>`）。実行ファイルは `Contents/MacOS/` にある（シンボリックリンク経由でも、実パスで探す）。無ければ nil。
+    static func bundledResource(_ name: String, executable: String) -> String? {
         let resources = URL(fileURLWithPath: executable).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources")
-        let skill = resources.appendingPathComponent("SKILL.md").path
-        return FileManager.default.isReadableFile(atPath: skill) ? skill : nil
+        let file = resources.appendingPathComponent(name).path
+        return FileManager.default.isReadableFile(atPath: file) ? file : nil
     }
+
+    static func bundledSkillPath(executable: String) -> String? { bundledResource("SKILL.md", executable: executable) }
+
+    /// pi・omp に、字幕を押し込む拡張（`Contents/Resources/meeting-analyzer-pi.js`）。
+    static func bundledExtensionPath(executable: String) -> String? { bundledResource("meeting-analyzer-pi.js", executable: executable) }
 
     /// 窓口の場所を、環境変数で変えているときは、検証・隔離のための起動とみなす（実際のアプリは、起動しない）。
     static func usesDefaultHub(environment: [String: String]) -> Bool {

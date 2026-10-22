@@ -13,6 +13,8 @@ cp "$BIN/MeetingAnalyzer" "$APP/Contents/MacOS/MeetingAnalyzer"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # エージェントへ渡す skill を、同梱する（`meeting-analyzer claude` が、システムプロンプトへ足す）。
 cp skills/meeting-analyzer/SKILL.md "$APP/Contents/Resources/SKILL.md"
+# pi・omp に、字幕を押し込む拡張（`meeting-analyzer pi|omp` が、-e で渡す）。
+cp integrations/pi/meeting-analyzer.js "$APP/Contents/Resources/meeting-analyzer-pi.js"
 # VERSION=X.Y.Z を渡すと、アプリの版にする（署名の前に書き換える）。未指定なら、Info.plist のまま。
 if [ -n "${VERSION:-}" ]; then
     [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "build.sh: VERSION は X.Y.Z の形で指定してください: $VERSION" >&2; exit 1; }

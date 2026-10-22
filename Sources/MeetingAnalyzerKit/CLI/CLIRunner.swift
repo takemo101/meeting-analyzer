@@ -115,12 +115,15 @@ public struct CLIRunner {
                 let registration = AgentRegistration.allCases.first { $0.title.hasPrefix(agent.rawValue) }
                 lines.append("meeting-analyzer: MCP サーバーを自動で登録できませんでした（\(reason): \(path)）。手で足してください:\n\(registration?.text(executable: executable) ?? "")")
             }
-            lines.append("meeting-analyzer: 字幕は、自動では届きません。\(agent.command) に「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください（自動の押し込みは Claude Code だけ）")
+            lines.append(agent == .pi || agent == .omp
+                ? "meeting-analyzer: 字幕は、拡張で、自動で届きます（アプリが動いていれば）。MCP の get_events でも読めます"
+                : "meeting-analyzer: 字幕は、自動では届きません。\(agent.command) に「meeting-analyzer の get_events で、会話の内容を見て」のように頼んでください（自動の押し込みは Claude Code・pi・omp だけ）")
         }
         FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
         let arguments = AgentLauncher.arguments(
             agent: agent, userArguments: userArguments, executable: executable, environment: environment,
-            skillPath: AgentLauncher.bundledSkillPath(executable: executable)
+            skillPath: AgentLauncher.bundledSkillPath(executable: executable),
+            extensionPath: AgentLauncher.bundledExtensionPath(executable: executable)
         )
         let code = replaceProcess(agent.command, arguments)
         throw CLIError.agent(code == ENOENT

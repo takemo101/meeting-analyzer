@@ -405,6 +405,12 @@ do {
         check(args.first == "hello", "\(setup.name): 利用者の引数が先頭にない: \(Array(args))")
         let skillExpected = setup.name == "pi" || setup.name == "omp"
         check((args.contains("--append-system-prompt")) == skillExpected, "\(setup.name): skill の引き渡しが想定と違う: \(Array(args))")
+        if skillExpected {
+            let extensionFile = args.firstIndex(of: "-e").flatMap { $0 + 1 < args.endIndex ? String(args[$0 + 1]) : nil }
+            check(extensionFile.map { FileManager.default.isReadableFile(atPath: $0) && $0.hasSuffix("meeting-analyzer-pi.js") } == true, "\(setup.name): 字幕を押し込む拡張（-e）が渡されていない: \(Array(args))")
+        } else {
+            check(!args.contains("-e"), "\(setup.name): 拡張は、pi・omp だけ")
+        }
         let first = (try? Data(contentsOf: URL(fileURLWithPath: setup.file))) ?? Data()
         let object = json(String(decoding: first, as: UTF8.self))
         let entry = ((object?[setup.container] as? [String: Any])?["meeting-analyzer"]) as? [String: Any]
@@ -416,7 +422,7 @@ do {
         check((try? Data(contentsOf: URL(fileURLWithPath: setup.file))) == first, "\(setup.name): 登録済みなのに、設定を書き換えた")
         check(!r2.err.contains("MCP サーバーを登録") && !r2.err.contains("MCP サーバーの登録"), "\(setup.name): 2 回目も、登録・更新のメッセージが出た: \(r2.err)")
     }
-    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は skill）の順で、エージェントに置き換わる")
+    conclude(id, pass: "pi・omp・agy・opencode は、設定へ 1 件だけ登録し（2 回目は何も書かない）、利用者の引数 →（pi・omp は、字幕を押し込む拡張と skill）の順で、エージェントに置き換わる")
 } catch { record("C2", .blocked, "偽のエージェントを用意できない: \(error)") }
 
 // ---------- A: メニューバーのアプリとして起動・終了 ----------

@@ -126,8 +126,10 @@ struct AgentSetupTests {
         #expect(AgentLauncher.profile(in: ["--profile"]) == nil)
         #expect(AgentLauncher.profile(in: ["a"]) == nil)
         let skill = "/App/Contents/Resources/SKILL.md"
-        #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill) == ["hello", "--append-system-prompt", skill])
-        #expect(AgentLauncher.arguments(agent: .omp, userArguments: [], executable: exe, environment: [:], skillPath: skill) == ["--append-system-prompt", skill])
+        let extensionFile = "/App/Contents/Resources/meeting-analyzer-pi.js"
+        #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["hello", "-e", extensionFile, "--append-system-prompt", skill])
+        #expect(AgentLauncher.arguments(agent: .omp, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == ["-e", extensionFile, "--append-system-prompt", skill])
+        #expect(AgentLauncher.arguments(agent: .agy, userArguments: [], executable: exe, environment: [:], skillPath: skill, extensionPath: extensionFile) == [], "拡張は、pi・omp だけ")
         #expect(AgentLauncher.arguments(agent: .agy, userArguments: ["-c"], executable: exe, environment: [:], skillPath: skill) == ["-c"])
         #expect(AgentLauncher.arguments(agent: .opencode, userArguments: [], executable: exe, environment: [:], skillPath: skill) == [])
         #expect(AgentLauncher.arguments(agent: .pi, userArguments: ["hello"], executable: exe, environment: [:], skillPath: nil) == ["hello"])
