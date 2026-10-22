@@ -16,7 +16,8 @@ public struct ScreenSnapshotter: Sendable {
     public func snapshot() async throws -> CGImage {
         let content: SCShareableContent
         do {
-            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            // 別のデスクトップ・フルスクリーンにあるウィンドウも、一覧に入れる（画面に出ているものを優先して選ぶ）。
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         } catch {
             throw CaptureError.permissionDenied(.screenRecording, Self.permissionText(error))
         }
@@ -30,10 +31,17 @@ public struct ScreenSnapshotter: Sendable {
             filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             size = CGSize(width: display.width, height: display.height)
         case .app(let bundleID, let name):
-            let windows = content.windows.filter { $0.owningApplication?.bundleIdentifier == bundleID && $0.windowLayer == 0 && $0.frame.width > 50 && $0.frame.height > 50 }
-            guard let window = windows.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
-                throw CaptureError.targetNotFound("「\(name)」のウィンドウが見つかりません（起動していて、画面に出ているか確認してください）")
+            let processIDs = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map(\.processIdentifier))
+            let candidates = content.windows.map {
+                WindowCandidate(bundleID: $0.owningApplication?.bundleIdentifier, processID: $0.owningApplication?.processID ?? -1, layer: $0.windowLayer,
+                                width: $0.frame.width, height: $0.frame.height, isOnScreen: $0.isOnScreen)
             }
+            guard let index = WindowPicker.pick(candidates, bundleID: bundleID, processIDs: processIDs) else {
+                let all = WindowPicker.appWindows(candidates, bundleID: bundleID, processIDs: processIDs)
+                let running = !processIDs.isEmpty
+                throw CaptureError.targetNotFound("「\(name)」の撮れるウィンドウがありません（\(running ? "起動中" : "起動していません")。通常のウィンドウ \(all.count) 件。最小化していないか、確認してください）")
+            }
+            let window = content.windows[index]
             filter = SCContentFilter(desktopIndependentWindow: window)
             size = window.frame.size
         }
