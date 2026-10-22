@@ -5,7 +5,7 @@ public struct CaptionUpdate: Codable, Equatable, Sendable {
     /// 発言者と番号で一意（`you-3`、`others-12`）。
     public let id: String
     public let version: Int
-    /// 表示名（`あなた`・`相手`）。
+    /// 表示名（`本人`・`相手`）。
     public let speaker: String
     /// 流れの種類（`you`＝マイク、`others`＝システム音声）。
     public let source: String

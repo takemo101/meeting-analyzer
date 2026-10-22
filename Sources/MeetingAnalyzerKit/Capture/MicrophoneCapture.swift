@@ -24,7 +24,7 @@ public enum CaptureError: Error, Sendable, Equatable {
     case failed(String)
 }
 
-/// マイクの取り込み（「あなた」）。ボイス処理（エコー除去）を有効にして、音声のバッファを流す。音声はメモリ上だけで扱い、書き出さない。
+/// マイクの取り込み（「本人」）。ボイス処理（エコー除去）を有効にして、音声のバッファを流す。音声はメモリ上だけで扱い、書き出さない。
 public final class MicrophoneCapture: @unchecked Sendable {
     private let engine = AVAudioEngine()
     /// マイクの権限が、すでに許可されているか。確認だけで、要求はしない。

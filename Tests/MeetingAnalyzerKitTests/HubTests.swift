@@ -7,7 +7,7 @@ func shortSocketDirectory() -> String { "/tmp/ma-" + UUID().uuidString.prefix(8)
 
 private func started(_ id: String = "s1") -> TranscriptEvent { .started(sessionId: id, title: "t", startedAt: "2026-10-22T00:00:00Z", sources: ["you"]) }
 private func captions(_ sequence: Int, session id: String = "s1", _ text: String = "こんにちは") -> TranscriptEvent {
-    .captions(sessionId: id, sequence: sequence, updates: [CaptionUpdate(id: "you-1", version: 1, speaker: "あなた", source: "you", text: text, timestamp: 1_800_000_000_000, isFinal: true)])
+    .captions(sessionId: id, sequence: sequence, updates: [CaptionUpdate(id: "you-1", version: 1, speaker: "本人", source: "you", text: text, timestamp: 1_800_000_000_000, isFinal: true)])
 }
 private func ended(_ id: String = "s1") -> TranscriptEvent {
     .ended(sessionId: id, title: "t", reason: "user", startedAt: "2026-10-22T00:00:00Z", endedAt: "2026-10-22T00:01:00Z", durationSeconds: 60, batches: 1, utterances: 1, transcriptPath: "/x/transcript.md")
@@ -52,7 +52,7 @@ struct TranscriptEventTests {
         #expect(json["kind"] as? String == "captions" && json["sessionId"] as? String == "abc" && json["sequence"] as? Int == 3)
         let update = try #require((json["updates"] as? [[String: Any]])?.first)
         #expect(update["id"] as? String == "you-1" && update["version"] as? Int == 1)
-        #expect(update["speaker"] as? String == "あなた" && update["source"] as? String == "you")
+        #expect(update["speaker"] as? String == "本人" && update["source"] as? String == "you")
         #expect(update["text"] as? String == "来週のリリース" && update["isFinal"] as? Bool == true)
         #expect(update["timestamp"] as? Double == 1_800_000_000_000)
     }

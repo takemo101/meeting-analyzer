@@ -314,7 +314,7 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
     conclude(id, pass: "\(batches.count) バッチと、開始・終了の出来事が、窓口から MCP（\(channel ? "get_events と、チャンネルの押し込み" : "get_events")）へ届き、記録が 0600 で書かれた（認識: \(latest)）")
 }
 replayCase("R1", speaker: "others", expectedName: "相手")
-replayCase("R2", speaker: "you", expectedName: "あなた")
+replayCase("R2", speaker: "you", expectedName: "本人")
 replayCase("R3", speaker: "others", expectedName: "相手", channel: true)
 
 // ---------- R4: 窓口が使用中 / R5: アプリが無いときの MCP ----------

@@ -13,7 +13,7 @@ public struct Transcript: Sendable, Equatable {
         byKey[utterance.key] = utterance
     }
 
-    /// 開始時刻の順。同じ時刻なら、あなた → 相手、番号の順（並びを決まった形にする）。
+    /// 開始時刻の順。同じ時刻なら、本人 → 相手、番号の順（並びを決まった形にする）。
     public var ordered: [Utterance] {
         byKey.values.sorted {
             if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }

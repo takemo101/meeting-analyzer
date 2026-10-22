@@ -46,7 +46,7 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case transcriptionFailed(Speaker, String)
     /// 画面を撮れなかった（権限・対象のウィンドウが無い、など）。字幕の転送は続く。
     case screenshotFailed(String)
-    /// 「あなた」の発話が、直近の「相手」の発話とほとんど同じ。相手の声が、マイクへ回り込んでいる疑い（ヘッドホンの案内）。セッションにつき 1 回。
+    /// 「本人」の発話が、直近の「相手」の発話とほとんど同じ。相手の声が、マイクへ回り込んでいる疑い（ヘッドホンの案内）。セッションにつき 1 回。
     case possibleEcho
 }
 
@@ -174,7 +174,7 @@ public actor LiveSession {
 
     private func elapsed() -> TimeInterval { clock().timeIntervalSince(startedAt) }
 
-    /// 選んだ流れ（あなた・相手）を開く。どれかが開けなければ、開いたほうも止めて、失敗を返す。
+    /// 選んだ流れ（本人・相手）を開く。どれかが開けなければ、開いたほうも止めて、失敗を返す。
     private func beginSegment() async throws {
         var opened: [Speaker: (LiveInputStream, TimeInterval)] = [:]
         do {

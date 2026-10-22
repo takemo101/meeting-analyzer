@@ -135,7 +135,7 @@ struct SessionPipelineTests {
         let path = try #require(end.transcriptPath)
         let text = try String(contentsOfFile: path, encoding: .utf8)
         #expect(text.contains("相手: 来週のリリースの件です"))
-        #expect(text.contains("あなた: 確認します"))
+        #expect(text.contains("本人: 確認します"))
         let attributes = try FileManager.default.attributesOfItem(atPath: path)
         #expect((attributes[.posixPermissions] as? Int) == 0o600, "記録は、利用者だけが読める")
         let directory = try FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: path).deletingLastPathComponent().path)

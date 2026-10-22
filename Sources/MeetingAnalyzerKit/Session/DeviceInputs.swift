@@ -1,7 +1,7 @@
 import Foundation
 
 extension LiveInputs {
-    /// 実機の入力。あなた＝マイク（ボイス処理）、相手＝`system` で選んだシステム音声。どちらも、オンデバイスで認識する。
+    /// 実機の入力。本人＝マイク（ボイス処理）、相手＝`system` で選んだシステム音声。どちらも、オンデバイスで認識する。
     /// 言語が使えないときは、取り込みを始める前に、`TranscriptionError.unsupportedLocale` を投げる。
     public static func device(system: SystemSource, locale: Locale) -> LiveInputs {
         LiveInputs { speaker in

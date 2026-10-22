@@ -15,7 +15,7 @@ A project recipe for [verifying-macos-apps](../verifying-macos-apps/SKILL.md). R
 | Native E2E | `./scripts/e2e.sh` (always rebuilds first) | the real executable: CLI exit codes and JSON, **real on-device recognition** of a `say` voice, **the real hub and the real `mcp` server** (the harness speaks MCP JSON-RPC to it), the transcript file and its permissions, the menu-bar app starting, opening its hub socket and stopping |
 | Human | — | everything in "Not observed" below |
 
-Cases (IDs are in `docs/verification.md`): Z1 `--version`, Z2 unknown command, Z3 unreadable audio, D1 `doctor`, D2 voice available, R1 replay as "相手" read through `get_events`, R2 replay as "あなた", R3 `mcp --channel` push notifications, R4 hub busy, R5 `mcp` without the app, A1 starts as an accessory app, opens the hub (0600), `mcp` connects, quits on SIGTERM and closes the hub.
+Cases (IDs are in `docs/verification.md`): Z1 `--version`, Z2 unknown command, Z3 unreadable audio, D1 `doctor`, D2 voice available, R1 replay as "相手" read through `get_events`, R2 replay as "本人", R3 `mcp --channel` push notifications, R4 hub busy, R5 `mcp` without the app, A1 starts as an accessory app, opens the hub (0600), `mcp` connects, quits on SIGTERM and closes the hub.
 
 ## Procedure
 

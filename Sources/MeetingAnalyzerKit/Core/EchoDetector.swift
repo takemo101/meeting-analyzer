@@ -1,7 +1,7 @@
 import Foundation
 
 /// 相手の声が、スピーカーからマイクへ回り込んでいる疑いを、文字起こしの重なりで見つける純粋な規則（SPEC §3.3・A12）。
-/// 「あなた」の発話が、直近の「相手」の発話と、ほとんど同じ文字列なら、回り込みを疑う。判断だけで、発話は変えない。
+/// 「本人」の発話が、直近の「相手」の発話と、ほとんど同じ文字列なら、回り込みを疑う。判断だけで、発話は変えない。
 public struct EchoDetector: Sendable {
     /// 「相手」の発話を覚えておく秒数。
     public let window: TimeInterval
@@ -24,7 +24,7 @@ public struct EchoDetector: Sendable {
         self.threshold = threshold
     }
 
-    /// 発話の更新を 1 つ見る。「相手」なら覚え（同じ `key` は、最新の本文で置き換える）、「あなた」なら、回り込みを疑うかを返す。
+    /// 発話の更新を 1 つ見る。「相手」なら覚え（同じ `key` は、最新の本文で置き換える）、「本人」なら、回り込みを疑うかを返す。
     public mutating func observe(speaker: Speaker, key: String, text: String, at now: TimeInterval) -> Bool {
         others = others.filter { now - $0.value.time <= window }
         let (pairs, count) = Self.pairs(of: text)

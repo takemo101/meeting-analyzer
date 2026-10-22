@@ -82,7 +82,7 @@ private struct Rig {
 
 @Suite("LiveSession: 開始・一時停止・再開・終了")
 struct LiveSessionTests {
-    @Test("あなたと相手の発話が、1 つのセッションとして送られ、終了の合図が最後に 1 回だけ届き、記録が書かれる")
+    @Test("本人と相手の発話が、1 つのセッションとして送られ、終了の合図が最後に 1 回だけ届き、記録が書かれる")
     func endToEnd() async throws {
         let rig = Rig()
         let session = rig.session()
@@ -97,12 +97,12 @@ struct LiveSessionTests {
         #expect(rig.sink.ends.count == 1)
         #expect(Set(rig.sink.events.map(\.sessionId)).count == 1, "すべての出来事が、同じセッション")
         let spoken = rig.sink.batches.flatMap(\.updates).map(\.speaker)
-        #expect(spoken.contains("相手") && spoken.contains("あなた"))
+        #expect(spoken.contains("相手") && spoken.contains("本人"))
         let ended = try #require(EndedInfo(rig.sink.ends[0]))
         #expect(ended.reason == "user" && ended.durationSeconds == 65)
         let path = try #require(outcome.transcriptPath)
         let text = try String(contentsOfFile: path, encoding: .utf8)
-        #expect(text.contains("相手: 来週のリリースの件です") && text.contains("あなた: 確認します"))
+        #expect(text.contains("相手: 来週のリリースの件です") && text.contains("本人: 確認します"))
         #expect(await session.phase == .ended(.user))
     }
 
@@ -157,7 +157,7 @@ struct LiveSessionTests {
         rig.fake.emit(.you, "自分だけ", final: true, 0, 1)
         _ = try await session.end(reason: .user)
         #expect(rig.fake.opened == [.you])
-        #expect(rig.sink.batches.flatMap(\.updates).map(\.speaker) == ["あなた"])
+        #expect(rig.sink.batches.flatMap(\.updates).map(\.speaker) == ["本人"])
     }
 
     @Test("何も選ばれていなければ、開始できず、何も開かない")
@@ -208,7 +208,7 @@ struct LiveSessionTests {
         #expect(await session.phase == .ended(.user))
     }
 
-    @Test("あなたの発話が相手の発話とほとんど同じなら、回り込みの疑いを 1 回だけ知らせる。会議は続く")
+    @Test("本人の発話が相手の発話とほとんど同じなら、回り込みの疑いを 1 回だけ知らせる。会議は続く")
     func echoIsReportedOnce() async throws {
         let rig = Rig()
         let session = rig.session()

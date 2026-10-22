@@ -170,7 +170,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         controller.setBatchMode(BatchMode.allCases[sender.tag])
     }
 
-    /// マイク（あなた）のオン／オフ。
+    /// マイク（本人）のオン／オフ。
     private func microphoneItem() -> NSMenuItem {
         let item = action("マイク", #selector(toggleMicrophone))
         item.state = controller.selection.microphone ? .on : .off

@@ -50,7 +50,7 @@ struct TranscriptTests {
         return transcript
     }
 
-    @Test("開始時刻の順に並ぶ。同じ時刻ならあなたが先")
+    @Test("開始時刻の順に並ぶ。同じ時刻なら本人が先")
     func ordering() {
         var transcript = make()
         transcript.record(Utterance(id: 9, speaker: .others, text: "同時", isFinal: true, startedAt: 9))
@@ -73,7 +73,7 @@ struct TranscriptTests {
         #expect(text.contains("- 長さ: 1:02:05"))
         #expect(text.contains("- 発話数: 3"))
         #expect(text.contains("[00:03] 相手: 来週のリリースの件ですが"))
-        #expect(text.contains("[00:09] あなた: はい、確認します"))
+        #expect(text.contains("[00:09] 本人: はい、確認します"))
         #expect(text.contains("[01:05] 相手: テスト環境はいつ使えますか"))
         #expect(text.contains("誤変換"), "認識の自動出力であることを、読み手に伝える")
     }
@@ -89,7 +89,7 @@ struct TranscriptTests {
 
 @Suite("AudioSelection: 取り込む音声の選択")
 struct AudioSelectionTests {
-    @Test("マイクとシステム音声を、それぞれ選ぶ。流れは、あなた・相手の順")
+    @Test("マイクとシステム音声を、それぞれ選ぶ。流れは、本人・相手の順")
     func speakers() {
         #expect(AudioSelection(microphone: true, system: .off).speakers == [.you])
         #expect(AudioSelection(microphone: false, system: .all).speakers == [.others])
@@ -120,7 +120,7 @@ struct EchoDetectorTests {
         detector.observe(speaker: speaker, key: key, text: text, at: time)
     }
 
-    @Test("あなたの発話が、直近の相手の発話とほとんど同じなら、疑う（句読点・空白・一部の欠けがあっても）")
+    @Test("本人の発話が、直近の相手の発話とほとんど同じなら、疑う（句読点・空白・一部の欠けがあっても）")
     func detectsLeak() {
         var detector = EchoDetector()
         let first = see(&detector, .others, "o1", sentence, at: 10)

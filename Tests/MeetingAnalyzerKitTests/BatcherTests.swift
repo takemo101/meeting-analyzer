@@ -88,7 +88,7 @@ struct BatcherTests {
         #expect(!batcher.hasPending)
     }
 
-    @Test("あなたと相手は、番号が同じでも別の発話")
+    @Test("本人と相手は、番号が同じでも別の発話")
     func speakersAreSeparate() {
         var batcher = Batcher()
         batcher.observe(utterance(1, "私の発言", speaker: .you), at: 0)
