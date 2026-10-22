@@ -145,3 +145,10 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **動作の確認**：`replay --wait --hold`（窓口を開け、`mcp --channel` がつながってから、`say` の合成音声を再生）と同時に、疑似端末で `claude --mcp-config <JSON> --dangerously-load-development-channels server:meeting-analyzer-channel` を起動した。表示は出たままだが、Claude Code の画面に、字幕と終了の出来事が `← meeting-analyzer-channel: {…}` として**自動で届き**、終了の出来事を受けて、Claude Code が自分でプロジェクトの要約の手順と記録を読み始めた。**押し込みは、実機の Claude Code で動く**。表示は、`--mcp-config` で渡した設定を、Claude Code の起動時の確認が数えないための、見かけ上の警告と判断した（`claude mcp add` で登録した場合に消えるかは、確認していない：利用者の設定を変えない、新しいフォルダの信頼の確認が操作しにくい、のため）。
 - **`just uninstall`**：検証用の `INSTALL_DIR`・`BIN_DIR` で確認した。実行中のアプリ（隔離して起動した自分のプロセス）が SIGTERM で終了し、アプリとコマンドのリンクが消え、エージェントが起動した `mcp` は残った。入っていなければ「入っていません」。別のものを指すリンクは残した。`install.sh` との共通部分（`install-lib.sh`）に切り出したあとも、`install`（起動・置き換え）が動くことを再確認した。
 - **未確認**：利用者の環境（`~/Applications`・`~/.local/bin`）での install・uninstall、`claude mcp add` で登録した場合に警告が消えるか。
+
+### 2026-10-22 — 入れ直しで許可が無効になる問題（報告：設定でオンなのに、毎回「許可されていません」）
+
+- **報告**：システム設定の「画面とシステムオーディオの録音」で、MeetingAnalyzer がオンなのに、「開始」のたびに「許可されていません」と出る（画像）。
+- **観測**：入れた `~/Applications/MeetingAnalyzer.app` の署名の指定要件は `cdhash H"…"`（ad-hoc の既定）だった。tccd のログで、そのアプリ（`dev.takemo101.meeting-analyzer`、`~/Applications/…`）が、WindowServer から画面収録の確認を受けていることを確認した（結果の行は、ログに残っていなかった）。ビルドごとに cdhash が変わるので、TCC に保存された要件と、入れ直した実行ファイルが一致せず、一覧はオンのまま、拒否される、という説明と矛盾しない（**TCC の中身は、保護されていて、読めないため、直接は確認していない**）。
+- **変更**：`scripts/build.sh` の ad-hoc 署名を、指定要件 `designated => identifier "dev.takemo101.meeting-analyzer"` つきにした。`codesign -dr -` で要件が bundle ID だけになり、`codesign --verify --deep --strict` が通ることを確認した。E2E は 12/12 pass（変更後のビルドで）。
+- **未確認（人間）**：この版を入れて、許可を一度付け直したあと、**もう一度 `just install` して、許可が残るか**。残らなければ、tccd のログ（`log stream --predicate 'process == "tccd"'`）を取って、原因を調べる。
