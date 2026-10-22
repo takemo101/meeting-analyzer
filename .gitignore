@@ -10,3 +10,6 @@ sksync-lock.json
 
 # mikan のローカル作業状態
 /.mikan/
+
+# 開発ツールの状態
+.omc/
