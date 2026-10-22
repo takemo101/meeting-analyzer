@@ -164,7 +164,7 @@ public struct CLIRunner {
         } catch let error as TranscriptionError { throw error.cliError }
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
         let event = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
-        guard case .ended(let sessionId, _, _, _, _, let duration, let batches, let utterances, let path, _) = event else { return }
+        guard case .ended(let sessionId, _, _, _, _, let duration, let batches, let utterances, let path) = event else { return }
         if outIsTerminal {
             out(CLIView.replaySummary(sessionId: sessionId, utterances: utterances, batches: batches, duration: TimeInterval(duration), path: path, outStyle))
         } else {

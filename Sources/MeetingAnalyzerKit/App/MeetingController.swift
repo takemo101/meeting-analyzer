@@ -21,10 +21,6 @@ final class MeetingController {
     private(set) var batchMode = BatchMode.utterance
     /// 画面の取り込み（SPEC §3.5）。開始のたびに選ぶ（保存しない）。
     private(set) var screen = ScreenSelection.off
-    /// 会議のあとに作る資料（SPEC §3.11）。開始のたびに選ぶ（保存しない）。
-    private(set) var reportMode = ReportMode.off
-    /// 直前の会議で作った資料（PDF）。エージェントがサマリーを足すと、同じファイルが更新される。
-    private(set) var lastReport: URL?
     var onChange: (() -> Void)?
 
     /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
@@ -74,18 +70,6 @@ final class MeetingController {
         guard state == .idle else { return }
         screen = selection
         onChange?()
-    }
-
-    func setReport(_ mode: ReportMode) {
-        guard state == .idle else { return }
-        reportMode = mode
-        onChange?()
-    }
-
-    /// 直前の資料（PDF）を、既定のアプリで開く。
-    func openLastReport() {
-        guard let lastReport, FileManager.default.fileExists(atPath: lastReport.path) else { return }
-        NSWorkspace.shared.open(lastReport)
     }
 
     func setBatchMode(_ mode: BatchMode) {
@@ -150,8 +134,7 @@ final class MeetingController {
         defer { self.session = nil; state = .idle }
         do {
             let outcome = try await session.end(reason: reason)
-            lastReport = outcome.reportPath.map { URL(fileURLWithPath: $0) }
-            notice = "終了しました（発話 \(outcome.utterances) 件）" + (lastReport == nil ? "" : "。資料（PDF）を作りました")
+            notice = "終了しました（発話 \(outcome.utterances) 件）"
         } catch {
             notice = "会議を終了できませんでした"
         }
@@ -172,8 +155,7 @@ final class MeetingController {
             store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
             policy: batchMode.policy,
             screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
-            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment), keep: reportMode.screenshotLimit),
-            report: reportMode == .pdf,
+            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
             notify: notify
         )
         do {

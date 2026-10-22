@@ -102,14 +102,13 @@ struct MCPServerTests {
         #expect(((wire.messages.last?["error"]) as? [String: Any])?["code"] as? Int == -32700)
     }
 
-    @Test("ツールの一覧は get_events（読み取り専用）と save_report（サマリーを資料へ入れる。必須は summary だけ）")
+    @Test("ツールの一覧は get_events だけで、読み取り専用")
     func toolsList() async throws {
         let (server, wire) = server()
         await server.handle(line: rpc(1, "tools/list"))
         let tools = try #require((wire.reply(id: 1)?["result"] as? [String: Any])?["tools"] as? [[String: Any]])
-        #expect(tools.map { $0["name"] as? String } == ["get_events", "save_report"])
+        #expect(tools.map { $0["name"] as? String } == ["get_events"])
         #expect((tools[0]["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool == true)
-        #expect((tools[1]["inputSchema"] as? [String: Any])?["required"] as? [String] == ["summary"])
     }
 
     @Test("本文の < > & は、\\u 表記にして返す（タグのような文字列が、そのまま出ない）。値は元のまま")

@@ -337,7 +337,7 @@ do {
         defer { mcp.stop() }
         check(mcp.initialize() != nil, "initialize に返事がない")
         let tools = ((mcp.request("tools/list")?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
-        check(tools == ["get_events", "save_report"], "ツールが想定と違う: \(String(describing: tools))")
+        check(tools == ["get_events"], "ツールが想定と違う: \(String(describing: tools))")
         let result = mcp.getEvents()
         check(result?["connected"] as? Bool == false, "アプリが無いのに connected が偽でない")
         check((result?["events"] as? [Any])?.isEmpty == true, "出来事がある")

@@ -54,8 +54,6 @@ public struct LiveSessionOutcome: Sendable, Equatable {
     public let utterances: Int
     /// 記録（Markdown）。書けなかったときは無し。
     public let transcriptPath: String?
-    /// 資料（PDF）。作らなかった・作れなかったときは無し。
-    public let reportPath: String?
 }
 
 /// ライブのセッション 1 つ。状態遷移（`SessionLifecycle`）・取り込みの流れ・バッチの公開（`SessionPipeline`）・時間（tick）を組み立てる。
@@ -73,10 +71,6 @@ public actor LiveSession {
     private let tickInterval: Duration
     private let finalizeTimeout: Duration
     private let notify: @Sendable (LiveSessionNotice) -> Void
-    private let store: SessionStore?
-    /// 会議のあとに、資料（PDF）を作るか（SPEC §3.11）。
-    private let report: Bool
-    private var shots: [(file: String, at: TimeInterval)] = []
 
     private var lifecycle = SessionLifecycle()
     private var segment: [Speaker: Running] = [:]
@@ -104,7 +98,7 @@ public actor LiveSession {
         title: String, speakers: [Speaker], inputs: LiveInputs, sink: any EventSink, store: SessionStore?,
         policy: BatchingPolicy = .standard, clock: @escaping @Sendable () -> Date = { Date() },
         tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5),
-        screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10, report: Bool = false,
+        screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10,
         notify: @escaping @Sendable (LiveSessionNotice) -> Void
     ) {
         let startedAt = clock()
@@ -118,8 +112,6 @@ public actor LiveSession {
         self.tickInterval = tickInterval
         self.finalizeTimeout = finalizeTimeout
         self.notify = notify
-        self.store = store
-        self.report = report
         self.screen = screen
         self.screenshots = screenshots
         self.screenInterval = screenInterval
@@ -171,11 +163,11 @@ public actor LiveSession {
         await endSegment()
         try? lifecycle.end(reason)
         let now = clock()
-        let event = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt), report: report ? { self.makeReport(endedAt: now) } : nil)
-        // 画像は、セッションの終了で消す（SPEC §3.5）。資料のために、記録の下へ移したものは、残る。
+        let event = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
+        // 画像は、セッションの終了で消す（SPEC §3.5）。
         discardScreenshots()
-        guard case .ended(_, _, _, _, _, _, _, let utterances, let path, let reportPath) = event else { return LiveSessionOutcome(utterances: pipeline.utteranceCount, transcriptPath: nil, reportPath: nil) }
-        return LiveSessionOutcome(utterances: utterances, transcriptPath: path, reportPath: reportPath)
+        guard case .ended(_, _, _, _, _, _, _, let utterances, let path) = event else { return LiveSessionOutcome(utterances: pipeline.utteranceCount, transcriptPath: nil) }
+        return LiveSessionOutcome(utterances: utterances, transcriptPath: path)
     }
 
     // MARK: 取り込みの流れ
@@ -274,26 +266,6 @@ public actor LiveSession {
         screenTicker = nil
     }
 
-    /// 資料（PDF）を作る。画面の画像を、記録のディレクトリへ移し、元データ（`report-data.json`）と PDF を書く。作れなければ nil（会議の終了は、妨げない）。
-    private func makeReport(endedAt: Date) -> String? {
-        guard let store else { return nil }
-        let directory = store.transcriptURL(sessionId: sessionId).deletingLastPathComponent()
-        var included: [ReportData.Shot] = []
-        if let screenshots {
-            let moved = Set(screenshots.moveAll(sessionId: sessionId, to: directory.appendingPathComponent("screens", isDirectory: true)))
-            included = shots.filter { moved.contains($0.file) }.map { ReportData.Shot(at: $0.at, file: "screens/" + $0.file) }
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        let data = ReportData(
-            title: title, startedAt: formatter.string(from: startedAt), durationSeconds: max(0, Int(endedAt.timeIntervalSince(startedAt).rounded())),
-            lines: pipeline.reportLines(), shots: included
-        )
-        guard case .success(let url) = ReportBuilder.write(data, summary: nil, in: directory) else { return nil }
-        return url.path
-    }
-
     private func discardScreenshots() {
         screenshots?.deleteAll(sessionId: sessionId)
     }
@@ -321,7 +293,6 @@ public actor LiveSession {
         switch screenshots.save(jpeg, sessionId: sessionId, index: screenshotCount + 1) {
         case .success(let url):
             screenshotCount += 1
-            shots.append((url.lastPathComponent, now))
             pipeline.attachScreenshot(path: url.path)
             lastScreenSignature = signature
             lastScreenshotAt = now
