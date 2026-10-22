@@ -43,7 +43,7 @@ public final class SystemAudioCapture: NSObject, @unchecked Sendable {
         do {
             return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         } catch {
-            throw CaptureError.permissionDenied("画面収録が許可されていません（システム設定 > プライバシーとセキュリティ > 画面とシステムオーディオの録音）: \(error.localizedDescription)")
+            throw CaptureError.permissionDenied(.screenRecording, "画面収録（システム音声）が許可されていません。システム設定 > プライバシーとセキュリティ > 画面とシステムオーディオの録音 で、meeting-analyzer をオンにしてください。\n\nすでにオンでも、アプリを入れ直す（just install）と、許可が無効になります（署名が ad-hoc で、ビルドごとに変わるため）。その場合は、一覧から meeting-analyzer を一度削除（−）して、もう一度開始してください（許可の確認が出ます）。\n\n詳細: \(error.localizedDescription)")
         }
     }
 

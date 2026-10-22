@@ -172,9 +172,9 @@ struct LiveSessionTests {
     @Test("相手の取り込みを始められないとき（権限なし）、開いたマイクも止め、待機のまま。何も送らない")
     func partialOpenIsRolledBack() async {
         let rig = Rig()
-        rig.fake.openError[.others] = CaptureError.permissionDenied("画面収録")
+        rig.fake.openError[.others] = CaptureError.permissionDenied(.screenRecording, "画面収録")
         let session = rig.session()
-        await #expect(throws: LiveSessionError.capture(.permissionDenied("画面収録"))) { try await session.start() }
+        await #expect(throws: LiveSessionError.capture(.permissionDenied(.screenRecording, "画面収録"))) { try await session.start() }
         #expect(rig.fake.stopped == [.you])
         #expect(await session.phase == .idle)
         #expect(rig.sink.events.isEmpty)
@@ -186,8 +186,8 @@ struct LiveSessionTests {
         let session = rig.session()
         try await session.start()
         try await session.pause()
-        rig.fake.openError[.you] = CaptureError.permissionDenied("マイク")
-        await #expect(throws: LiveSessionError.capture(.permissionDenied("マイク"))) { try await session.resume() }
+        rig.fake.openError[.you] = CaptureError.permissionDenied(.microphone, "マイク")
+        await #expect(throws: LiveSessionError.capture(.permissionDenied(.microphone, "マイク"))) { try await session.resume() }
         #expect(await session.phase == .paused)
         rig.fake.openError = [:]
         try await session.resume()

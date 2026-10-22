@@ -4,7 +4,7 @@ import Foundation
 enum FailureText {
     static func start(_ error: LiveSessionError) -> String {
         switch error {
-        case .capture(.permissionDenied(let reason)): return reason
+        case .capture(.permissionDenied(_, let reason)): return reason
         case .capture(.targetNotFound(let reason)): return reason
         case .capture(.failed(let reason)): return reason
         case .transcription(.unsupportedLocale(let locale)): return "この Mac では、\(locale) のオンデバイス認識を使えません"

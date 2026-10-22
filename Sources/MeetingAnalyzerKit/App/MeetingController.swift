@@ -144,16 +144,21 @@ final class MeetingController {
             self.session = session
             state = .running
         } catch let error as LiveSessionError {
-            fail(FailureText.start(error))
+            if case .capture(.permissionDenied(let permission, _)) = error {
+                fail(FailureText.start(error), settings: permission.settingsURL)
+            } else {
+                fail(FailureText.start(error))
+            }
         } catch {
             fail(error.localizedDescription)
         }
     }
 
-    private func fail(_ message: String) {
+    /// `settings`：権限の失敗のとき、システム設定のそのページを開けるようにする。
+    private func fail(_ message: String, settings: URL? = nil) {
         state = .idle
         notice = "開始できませんでした"
-        Alerts.show(title: "会議を始められません", text: message)
+        Alerts.show(title: "会議を始められません", text: message, settings: settings)
     }
 
     /// セッションの名前。エージェントが区別できる程度（取り込む音声と開始時刻）。
@@ -168,13 +173,15 @@ final class MeetingController {
 /// 失敗を、利用者に見せるダイアログ。
 @MainActor
 enum Alerts {
-    static func show(title: String, text: String) {
+    /// `settings` があれば、「システム設定を開く」のボタンを付ける。
+    static func show(title: String, text: String, settings: URL? = nil) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = text
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if settings != nil { alert.addButton(withTitle: "システム設定を開く") }
+        alert.addButton(withTitle: settings == nil ? "OK" : "閉じる")
+        if alert.runModal() == .alertFirstButtonReturn, let settings { NSWorkspace.shared.open(settings) }
     }
 }

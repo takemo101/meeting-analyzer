@@ -96,6 +96,13 @@
       "keyFiles": []
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "skills/meeting-analyzer/SKILL.md",
+      "accessCount": 1,
+      "lastAccessed": 1792637073230,
+      "type": "file"
+    }
+  ],
   "userDirectives": []
 }

@@ -1,9 +1,23 @@
 import AVFoundation
 import Foundation
 
+/// 取り込みに要る OS の権限。
+public enum CapturePermission: Sendable, Equatable {
+    case microphone
+    case screenRecording
+
+    /// システム設定の、その権限のページ。
+    public var settingsURL: URL {
+        switch self {
+        case .microphone: return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        case .screenRecording: return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+        }
+    }
+}
+
 public enum CaptureError: Error, Sendable, Equatable {
     /// 権限（マイク・画面収録）がない。取り込みを始めない。
-    case permissionDenied(String)
+    case permissionDenied(CapturePermission, String)
     /// 取り込みの対象（会議アプリ・画面）が見つからない。
     case targetNotFound(String)
     /// 取り込みを始められない・途中で止まった。
@@ -23,7 +37,7 @@ public final class MicrophoneCapture: @unchecked Sendable {
     /// 取り込みを始める。マイクの権限が未確認なら、OS の許可の確認が出る（利用者の開始の操作の中だけで呼ぶ）。
     public func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
         guard await AVCaptureDevice.requestAccess(for: .audio) else {
-            throw CaptureError.permissionDenied("マイクの使用が許可されていません")
+            throw CaptureError.permissionDenied(.microphone, "マイクの使用が許可されていません。システム設定 > プライバシーとセキュリティ > マイク で、meeting-analyzer をオンにしてください。\n\nすでにオンでも、アプリを入れ直す（just install）と、許可が無効になります（署名が ad-hoc で、ビルドごとに変わるため）。その場合は、一覧から meeting-analyzer を一度削除（−）して、もう一度開始してください（許可の確認が出ます）。")
         }
         let input = engine.inputNode
         do {
