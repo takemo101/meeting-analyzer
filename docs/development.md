@@ -81,7 +81,7 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 
 ## GitButler と PR
 
-**まだ設定していない**。GitHub のリポジトリを作るまでは、ローカルの Git で `main` に commit する。リポジトリを作る・GitButler を初期化する（`but setup --init`）・target を `origin/main`、push remote を `origin` にする、は、ユーザーの依頼があるときだけ行う。設定後は、shortnote と同じ運用にする。
+**GitButler は、まだ設定していない**。GitHub のリポジトリ（https://github.com/takemo101/meeting-analyzer、公開）はある。GitButler を設定するまでは、ローカルの Git で `main` に commit し、ユーザーの依頼があれば `origin` へ push する。GitButler を初期化する（`but setup --init`）・target を `origin/main`、push remote を `origin` にする、は、ユーザーの依頼があるときだけ行う。設定後は、shortnote と同じ運用にする。
 
 - Git の書込みは `but`。raw Git の add・commit・checkout・merge・rebase・push などで書き込まない（読取りは可）。feature・fix は Issue 単位の専用 branch／stack で扱い、無関係な変更を混ぜない。`develop` を作らない。target の変更を、PR の権限だけで勝手に行わない。
 - ユーザーが PR を依頼した場合の流れ：検証・独立レビュー → 必要な変更だけを `but commit -b <branch> -m <message> <ids...>` → `but pr new <branch> -F <message-file>`（push を含む） → PR の target・head・変更ファイル・required checks・reviews・mergeability の確認 → `main` へ normal merge → GitHub の実際の状態で `MERGED` を確認 → `but pull --check`・`but pull --status-after` で同期。

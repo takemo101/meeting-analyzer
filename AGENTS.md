@@ -20,7 +20,7 @@
 - 実装・署名・公開・リリースなど外部へ影響する操作は、ユーザーの依頼の範囲で行う。文書整備の依頼を、実装開始や外部操作の包括的な許可と解釈しない。
 - 対象ファイル、既存の構成・規約・依存定義を確認してから変更する。存在しないコードやコマンドを、利用可能なものとして案内しない。
 - 参照元のプロジェクト（shortnote）の AGENTS や設定は資料として読み、権限や継続指示を自動継承しない。参照元の製品構成（描画・Chrome 拡張・Node のブリッジなど）は、必要が確認されるまで移さない。
-- **このリポジトリは、まだローカルだけ**（GitHub のリポジトリ・mikan のプロジェクト・GitButler の設定は未作成）。作成・公開・認証は、ユーザーの依頼があるときだけ行い、鍵や認証情報を勝手に作らない。
+- **GitHub の公開リポジトリ**は https://github.com/takemo101/meeting-analyzer（既定ブランチ `main`。ユーザーの依頼で作成・公開した）。mikan のプロジェクト・GitButler の設定は未作成。**公開・リリース（タグの push）・認証は、ユーザーの依頼があるときだけ**行い、鍵や認証情報を勝手に作らない。公開してあるので、**秘密・個人の情報（トークン・API キー・実際の会議の本文・個人のパス）をコミットしない**（コミットの前に確かめる）。コミットの作者は、リポジトリの設定（`user.name`・`user.email`）のままにする（環境変数 `HOME` を変えたシェルでは、設定が外れる）。
 - Git 操作を依頼された場合も、対象リポジトリのルートを確認する。親ディレクトリや参照元（shortnote・rea-tactiq）を誤って操作しない。
 - ユーザーの既存変更を保持し、依頼と無関係な削除・整理・設定変更を混ぜない。
 
@@ -36,9 +36,9 @@
 
 作業状態は、ユーザーの依頼があれば mikan で管理する（プロジェクト `meeting-analyzer`、Issue prefix `MA`）。**まだ初期化していない**。初期化は、ツール導入の権限を確認し、ルートから `mikan init --key MA --name meeting-analyzer` を実行する。`.mikan/` は Git 対象外で、配下を直接参照・編集せず、文書のリンク対象にしない。Issue の読取り・Status 遷移・Report 追加は MCP だけで行う。運用は [開発手順](docs/development.md#mikan-の-issue-進行) に従う（`backlog → ready → active → completed`、active の実装 Issue は最大 1 件、Report に対象・検証・レビュー・PR・同期・未実施を残す）。
 
-## GitButler と PR（未設定）
+## GitButler と PR（GitButler は未設定）
 
-統合先は `main`。GitHub リポジトリを作るまでは、ローカルの Git（`git`）で `main` に commit する。リポジトリの公開・GitButler の初期化（`but setup --init`）・target と push remote の設定は、ユーザーの依頼があるときだけ行い、設定後は [開発手順](docs/development.md#gitbutler-と-pr) に従う（Git の書込みは `but`、PR は `gh`、merge は head に束縛、`but pull` で同期。admin・force・保護の迂回・`but land` による PR 回避をしない）。
+統合先は `main`。GitButler を設定するまでは、ローカルの Git（`git`）で `main` に commit し、ユーザーの依頼があれば `origin`（GitHub）へ push する。リリースは、タグ `vX.Y.Z` の push で DMG が作られる（[リリース](docs/development.md#リリース)。**タグを付けるのは、ユーザーの依頼があるときだけ**）。GitButler の初期化（`but setup --init`）・target と push remote の設定は、ユーザーの依頼があるときだけ行い、設定後は [開発手順](docs/development.md#gitbutler-と-pr) に従う（Git の書込みは `but`、PR は `gh`、merge は head に束縛、`but pull` で同期。admin・force・保護の迂回・`but land` による PR 回避をしない）。
 
 ## 設計と実装
 
