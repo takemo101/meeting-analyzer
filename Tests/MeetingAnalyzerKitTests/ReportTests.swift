@@ -109,6 +109,35 @@ struct SaveReportTests {
         return (result?["isError"] as? Bool == true, ((result?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
     }
 
+    @Test("screens を渡すと、関係のある画面だけが資料に残り、ほかの画像はディスクから消える。省くと、すべて残る。空なら、画像なし")
+    func keepsOnlyTheChosenScreens() async throws {
+        let directory = tempDirectory().appendingPathComponent("sessions/s1", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent().deletingLastPathComponent()) }
+        for name in ["shot-0001.jpg", "shot-0002.jpg", "shot-0003.jpg"] { try writeJPEG(name, in: directory.appendingPathComponent("screens")) }
+        let shots = (1...3).map { ReportData.Shot(at: Double($0) * 10, file: "screens/shot-000\($0).jpg") }
+        let pdf = try ReportBuilder.write(sampleData(shots: shots), summary: nil, in: directory).get()
+        let (server, wire) = await serve([ended("s1", report: pdf.path)])
+
+        await server.handle(line: rpc(1, ["summary": "要約"]))
+        #expect(!reply(wire, 1).isError)
+        #expect((PDFDocument(url: pdf)?.string ?? "").contains("画面 3 枚"), "省くと、すべて残る")
+
+        await server.handle(line: rpc(2, ["summary": "要約", "screens": ["shot-0002.jpg", "/anywhere/else/shot-0003.jpg", "shot-9999.jpg"]]))
+        #expect(!reply(wire, 2).isError)
+        let text = PDFDocument(url: pdf)?.string ?? ""
+        #expect(text.contains("画面 2 枚") && text.contains("画面（00:20）") && text.contains("画面（00:30）") && !text.contains("画面（00:10）"))
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("screens").path))?.sorted()
+        #expect(files == ["shot-0002.jpg", "shot-0003.jpg"], "選ばれなかった画像は、ディスクから消える（パスは、ファイル名だけを見る）")
+
+        await server.handle(line: rpc(3, ["summary": "要約", "screens": [String]()]))
+        #expect(!reply(wire, 3).isError)
+        #expect((PDFDocument(url: pdf)?.string ?? "").contains("画面 0 枚"))
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("screens").path)) ?? []).isEmpty)
+
+        await server.handle(line: rpc(4, ["summary": "要約", "screens": "shot-0001.jpg"]))
+        #expect(reply(wire, 4).isError, "配列でない screens は、エラー")
+    }
+
     @Test("終了の出来事の資料へ、サマリーを入れて、PDF のパスを返す。書く場所は、出来事のパスだけ")
     func savesIntoTheReportOfTheEndedMeeting() async throws {
         let directory = tempDirectory().appendingPathComponent("sessions/s1", isDirectory: true)

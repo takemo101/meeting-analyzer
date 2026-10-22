@@ -69,9 +69,17 @@ public enum ReportBuilder {
     }
 
     /// 保存した元データから、サマリーを入れて、PDF を作り直す。
-    public static func rebuild(summary: String?, in sessionDirectory: URL) -> Result<URL, ReportError> {
+    /// `keepScreens`：資料に入れる画面の画像（ファイル名。例：`shot-0003.jpg`）。`nil` なら、すべて残す。指定したときは、**入れなかった画像を、ディスクから消し**、元データからも外す
+    /// （エージェントが、会話に関係ないと判断した画像を、資料にも、ディスクにも残さない）。空の配列なら、画像なしの資料になる。
+    public static func rebuild(summary: String?, keepScreens: Set<String>? = nil, in sessionDirectory: URL) -> Result<URL, ReportError> {
         guard let json = try? Data(contentsOf: sessionDirectory.appendingPathComponent(dataName)),
-              let data = try? JSONDecoder().decode(ReportData.self, from: json) else { return .failure(.noData) }
+              var data = try? JSONDecoder().decode(ReportData.self, from: json) else { return .failure(.noData) }
+        if let keepScreens {
+            let dropped = data.shots.filter { !keepScreens.contains(URL(fileURLWithPath: $0.file).lastPathComponent) }
+            for shot in dropped { try? FileManager.default.removeItem(at: sessionDirectory.appendingPathComponent(shot.file)) }
+            data.shots.removeAll { dropped.contains($0) }
+            guard let updated = try? JSONEncoder().encode(data), (try? save(updated, to: sessionDirectory.appendingPathComponent(dataName))) != nil else { return .failure(.writeFailed) }
+        }
         return render(data, summary: summary, in: sessionDirectory)
     }
 
