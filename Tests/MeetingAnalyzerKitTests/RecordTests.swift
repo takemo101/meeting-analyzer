@@ -100,3 +100,53 @@ struct LiveSessionRecordTests {
         #expect(!text.contains(root.path), "絶対パスは、入れない（フォルダごと移せる）")
     }
 }
+
+@Suite("CapturePreferences: 取り込みの設定の保存（再起動しても覚える）")
+struct CapturePreferencesTests {
+    private func defaults() -> UserDefaults {
+        let name = "ma-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test("未設定なら既定（マイクあり・システム音声オフ・画面オフ・発話の区切り・標準）。保存した選択（アプリを含む）を、そのまま読み戻す")
+    func roundTrip() {
+        let defaults = defaults()
+        #expect(CapturePreferences.load(defaults) == CapturePreferences())
+        #expect(CapturePreferences().microphone && CapturePreferences().system == .off && CapturePreferences().screen == .off)
+
+        var saved = CapturePreferences()
+        saved.microphone = false
+        saved.system = .app(bundleID: "us.zoom.xos", name: "zoom.us")
+        saved.screen = .app(bundleID: "com.google.Chrome", name: "Google Chrome")
+        saved.batchMode = .digest
+        saved.presetID = "minutes"
+        saved.save(defaults)
+        #expect(CapturePreferences.load(defaults) == saved)
+
+        saved.system = .all
+        saved.screen = .display
+        saved.microphone = true
+        saved.save(defaults)
+        #expect(CapturePreferences.load(defaults) == saved)
+    }
+
+    @Test("壊れた値・知らない値は、その項目だけ既定に戻し、ほかの項目は読む")
+    func invalidValuesFallBackPerField() {
+        let defaults = defaults()
+        defaults.set(false, forKey: CapturePreferences.keys.microphone)
+        defaults.set(["kind": "app", "bundleID": "", "name": "x"], forKey: CapturePreferences.keys.system)
+        defaults.set(["kind": "teleport"], forKey: CapturePreferences.keys.screen)
+        defaults.set("every1", forKey: CapturePreferences.keys.batchMode)
+        defaults.set("", forKey: CapturePreferences.keys.presetID)
+        let loaded = CapturePreferences.load(defaults)
+        #expect(loaded.microphone == false, "正しい項目は、読む")
+        #expect(loaded.system == .off && loaded.screen == .off && loaded.batchMode == .utterance && loaded.presetID == AnalysisPreset.defaultID)
+
+        defaults.set("not a dictionary", forKey: CapturePreferences.keys.system)
+        defaults.set(["kind": "app", "bundleID": "a"], forKey: CapturePreferences.keys.screen)   // name が無い
+        let again = CapturePreferences.load(defaults)
+        #expect(again.system == .off && again.screen == .off)
+    }
+}

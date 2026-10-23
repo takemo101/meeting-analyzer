@@ -5,6 +5,7 @@ import AppKit
 final class StatusMenu: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let controller: MeetingController
+    private lazy var settings = SettingsWindow(controller: controller)
 
     init(controller: MeetingController) {
         self.controller = controller
@@ -13,7 +14,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
-        controller.onChange = { [weak self] in self?.refreshIcon() }
+        controller.observe { [weak self] in self?.refreshIcon() }
         refreshIcon()
     }
 
@@ -43,20 +44,20 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(label("状態: " + stateText()))
         menu.addItem(label(agentText()))
         if let notice = controller.notice { menu.addItem(label(notice)) }
+
+        // 待機中は、いま選んでいる取り込み（読むだけ。変えるのは、設定ウィンドウ）。
+        if controller.state == .idle {
+            let screen = controller.screen == .off ? "" : " ／ 画面: \(controller.screen.title)"
+            menu.addItem(label("取り込み: \(controller.selection.summary)\(screen)"))
+        }
         menu.addItem(.separator())
 
-        // 上：会議の操作（開始・一時停止・再開・終了）。続けて、待機中だけ、この会議の取り込みの選択。
+        // 会議の操作（開始・一時停止・再開・終了）。
         switch controller.state {
         case .idle:
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
-            menu.addItem(.separator())
-            menu.addItem(microphoneItem())
-            menu.addItem(systemItem())
-            menu.addItem(screenItem())
-            menu.addItem(batchModeItem())
-            menu.addItem(presetItem())
         case .running:
             menu.addItem(action("一時停止", #selector(pause)))
             menu.addItem(action("会議を終了", #selector(endMeeting)))
@@ -66,9 +67,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case .working:
             break
         }
-        // 下：アプリの設定（会議ごとには選ばないもの）。
         menu.addItem(.separator())
-        menu.addItem(settingsItem())
+
+        // 設定ウィンドウ（取り込み・まとめ方・プリセット・保持期間）と、アプリの操作（コマンド・フォルダ）。
+        menu.addItem(action("設定…", #selector(openSettings), key: ","))
+        menu.addItem(commandItem())
+        menu.addItem(action("MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）", #selector(openDataFolder)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -93,20 +97,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return item
     }
 
-    private func action(_ title: String, _ selector: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+    private func action(_ title: String, _ selector: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
         item.target = self
         return item
-    }
-
-    /// アプリの設定：記録を残す日数・コマンドのインストール・データの置き場所を開く。会議ごとには選ばないもの。
-    private func settingsItem() -> NSMenuItem {
-        submenuItem("設定") { submenu in
-            submenu.addItem(recordsItem())
-            submenu.addItem(commandItem())
-            submenu.addItem(.separator())
-            submenu.addItem(action("MeetingAnalyzer のフォルダを開く（記録・画像・プリセット）", #selector(openDataFolder)))
-        }
     }
 
     /// コマンド `meeting-analyzer`（`/usr/local/bin` へのリンク）を、入れる・外す。入っていれば、チェック。
@@ -131,121 +125,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func toggleCommand() { controller.toggleCommand() }
 
-    /// 記録（文字起こし・画像）を残す日数。期限を過ぎた記録は、文字起こしも画像も、フォルダごと消える。
-    private func recordsItem() -> NSMenuItem {
-        submenuItem("記録の保持期間: " + RecordRetentionSetting.title(controller.retentionDays)) { submenu in
-            for days in RecordRetentionSetting.choices {
-                submenu.addItem(choice(RecordRetentionSetting.title(days), selected: days == controller.retentionDays) { [controller] in controller.setRetentionDays(days) })
-            }
-        }
-    }
-
     @objc private func openDataFolder() { controller.openDataFolder() }
 
-    // MARK: 選択肢のサブメニュー
+    @objc private func openSettings() { settings.show() }
 
-    /// メニュー項目が選ばれたときの処理（`representedObject` は参照型のみ）。選択肢ごとに、処理を持たせる。
-    private final class Choice: NSObject {
-        let run: () -> Void
-        init(_ run: @escaping () -> Void) { self.run = run }
-    }
-
-    @objc private func runChoice(_ sender: NSMenuItem) { (sender.representedObject as? Choice)?.run() }
-
-    /// 選択肢 1 つ。`selected` なら、チェックを付ける。
-    private func choice(_ title: String, selected: Bool, tooltip: String? = nil, _ run: @escaping () -> Void) -> NSMenuItem {
-        let entry = NSMenuItem(title: title, action: #selector(runChoice(_:)), keyEquivalent: "")
-        entry.target = self
-        entry.representedObject = Choice(run)
-        entry.state = selected ? .on : .off
-        entry.toolTip = tooltip
-        return entry
-    }
-
-    /// サブメニューを持つ項目。`build` で、サブメニューの中身を作る。
-    private func submenuItem(_ title: String, _ build: (NSMenu) -> Void) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-        build(submenu)
-        item.submenu = submenu
-        return item
-    }
-
-    /// 起動中のアプリの一覧（見出しつき）。1 つも無ければ、その旨を出す。
-    private func addApps(to submenu: NSMenu, heading: String, entry: (CaptureApp) -> NSMenuItem) {
-        submenu.addItem(.separator())
-        submenu.addItem(label(heading))
-        let apps = controller.candidateApps()
-        if apps.isEmpty { submenu.addItem(label("起動中のアプリがありません")) }
-        for app in apps { submenu.addItem(entry(app)) }
-    }
-
-    /// 画面の取り込み：オフ・画面全体・起動中のアプリのウィンドウ。変化があったときだけ、縮小した画像を、字幕に添えて渡す。
-    private func screenItem() -> NSMenuItem {
-        let current = controller.screen
-        func entry(_ title: String, _ selection: ScreenSelection) -> NSMenuItem {
-            choice(title, selected: current == selection) { [controller] in controller.setScreen(selection) }
-        }
-        return submenuItem("画面の取り込み: " + current.title) { submenu in
-            submenu.addItem(entry("オフ", .off))
-            submenu.addItem(entry("画面全体（メインの画面）", .display))
-            addApps(to: submenu, heading: "アプリのウィンドウ") { entry($0.name, .app(bundleID: $0.bundleID, name: $0.name)) }
-        }
-    }
-
-    /// エージェントへ渡す、まとめ方（発話の区切り／会話の区切り／まとまってから解説／約 30 秒／約 5 秒）。
-    private func batchModeItem() -> NSMenuItem {
-        submenuItem("転送のまとめ方: " + controller.batchMode.title) { submenu in
-            for mode in BatchMode.allCases {
-                submenu.addItem(choice(mode.title, selected: mode == controller.batchMode) { [controller] in controller.setBatchMode(mode) })
-            }
-        }
-    }
-
-    /// 分析のしかた：プリセット（解説・提案・サマリーの出し方）。同梱のものと、自分のフォルダのもの。
-    private func presetItem() -> NSMenuItem {
-        let selected = controller.presetStore.resolve(id: controller.presetID)?.id
-        return submenuItem("分析のプリセット: " + controller.presetName) { submenu in
-            for preset in controller.presets() {
-                let title = preset.name + (preset.source == .user ? "（自分）" : "")
-                submenu.addItem(choice(title, selected: preset.id == selected, tooltip: preset.summary.isEmpty ? nil : preset.summary) { [controller] in controller.setPreset(preset.id) })
-            }
-            submenu.addItem(.separator())
-            submenu.addItem(action("プリセットのフォルダを開く（自分のものを足す）", #selector(openPresetFolder)))
-        }
-    }
-
-    @objc private func openPresetFolder() { controller.openPresetFolder() }
-
-    /// マイク（本人）のオン／オフ。
-    private func microphoneItem() -> NSMenuItem {
-        let item = action("マイク", #selector(toggleMicrophone))
-        item.state = controller.selection.microphone ? .on : .off
-        return item
-    }
-
-    @objc private func toggleMicrophone() { controller.setMicrophone(!controller.selection.microphone) }
-
-    /// システム音声（相手）の選択：オフ・全体・起動中のアプリ。
-    private func systemItem() -> NSMenuItem {
-        let current = controller.selection.system
-        let title: String
-        switch current {
-        case .off: title = "オフ"
-        case .all: title = "全体"
-        case .app(_, let name): title = name
-        }
-        return submenuItem("システム音声: " + title) { submenu in
-            submenu.addItem(choice("オフ", selected: current == .off) { [controller] in controller.setSystem(.off) })
-            submenu.addItem(choice("全体（Mac から出ている音すべて）", selected: current == .all) { [controller] in controller.setSystem(.all) })
-            addApps(to: submenu, heading: "アプリを選ぶ") { app in
-                var selected = false
-                if case .app(let id, _) = current, id == app.bundleID { selected = true }
-                return choice(app.name, selected: selected) { [controller] in controller.setSystem(.app(bundleID: app.bundleID, name: app.name)) }
-            }
-        }
-    }
+    // MARK: 会議の操作
 
     @objc private func start() { controller.start() }
     @objc private func pause() { controller.pause() }
