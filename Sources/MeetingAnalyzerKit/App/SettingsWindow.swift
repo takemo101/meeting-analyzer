@@ -96,7 +96,7 @@ struct SettingsView: View {
                     Text("画面全体（メインの画面）").tag(ScreenSelection.display)
                     Divider()
                     ForEach(appChoices(current: screenApp(controller.screen)), id: \.bundleID) { app in
-                        Text(app.title + "のウィンドウ").tag(ScreenSelection.app(bundleID: app.bundleID, name: app.name))
+                        Text(app.title).tag(ScreenSelection.app(bundleID: app.bundleID, name: app.name))
                     }
                 }
                 Text("オフ以外では、画面に変化があったときだけ、縮小した画像を字幕に添えて渡し、記録にも入れます（画面収録の許可が要ります）。")

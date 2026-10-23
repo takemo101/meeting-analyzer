@@ -13,7 +13,7 @@ public enum ScreenSelection: Sendable, Hashable {
         switch self {
         case .off: return "オフ"
         case .display: return "画面全体"
-        case .app(_, let name): return "\(name) のウィンドウ"
+        case .app(_, let name): return name
         }
     }
 }
