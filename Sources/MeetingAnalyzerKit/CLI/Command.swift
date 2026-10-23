@@ -2,7 +2,7 @@ import Foundation
 
 public enum AppInfo {
     /// `Resources/Info.plist` の版と同じ（テストで一致を確認する）。
-    public static let version = "0.1.8"
+    public static let version = "0.1.9"
     public static let name = "meeting-analyzer"
 }
 
