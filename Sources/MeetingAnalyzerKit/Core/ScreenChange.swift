@@ -1,7 +1,7 @@
 import Foundation
 
 /// 画面の取り込み先の選択（SPEC §3.5）。
-public enum ScreenSelection: Sendable, Equatable {
+public enum ScreenSelection: Sendable, Hashable {
     /// 画面を撮らない（既定）。
     case off
     /// メインの画面。

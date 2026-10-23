@@ -1,5 +1,5 @@
 /// システム音声（Mac から出ている音）の取り込み先。
-public enum SystemSource: Sendable, Equatable {
+public enum SystemSource: Sendable, Hashable {
     /// 取り込まない。
     case off
     /// Mac から出ている音すべて（このアプリ自身の音は除く）。動画や通知音も混ざる。
