@@ -16,18 +16,23 @@ extension TranscriptionError {
         case .unsupportedLocale(let id): return .transcription("この Mac では、\(id) のオンデバイス認識を使えません")
         case .unreadableAudio(let path): return .input("音声ファイルを開けません: \(path)")
         case .failed(let text): return .transcription(text)
+        case .modelUnavailable(let name): return .transcription("文字起こしのモデル「\(name)」が、ダウンロードされていません（`meeting-analyzer models download` で取得できます）")
         }
     }
 }
 
 /// CLI の実行。標準出力・標準エラーと、文字起こしの部品を差し替えられる（検証とテスト用）。
 public struct CLIRunner {
-    public typealias UpdatesProvider = @Sendable (URL, Locale) -> AsyncThrowingStream<TranscriptionUpdate, Error>
+    /// 音声ファイルの文字起こし。`TranscriptionChoice` で、Mac 標準か、ダウンロードしたモデルかを選ぶ（後者は、`ModelStore` のモデルを使う）。
+    public typealias UpdatesProvider = @Sendable (URL, Locale, TranscriptionChoice, ModelStore) -> AsyncThrowingStream<TranscriptionUpdate, Error>
+    /// モデルのダウンロード（試験で差し替える）。`progress`：（取得済み、全体）のバイト数。
+    public typealias ModelDownload = @Sendable (ModelArtifact, ModelStore, @escaping @Sendable (Int64, Int64) -> Void) async throws -> Void
 
     private let environment: [String: String]
     private let out: @Sendable (String) -> Void
     private let err: @Sendable (String) -> Void
     private let updates: UpdatesProvider
+    private let modelDownload: ModelDownload
     private let replaceProcess: @Sendable (String, [String]) -> Int32
     private let setEnvironment: @Sendable ([String: String]) -> Void
     private let executablePath: @Sendable () -> String
@@ -42,7 +47,15 @@ public struct CLIRunner {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         out: @escaping @Sendable (String) -> Void,
         err: @escaping @Sendable (String) -> Void,
-        updates: @escaping UpdatesProvider = { url, locale in AppleSpeechTranscriber().updates(forFile: url, locale: locale) },
+        updates: @escaping UpdatesProvider = { url, locale, choice, store in
+            switch choice {
+            case .apple: return AppleSpeechTranscriber().updates(forFile: url, locale: locale)
+            case .local(let id):
+                guard let model = LocalModelCatalog.model(id: id) else { return AsyncThrowingStream { $0.finish(throwing: TranscriptionError.modelUnavailable(id)) } }
+                return LocalTranscriber.updates(forFile: url, model: model, store: store)
+            }
+        },
+        modelDownload: @escaping ModelDownload = { artifact, store, progress in try await ModelDownloader(store: store).download(artifact, progress: progress) },
         replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
         executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path },
         setEnvironment: @escaping @Sendable ([String: String]) -> Void = { for (name, value) in $0 { setenv(name, value, 1) } },
@@ -54,6 +67,7 @@ public struct CLIRunner {
         self.out = out
         self.err = err
         self.updates = updates
+        self.modelDownload = modelDownload
         self.replaceProcess = replaceProcess
         self.setEnvironment = setEnvironment
         self.executablePath = executablePath
@@ -73,7 +87,8 @@ public struct CLIRunner {
             case .version: out("\(AppInfo.name) \(AppInfo.version)")
             case .doctor(let locale): try await doctor(locale)
             case .presets: listPresets()
-            case .transcribe(let file, let locale): try await transcribe(file, locale)
+            case .transcribe(let file, let locale, let model): try await transcribe(file, locale, model)
+            case .models(let action): try await models(action)
             case .replay(let options): try await replay(options)
             case .launch(let agent, let arguments): try launch(agent, arguments)
             case .mcp(let channel): await MCPRunner.run(mode: channel ? .channel : .tools, socketPath: RuntimePaths.hubSocket(environment: environment))
@@ -104,6 +119,47 @@ public struct CLIRunner {
         out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
     }
 
+    /// ダウンロード式のモデルの、一覧・取得・削除（SPEC §3.12）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
+    private func models(_ action: ModelsCommand) async throws {
+        let store = modelStore
+        switch action {
+        case .list:
+            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
+            for model in LocalModelCatalog.all {
+                out(Self.json(["id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+            }
+        case .download(let id):
+            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
+            let interactive = errIsTerminal
+            let report = ProgressLine(enabled: interactive, write: err)
+            do {
+                // 音声区間の検出のモデル（小さい）も、一緒に取得する。
+                try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
+                try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
+            } catch let error as ModelDownloadError {
+                report.finish()
+                throw CLIError.transcription("ダウンロードできませんでした: \(Self.describe(error))（もう一度実行すると、続きから取得します）")
+            }
+            report.finish()
+            out(outIsTerminal ? CLIView.modelDownloaded(model, store.fileURL(model.artifact).path, outStyle) : Self.json(["ok": true, "id": model.id, "path": store.fileURL(model.artifact).path]))
+        case .delete(let id):
+            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
+            store.delete(model.artifact)
+            out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+        }
+    }
+
+    private static func describe(_ error: ModelDownloadError) -> String {
+        switch error {
+        case .network(let reason): return "通信に失敗しました（\(reason)）"
+        case .badStatus(let code): return "サーバーが、想定外の応答（\(code)）を返しました"
+        case .sizeMismatch: return "ファイルの大きさが、想定と違います"
+        case .checksumMismatch: return "ファイルの検証（SHA-256）に通りません"
+        case .cancelled: return "取り消されました"
+        case .writeFailed(let reason): return "ディスクに書けません（\(reason)）"
+        }
+    }
+
     /// 選べるプリセット。端末では表、パイプでは 1 行 1 件の JSON（読めなかったファイルは、`skipped` つきで続ける）。
     private func listPresets() {
         let (presets, skipped) = presetStore.load()
@@ -123,10 +179,12 @@ public struct CLIRunner {
         return url
     }
 
-    private func transcribe(_ path: String, _ localeId: String) async throws {
+    private var modelStore: ModelStore { ModelStore(root: RuntimePaths.dataDirectory(environment: environment)) }
+
+    private func transcribe(_ path: String, _ localeId: String, _ model: TranscriptionChoice) async throws {
         let file = try readableFile(path)
         do {
-            for try await update in updates(file, Locale(identifier: localeId)) where update.isFinal {
+            for try await update in updates(file, Locale(identifier: localeId), model, modelStore) where update.isFinal {
                 out(outIsTerminal ? CLIView.transcript(text: update.text, start: update.start, end: update.end, outStyle) : Self.json(["text": update.text, "isFinal": true, "start": update.start, "end": update.end]))
             }
         } catch let error as TranscriptionError { throw error.cliError }
@@ -181,7 +239,7 @@ public struct CLIRunner {
         pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {
-            for try await update in updates(file, Locale(identifier: options.locale)) {
+            for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
                 pipeline.ingest(update, speaker: options.speaker)
                 lastEnd = max(lastEnd, update.end)
             }

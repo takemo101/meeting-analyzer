@@ -26,6 +26,8 @@ public enum TranscriptionError: Error, Sendable, Equatable {
     case unreadableAudio(String)
     /// 認識に失敗した（モデルの取得・解析中のエラー）。
     case failed(String)
+    /// 選んだ、ダウンロード式のモデルが、取得されていない（または、検証に通らない）。引数は、モデルの名前。
+    case modelUnavailable(String)
 }
 
 /// この Mac で、その言語のオンデバイス認識が使えるか（`doctor` と、検証の前提確認に使う）。

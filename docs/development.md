@@ -41,11 +41,12 @@ macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line 
 | `just uninstall` | `./scripts/uninstall.sh`。`just install` で入れたアプリ（`INSTALL_DIR`）と、それを指すコマンドのシンボリックリンク（`BIN_DIR`。別のものを指していれば残す）を取り除く。実行中なら、SIGTERM で終了させる。既定の場所のときは、**マイク・画面収録の許可も取り消す**（`tccutil reset`。bundle ID に紐づくので、`INSTALL_DIR` を変えているときは、`RESET_PERMISSIONS=1` を渡したときだけ）。**会議の記録・エージェントの設定（MCP の登録）には触れない**（取り除き方を、出力に出す） |
 | `just reset-permissions` | `./scripts/reset-permissions.sh`。このアプリのマイク・画面収録の許可を取り消す（次の「開始」で、OS の許可の確認が、もう一度出る）。設定の一覧ではオンなのに「許可されていません」と出るときに使う。`just install` に `RESET_PERMISSIONS=1` を付けると、入れる前に取り消す |
 | `just cli <引数>` | ビルドして、実行ファイルを CLI として呼ぶ（例：`just cli doctor`） |
+| `just native` | `./scripts/build-native.sh`。文字起こしの推論の実行環境 transcribe.cpp（固定した commit。SPEC §3.12）を、`build/native` に、静的ライブラリとしてビルドする（ビルド済みなら何もしない。`build`・`test`・`e2e`・`dmg` が、先に呼ぶ）。GitHub からのソースの取得（と、cmake が無いときの PyPI）に、ネットワークを使う |
 | `just test` | `./scripts/test.sh`。単体テスト（Swift Testing）。音声・画面・ネットワークは使わない。Command Line Tools だけの環境では、`swift test` にマクロプラグインのパスを渡す必要があり、素の `swift test` は失敗する |
 | `just e2e` | ビルドして native E2E を実行する（[検証の入口](verification.md#検証の入口)） |
 
 - 版は、`Resources/Info.plist` と `AppInfo.version` の 2 か所。単体テストが、一致を確認する。版を上げるときは、両方を変える。
-- 生成物は `build/`（Git 対象外）。
+- 生成物は `build/`（Git 対象外）。`build/native/` は、transcribe.cpp のソースとビルド（`src`・`cmake`・`install`）と、SwiftPM が使うヘッダ（`include`）・静的ライブラリ（`lib`）。固定する commit を変えるときは、`scripts/build-native.sh` の `COMMIT` を直す（版が違えば、自動でビルドし直す）。
 - `swift build` で、`ld: warning: search path '…/CommandLineTools/Developer/…' not found` が出ることがある。Command Line Tools だけの環境で出る警告で、動作には影響しない。
 
 ## リリース

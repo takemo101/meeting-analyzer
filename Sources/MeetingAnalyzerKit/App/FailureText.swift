@@ -9,6 +9,7 @@ enum FailureText {
         case .capture(.failed(let reason)): return reason
         case .transcription(.unsupportedLocale(let locale)): return "この Mac では、\(locale) のオンデバイス認識を使えません"
         case .transcription(.unreadableAudio(let reason)), .transcription(.failed(let reason)): return "文字起こしを始められません: \(reason)"
+        case .transcription(.modelUnavailable(let name)): return "文字起こしのモデル「\(name)」が、ダウンロードされていません。設定ウィンドウでダウンロードするか、「Mac 標準」を選んでください"
         case .invalidState: return "いまは、その操作はできません"
         case .failed(let reason): return reason
         }

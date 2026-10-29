@@ -67,7 +67,7 @@ struct CLIViewTests {
         for (terminal, expectJSON) in [(true, false), (false, true)] {
             let out = Output(), err = Output()
             let runner = CLIRunner(environment: [:], out: { out.add($0) }, err: { err.add($0) }, errIsTerminal: terminal)
-            let code = await runner.run(.transcribe(file: "/no/such/file.wav", locale: "ja_JP"))
+            let code = await runner.run(.transcribe(file: "/no/such/file.wav", locale: "ja_JP", model: .apple))
             #expect(code == 2)
             let line = err.lines.first ?? ""
             let isJSON = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) != nil
@@ -81,12 +81,12 @@ struct CLIViewTests {
         let file = tempURL("view", ext: "aiff")
         try Data([0]).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
-        let updates: CLIRunner.UpdatesProvider = { _, _ in
+        let updates: CLIRunner.UpdatesProvider = { _, _, _, _ in
             AsyncThrowingStream { $0.yield(TranscriptionUpdate(text: "こんにちは", isFinal: true, start: 1, end: 2.5)); $0.finish() }
         }
         for terminal in [true, false] {
             let out = Output()
-            let code = await CLIRunner(environment: ["NO_COLOR": "1"], out: { out.add($0) }, err: { _ in }, updates: updates, outIsTerminal: terminal).run(.transcribe(file: file.path, locale: "ja_JP"))
+            let code = await CLIRunner(environment: ["NO_COLOR": "1"], out: { out.add($0) }, err: { _ in }, updates: updates, outIsTerminal: terminal).run(.transcribe(file: file.path, locale: "ja_JP", model: .apple))
             #expect(code == 0)
             let line = try #require(out.lines.first)
             if terminal { #expect(line == "00:01.0 → 00:02.5  こんにちは") } else { #expect((try? JSONSerialization.jsonObject(with: Data(line.utf8))) != nil) }

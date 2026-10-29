@@ -8,10 +8,12 @@ public struct CapturePreferences: Sendable, Equatable {
     public var screen = ScreenSelection.off
     public var batchMode = BatchMode.utterance
     public var presetID = AnalysisPreset.defaultID
+    /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。
+    public var transcription = TranscriptionChoice.apple
 
     public init() {}
 
-    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID")
+    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription")
 
     public static func load(_ defaults: UserDefaults = .standard) -> CapturePreferences {
         var result = CapturePreferences()
@@ -34,6 +36,8 @@ public struct CapturePreferences: Sendable, Equatable {
         }
         if let raw = defaults.string(forKey: keys.batchMode), let mode = BatchMode(rawValue: raw) { result.batchMode = mode }
         if let id = defaults.string(forKey: keys.presetID), !id.isEmpty { result.presetID = id }
+        // 知らないモデルの ID（消えたモデル・壊れた値）は、Mac 標準に戻す。
+        if let id = defaults.string(forKey: keys.transcription), let choice = TranscriptionChoice(id: id) { result.transcription = choice }
         return result
     }
 
@@ -51,5 +55,6 @@ public struct CapturePreferences: Sendable, Equatable {
         }
         defaults.set(batchMode.rawValue, forKey: Self.keys.batchMode)
         defaults.set(presetID, forKey: Self.keys.presetID)
+        defaults.set(transcription.id, forKey: Self.keys.transcription)
     }
 }

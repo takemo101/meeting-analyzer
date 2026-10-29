@@ -26,7 +26,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 
 ## 必要なもの
 
-- macOS 26 以降、Apple silicon。Swift 6（Xcode または Command Line Tools）。外部パッケージはない。
+- macOS 26 以降、Apple silicon。Swift 6（Xcode または Command Line Tools）。外部の Swift パッケージはない。**文字起こしのモデルを動かす transcribe.cpp（C++・ggml）だけは、ビルドのとき（`scripts/build-native.sh`。`build`・`test` が先に呼ぶ）に、固定した版を GitHub から取得して、静的ライブラリとしてビルドする**（git が要る。cmake が無ければ、`build/native/venv` に pip で入れる。初回は 20〜30 秒。以後は何もしない）。
 - 開発用：`just`（任意。なければ `scripts/` を直接実行）。E2E には、`say` の日本語の声 Kyoko も使う。
 
 ## ダウンロード（リリースの DMG）

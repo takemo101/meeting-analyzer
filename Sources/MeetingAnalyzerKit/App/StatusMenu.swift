@@ -48,7 +48,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         // 待機中は、いま選んでいる取り込み（読むだけ。変えるのは、設定ウィンドウ）。
         if controller.state == .idle {
             let screen = controller.screen == .off ? "" : " ／ 画面: \(controller.screen.title)"
-            menu.addItem(label("取り込み: \(controller.selection.summary)\(screen)"))
+            let model = controller.transcription == .apple ? "" : " ／ モデル: \(controller.transcription.title)"
+            menu.addItem(label("取り込み: \(controller.selection.summary)\(screen)\(model)"))
         }
         menu.addItem(.separator())
 
