@@ -84,7 +84,7 @@ guard FileManager.default.isExecutableFile(atPath: exe) else { record("E0", .blo
 do {
     let r = run(exe, ["--version"], env: env, timeout: 10)
     check(r.status == 0, "終了コード \(r.status)")
-    check(r.out.trimmingCharacters(in: .whitespacesAndNewlines) == "meeting-analyzer 0.1.9", "出力: \(r.out)")
+    check(r.out.trimmingCharacters(in: .whitespacesAndNewlines) == "meeting-analyzer 0.1.10", "出力: \(r.out)")
     conclude("Z1", pass: "--version が版を出して 0 で終わる")
 }
 do {
