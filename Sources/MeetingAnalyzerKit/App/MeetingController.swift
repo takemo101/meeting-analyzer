@@ -222,9 +222,9 @@ final class MeetingController {
         Task {
             do {
                 try await downloader.download(LocalModelCatalog.voiceActivity) { _, _ in }
-                try await downloader.download(model.artifact) { [weak self] received, total in
+                try await downloader.download(model.artifact) { received, total in
                     guard throttle.shouldReport(received: received, total: total) else { return }
-                    Task { @MainActor in self?.download = ModelDownload(id: model.id, received: received, total: total) }
+                    Task { @MainActor in self.download = ModelDownload(id: model.id, received: received, total: total) }
                 }
                 download = nil
                 self.downloader = nil

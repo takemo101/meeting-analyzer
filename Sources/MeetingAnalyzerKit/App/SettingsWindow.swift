@@ -198,7 +198,10 @@ private struct ModelRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.name + "  ").font(.body) + Text(Self.size(model.artifact.bytes)).font(.caption).foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(model.name)
+                        Text(Self.size(model.artifact.bytes)).font(.caption).foregroundStyle(.secondary)
+                    }
                     Text(model.summary).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
