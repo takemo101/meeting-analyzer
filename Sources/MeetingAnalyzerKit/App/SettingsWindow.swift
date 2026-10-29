@@ -188,6 +188,10 @@ private struct ModelRow: View {
     private var confirmDelete: Binding<Bool> {
         Binding(get: { settings.confirmingDelete == model.id }, set: { settings.confirmingDelete = $0 ? model.id : nil })
     }
+    /// 途中までのダウンロードを捨てる確認（削除の確認と区別するため、別の印を使う）。
+    private var confirmDiscard: Binding<Bool> {
+        Binding(get: { settings.confirmingDelete == "discard:" + model.id }, set: { settings.confirmingDelete = $0 ? "discard:" + model.id : nil })
+    }
 
     private var installed: Bool { controller.isInstalled(model) }
     private var downloading: MeetingController.ModelDownload? { controller.download?.id == model.id ? controller.download : nil }
@@ -215,6 +219,11 @@ private struct ModelRow: View {
                 Text(failure.reason).font(.caption).foregroundStyle(.red)
             }
         }
+        .confirmationDialog("「\(model.name)」の、途中までのダウンロードを捨てますか？", isPresented: confirmDiscard) {
+            Button("捨てる", role: .destructive) { controller.discardPartialDownload(model) }
+        } message: {
+            Text("取得済みの分（\(Self.size(controller.modelStore.downloadedBytes(model.artifact)))）が消えます。もう一度使うには、最初からダウンロードします。")
+        }
         .confirmationDialog("「\(model.name)」を削除しますか？", isPresented: confirmDelete) {
             Button("削除", role: .destructive) { controller.deleteModel(model) }
         } message: {
@@ -229,8 +238,14 @@ private struct ModelRow: View {
             Button("削除…", role: .destructive) { settings.confirmingDelete = model.id }
                 .disabled(inUse && locked)
         } else {
-            Button(partial ? "続きから取得" : "ダウンロード") { controller.downloadModel(model) }
-                .disabled(controller.download != nil)
+            HStack {
+                if partial {
+                    Button("破棄…", role: .destructive) { settings.confirmingDelete = "discard:" + model.id }
+                        .disabled(controller.download != nil)
+                }
+                Button(partial ? "続きから取得" : "ダウンロード") { controller.downloadModel(model) }
+                    .disabled(controller.download != nil)
+            }
         }
     }
 

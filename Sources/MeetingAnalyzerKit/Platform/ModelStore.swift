@@ -84,6 +84,11 @@ public struct ModelStore: Sendable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
     }
 
+    /// 途中のファイル（`.part`）だけを、消す。取得済みのファイルには、触れない。
+    public func discardPartial(_ artifact: ModelArtifact) {
+        try? FileManager.default.removeItem(at: partURL(artifact))
+    }
+
     /// モデルのファイル・途中のファイル・印を、消す。
     public func delete(_ artifact: ModelArtifact) {
         for url in [fileURL(artifact), partURL(artifact), receiptURL(artifact)] { try? FileManager.default.removeItem(at: url) }

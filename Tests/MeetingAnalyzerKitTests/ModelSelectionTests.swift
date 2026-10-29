@@ -82,4 +82,25 @@ struct ModelSelectionTests {
         #expect(CapturePreferences.load(defaults).transcription == .apple)
         #expect(!FileManager.default.fileExists(atPath: ModelStore(root: root).fileURL(model.artifact).path))
     }
+
+    @Test("途中までのダウンロードを捨てる：途中のファイル（.part）だけが消える。取得済みのモデル・別のモデルの途中のファイルには、触れない")
+    func discardingPartial() throws {
+        let root = tempURL("model-discard"), defaults = defaults()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ModelStore(root: root)
+        try store.prepareDirectory()
+        let other = LocalModelCatalog.all[0]
+        try Data(repeating: 1, count: 1000).write(to: store.partURL(model.artifact))
+        try Data(repeating: 2, count: 500).write(to: store.partURL(other.artifact))
+        let c = controller(root, defaults)
+        #expect(store.downloadedBytes(model.artifact) == 1000)
+        c.discardPartialDownload(model)
+        #expect(store.downloadedBytes(model.artifact) == 0 && !FileManager.default.fileExists(atPath: store.partURL(model.artifact).path))
+        #expect(store.downloadedBytes(other.artifact) == 500, "別のモデルの途中のファイルは、そのまま")
+
+        // 取得済みなら、何もしない（取得済みのファイルは消えない）
+        try install(model, in: root)
+        c.discardPartialDownload(model)
+        #expect(c.isInstalled(model))
+    }
 }

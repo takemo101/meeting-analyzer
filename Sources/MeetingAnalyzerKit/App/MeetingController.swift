@@ -242,6 +242,14 @@ final class MeetingController {
         }
     }
 
+    /// 途中までのダウンロード（`.part`）を、捨てる（取り消したあとに、続きから取得せず、やめるとき）。取得中・取得済みのモデルには、何もしない。
+    func discardPartialDownload(_ model: LocalModel) {
+        guard download?.id != model.id, !isInstalled(model) else { return }
+        modelStore.discardPartial(model.artifact)
+        if downloadFailure?.id == model.id { downloadFailure = nil }
+        changed()
+    }
+
     /// ダウンロードを取り消す（取得済みの分は残り、続きから再開できる）。
     func cancelDownload() { downloader?.cancel() }
 
