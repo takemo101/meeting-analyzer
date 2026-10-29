@@ -53,8 +53,11 @@ public struct ReplayOptions: Equatable {
     public var wait: Double
     /// 開始の出来事で渡す、分析のプリセットの ID（SPEC §3.11）。無指定なら、既定。
     public var preset: String?
+    /// 使う文字起こし（SPEC §3.12）。無指定なら、Mac 標準。
+    public var model: TranscriptionChoice
 
-    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil) {
+    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple) {
+        self.model = model
         self.file = file
         self.speaker = speaker
         self.title = title
@@ -65,6 +68,13 @@ public struct ReplayOptions: Equatable {
     }
 }
 
+/// `models` の操作。ID は、一覧（`LocalModelCatalog`）にあるものだけ（読み取りの境界で検査済み）。
+public enum ModelsCommand: Equatable {
+    case list
+    case download(id: String)
+    case delete(id: String)
+}
+
 public enum Command: Equatable {
     case gui
     case help
@@ -72,7 +82,9 @@ public enum Command: Equatable {
     case doctor(locale: String)
     /// 選べる分析のプリセットの一覧（SPEC §3.11）。
     case presets
-    case transcribe(file: String, locale: String)
+    case transcribe(file: String, locale: String, model: TranscriptionChoice)
+    /// ダウンロード式の文字起こしのモデルの、一覧・取得・削除（SPEC §3.12）。
+    case models(ModelsCommand)
     case replay(ReplayOptions)
     /// エージェント向けの MCP サーバー（標準入出力）。`channel` なら、Claude Code の Channels の通知も出す。
     case mcp(channel: Bool)
@@ -95,11 +107,26 @@ public enum CommandParser {
         case "doctor":
             return options(rest, allowed: ["--locale"], positional: 0).map { .doctor(locale: $0.values["--locale"] ?? defaultLocale) }
         case "transcribe":
-            return options(rest, allowed: ["--locale"], positional: 1).map { .transcribe(file: $0.positional[0], locale: $0.values["--locale"] ?? defaultLocale) }
+            return options(rest, allowed: ["--locale", "--model"], positional: 1).flatMap { parsed in
+                model(parsed.values["--model"]).map { .transcribe(file: parsed.positional[0], locale: parsed.values["--locale"] ?? defaultLocale, model: $0) }
+            }
+        case "models":
+            switch rest.count {
+            case 0: return .success(.models(.list))
+            case 2 where rest[0] == "download" || rest[0] == "delete":
+                guard LocalModelCatalog.model(id: rest[1]) != nil else { return .failure(.usage(unknownModel(rest[1], includingApple: false))) }
+                return .success(.models(rest[0] == "download" ? .download(id: rest[1]) : .delete(id: rest[1])))
+            default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
+            }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset"], positional: 1).flatMap { parsed in
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
+                let chosen: TranscriptionChoice
+                switch model(parsed.values["--model"]) {
+                case .success(let value): chosen = value
+                case .failure(let error): return .failure(error)
+                }
                 var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
                 for name in ["--hold", "--wait"] {
                     if let text = parsed.values[name] {
@@ -110,7 +137,7 @@ public enum CommandParser {
                 return .success(.replay(ReplayOptions(
                     file: parsed.positional[0], speaker: speaker,
                     title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"]
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen
                 )))
             }
         case _ where LaunchableAgent(rawValue: first) != nil:
@@ -122,6 +149,18 @@ public enum CommandParser {
         default:
             return .failure(.usage("知らないコマンドです: \(first)"))
         }
+    }
+
+    /// `--model` の値を、一度だけ検査して、選択にする。無指定は、Mac 標準。
+    private static func model(_ value: String?) -> Result<TranscriptionChoice, CLIError> {
+        guard let value else { return .success(.apple) }
+        guard let choice = TranscriptionChoice(id: value) else { return .failure(.usage(unknownModel(value, includingApple: true))) }
+        return .success(choice)
+    }
+
+    private static func unknownModel(_ value: String, includingApple: Bool) -> String {
+        let ids = (includingApple ? ["apple"] : []) + LocalModelCatalog.all.map(\.id)
+        return "知らないモデルです: \(value)（\(ids.joined(separator: "・"))）"
     }
 
     private struct Parsed {

@@ -36,6 +36,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var apps: [CaptureApp] = []
     /// 変わるたびに増やし、表示を作り直させる。
     @Published private(set) var revision = 0
+    /// 削除の確認を出しているモデルの ID（`@State` のマクロは、Command Line Tools だけの環境で使えないため、ここに持つ）。
+    @Published var confirmingDelete: String?
     private var tokens: [NSObjectProtocol] = []
 
     init(controller: MeetingController) {
@@ -77,6 +79,28 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section("文字起こし") {
+                Picker("使うモデル", selection: Binding(get: { controller.transcription }, set: { controller.setTranscription($0) })) {
+                    Text("Mac 標準").tag(TranscriptionChoice.apple)
+                    ForEach(LocalModelCatalog.all.filter { controller.isInstalled($0) }) { model in
+                        Text(model.name).tag(TranscriptionChoice.local(model.id))
+                    }
+                }
+                .disabled(locked)
+                Text(controller.transcription == .apple
+                     ? "Mac の音声認識（オンデバイス）。話している途中から、暫定の文字が出ます。"
+                     : "ダウンロードしたモデル（オンデバイス）。話し終わって、少し間があってから、文字になります（暫定の文字は出ません）。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("追加でダウンロードするモデル") {
+                ForEach(LocalModelCatalog.all) { entry in
+                    ModelRow(settings: model, model: entry, locked: locked)
+                }
+                Text("ダウンロードは、ここで押したときだけ、Hugging Face から行います（音声は送りません）。途中で止めても、続きから取得できます。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("取り込む音声") {
                 Toggle("マイク（本人）", isOn: Binding(get: { controller.selection.microphone }, set: { controller.setMicrophone($0) }))
                 Picker("システム音声（相手）", selection: Binding(get: { controller.selection.system }, set: { controller.setSystem($0) })) {
@@ -151,4 +175,81 @@ private struct AppChoice {
     let bundleID: String
     let name: String
     let title: String
+}
+
+/// 追加でダウンロードするモデル 1 つ：名前・説明・大きさと、取得（進み具合・取消）・削除。
+private struct ModelRow: View {
+    @ObservedObject var settings: SettingsModel
+    let model: LocalModel
+    /// 会議の実行中（使っているモデルは、消せない）。
+    let locked: Bool
+
+    private var controller: MeetingController { settings.controller }
+    private var confirmDelete: Binding<Bool> {
+        Binding(get: { settings.confirmingDelete == model.id }, set: { settings.confirmingDelete = $0 ? model.id : nil })
+    }
+    /// 途中までのダウンロードを捨てる確認（削除の確認と区別するため、別の印を使う）。
+    private var confirmDiscard: Binding<Bool> {
+        Binding(get: { settings.confirmingDelete == "discard:" + model.id }, set: { settings.confirmingDelete = $0 ? "discard:" + model.id : nil })
+    }
+
+    private var installed: Bool { controller.isInstalled(model) }
+    private var downloading: MeetingController.ModelDownload? { controller.download?.id == model.id ? controller.download : nil }
+    private var inUse: Bool { controller.transcription == .local(model.id) }
+    private var partial: Bool { !installed && controller.modelStore.downloadedBytes(model.artifact) > 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(model.name)
+                        Text(Self.size(model.artifact.bytes)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(model.summary).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                control
+            }
+            if let downloading {
+                ProgressView(value: Double(downloading.received), total: Double(max(1, downloading.total)))
+                Text("\(Self.size(downloading.received)) / \(Self.size(downloading.total))").font(.caption).foregroundStyle(.secondary)
+            }
+            if let failure = controller.downloadFailure, failure.id == model.id {
+                Text(failure.reason).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .confirmationDialog("「\(model.name)」の、途中までのダウンロードを捨てますか？", isPresented: confirmDiscard) {
+            Button("捨てる", role: .destructive) { controller.discardPartialDownload(model) }
+        } message: {
+            Text("取得済みの分（\(Self.size(controller.modelStore.downloadedBytes(model.artifact)))）が消えます。もう一度使うには、最初からダウンロードします。")
+        }
+        .confirmationDialog("「\(model.name)」を削除しますか？", isPresented: confirmDelete) {
+            Button("削除", role: .destructive) { controller.deleteModel(model) }
+        } message: {
+            Text(inUse ? "使っているモデルです。削除すると、Mac 標準に戻ります。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。")
+        }
+    }
+
+    @ViewBuilder private var control: some View {
+        if downloading != nil {
+            Button("取り消す") { controller.cancelDownload() }
+        } else if installed {
+            Button("削除…", role: .destructive) { settings.confirmingDelete = model.id }
+                .disabled(inUse && locked)
+        } else {
+            HStack {
+                if partial {
+                    Button("破棄…", role: .destructive) { settings.confirmingDelete = "discard:" + model.id }
+                        .disabled(controller.download != nil)
+                }
+                Button(partial ? "続きから取得" : "ダウンロード") { controller.downloadModel(model) }
+                    .disabled(controller.download != nil)
+            }
+        }
+    }
+
+    private static func size(_ bytes: Int64) -> String {
+        bytes >= 1_000_000_000 ? String(format: "%.1f GB", Double(bytes) / 1e9) : "\(bytes / 1_000_000) MB"
+    }
 }

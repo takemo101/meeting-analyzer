@@ -1,0 +1,6 @@
+// transcribe.cpp（文字起こしの推論の実行環境）の C のヘッダ。本物のヘッダは、scripts/build-native.sh が、build/native/include に作る。
+module CTranscribe {
+    header "transcribe.h"
+    header "../../../build/native/include/transcribe/vad.h"
+    export *
+}

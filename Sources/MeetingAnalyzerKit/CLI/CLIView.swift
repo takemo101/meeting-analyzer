@@ -25,9 +25,10 @@ enum CLIView {
         lines += style.section("調べる・試す", style.table([
             ("presets", ["選べる分析のプリセット（解説・提案・サマリーの出し方）を一覧にする。自分のプリセットは、フォルダに置く"]),
             ("doctor [--locale L]", ["その言語のオンデバイス認識が、この Mac で使えるか調べる（既定 ja_JP）"]),
-            ("transcribe <音声ファイル> [--locale L]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）"]),
+            ("transcribe <音声ファイル> [--locale L] [--model ID]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）。--model で、ダウンロードしたモデルを使う"]),
+            ("models [download <ID>|delete <ID>]", ["ダウンロードして使える文字起こしのモデルの、一覧・取得（続きから再開できる）・削除"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))
@@ -104,6 +105,26 @@ enum CLIView {
         return lines.joined(separator: "\n")
     }
 
+    static func models(_ models: [LocalModel], store: ModelStore, directory: String, _ style: TerminalStyle) -> String {
+        let rows: [(name: String, text: [String])] = models.map { model in
+            let state = store.isInstalled(model.artifact) ? style.success("取得済み") : (store.downloadedBytes(model.artifact) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
+            return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.artifact.bytes)) + "  " + state, style.dim(model.summary)])
+        }
+        var lines = [style.bold("文字起こしのモデル（追加でダウンロードして使う。Mac 標準は、ダウンロード不要）")] + style.table(rows, label: style.cyan).map { "  " + $0 }
+        lines.append("")
+        lines.append(style.dim("取得：\(AppInfo.name) models download <ID>（Hugging Face から。続きから再開できる）  削除：models delete <ID>"))
+        lines.append(style.dim("使う：transcribe・replay に --model <ID>、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))
+        return lines.joined(separator: "\n")
+    }
+
+    static func modelDownloaded(_ model: LocalModel, _ path: String, _ style: TerminalStyle) -> String {
+        "\(style.success("✔")) \(style.bold(model.name)) を取得しました（SHA-256 で検証済み）\n  \(style.dim(path))"
+    }
+
+    static func megabytes(_ bytes: Int64) -> String {
+        bytes >= 1_000_000_000 ? String(format: "%.1f GB", Double(bytes) / 1e9) : "\(bytes / 1_000_000) MB"
+    }
+
     static func doctor(_ readiness: SpeechReadiness, _ style: TerminalStyle) -> String {
         let status: String
         let hint: String?
@@ -151,4 +172,28 @@ extension CLIError {
         case .agent: return nil
         }
     }
+}
+
+/// ダウンロードの進み具合を、端末へ、10% ごとに 1 行出す（端末でなければ、何も出さない）。
+final class ProgressLine: @unchecked Sendable {
+    private let enabled: Bool
+    private let write: @Sendable (String) -> Void
+    private let lock = NSLock()
+    private var lastStep = -1
+
+    init(enabled: Bool, write: @escaping @Sendable (String) -> Void) {
+        self.enabled = enabled
+        self.write = write
+    }
+
+    func update(name: String, received: Int64, total: Int64) {
+        guard enabled, total > 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        let percent = Int(received * 100 / total)
+        guard percent / 10 != lastStep else { return }
+        lastStep = percent / 10
+        write("\(name): \(percent)%（\(CLIView.megabytes(received)) / \(CLIView.megabytes(total))）")
+    }
+
+    func finish() {}
 }

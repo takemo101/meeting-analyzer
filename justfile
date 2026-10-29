@@ -8,6 +8,10 @@ exe := app / "Contents/MacOS/MeetingAnalyzer"
 default:
     @just --list
 
+# 文字起こしの推論の実行環境（transcribe.cpp）を、固定した版で、build/native にビルドする（ビルド済みなら何もしない。build・test が、先に呼ぶ）
+native:
+    ./scripts/build-native.sh
+
 # build/MeetingAnalyzer.app（Apple silicon、ad-hoc 署名）を作る
 build:
     ./scripts/build.sh

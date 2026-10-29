@@ -6,10 +6,11 @@ meeting-analyzer の Module の責務・状態の所有・時間と並行・失�
 
 ## Module と責務
 
-外部パッケージはなく、Foundation・AVFoundation・Speech・ScreenCaptureKit・AppKit だけを使う。コードは SwiftPM の 4 つのターゲットに分かれる。
+外部の Swift パッケージはなく、Foundation・AVFoundation・Speech・ScreenCaptureKit・AppKit・SwiftUI・CryptoKit だけを使う（外部のコードは、ダウンロードしたモデルを動かす transcribe.cpp〔C++・ggml・MIT〕だけ。固定した commit を、`scripts/build-native.sh` が、`build/native` へ静的ライブラリとしてビルドし、`Package.swift` が、`-force_load` で取り込む）。コードは SwiftPM の 5 つのターゲットに分かれる。
 
 | ターゲット | 場所 | 役割 |
 |---|---|---|
+| `CTranscribe`（C） | `Sources/CTranscribe/` | transcribe.cpp の C のヘッダ（`transcribe.h`・`transcribe/vad.h`）を、Swift へ見せるだけ（モジュールマップ。本物のヘッダは `build/native/include`）。実装は無い |
 | `MeetingAnalyzer`（実行ファイル） | `Sources/MeetingAnalyzer/main.swift` | 引数を見て、GUI の起動か CLI の実行かを `MeetingAnalyzerApp` に任せるだけ |
 | `MeetingAnalyzerKit`（ライブラリ） | `Sources/MeetingAnalyzerKit/` | アプリ本体。単体テストから `@testable import` で使う |
 | `CaptureProbe`（実行ファイル） | `Sources/CaptureProbe/main.swift` | 取り込みの実験用（製品の CLI ではない）。マイク・システム音声・音声ファイルを実時間のライブ入力として認識し、遅延と音量を測る。権限は `--request` なしでは要求しない |
@@ -42,6 +43,8 @@ flowchart TD
 | | `Speaker`、`Utterance` | 発言者（本人／相手と表示名）と、1 つの発話（番号・本文・確定か・開始秒・版）。`key`（発言者と番号）が upsert の単位 | なし（値型） |
 | | `ScreenSelection`、`ScreenSignature`、`ScreenChange`、`ScreenshotGate` | 画面の取り込み先の選択と、画面の署名、前の画像から変化があったかの規則、画像を保存してよいかの規則（前の保存から一定の秒数・変化あり。通し番号も数える）（格子の明るさの差が一定以上のものが一定数以上）。画面にも OS にも依存しない | なし（値型） |
 | | `AnalysisPreset`、`PresetInfo` | 分析のプリセット（SPEC §3.11）。ファイルの解釈（見出し `name`・`description`＋本文。8000 文字まで。見出しが無ければ、ファイル名が名前）と、開始の出来事で渡す形（`PresetInfo`）。純粋な規則 | なし |
+| | `LocalModel`、`ModelArtifact`、`LocalModelCatalog`、`TranscriptionChoice` | ダウンロードできる文字起こしのモデルの一覧（ライセンスが明確なもの）と、固定する情報（リポジトリ・版・ファイル名・バイト数・SHA-256）。使う文字起こし（Mac 標準かモデルの ID）。純粋なデータ | なし（値型） |
+| | `UtteranceSegmenter` | 発話の区切り（SPEC §3.12）：VAD のフレームごとの確率から、発話の範囲（開始／終了のしきい値・最短・終わりの無音・余白・最長）を決める。**音声も時計も持たない、純粋な規則**（フレーム番号だけ）。何度に分けて渡しても、結果は同じ | 進行中の発話の状態 |
 | | `BatchMode` | 転送のまとめ方（発話の区切り／会話の区切り／まとまってから解説／約 30 秒／約 5 秒）。`BatchingPolicy` の値の組 | なし |
 | | `EchoDetector` | 相手の声のマイクへの回り込みの疑いを、文字起こしの重なり（文字の 2 つ組）で見つける純粋な規則。判断だけで、発話は変えない | 直近 10 秒の「相手」の発話 |
 | | `Batcher`、`BatchingPolicy` | 送るべき時を決める純粋な規則（SPEC §3.6）。`observe`（更新を受ける）・`isDue`・`takeBatch`・`flush`。**時計を持たず、`now`（秒）を引数で受ける**ので、時間を進めずにテストできる | 最新の発話・未送信の並び・最後の変化／送信の時刻・境界 |
@@ -57,9 +60,11 @@ flowchart TD
 | `Platform/` | `RuntimePaths`、`SessionStore`、`ScreenshotStore`、`RecordRetention`、`PresetStore`、`CommandLineTool`、`CapturePreferences` | 置き場所（環境変数が優先。データの置き場所・窓口のソケット）、記録の書き込み（ディレクトリ 0700・ファイル 0600）、画面の JPEG の保存（記録のフォルダの `screens/`。0700／0600・枚数の上限なし）、記録の保持（`RecordRetention.deleteExpired`：期限を過ぎた記録を、文字起こしも画像も、フォルダごと消す。実行中は除く。以前の版の `screens/<id>/` も。日数は、利用者の設定 `RecordRetentionSetting`＝アプリの設定、既定 7 日・「消さない」あり。起動時・会議の開始と終了・設定の変更・6 時間ごと）。失敗は `Result` | なし |
 | | `CommandLineTool` | コマンド `meeting-analyzer`（`/usr/local/bin` からアプリの実行ファイルへのシンボリックリンク）の状態（`unavailable`・`notInstalled`・`installed`・`stale`・`other`）と、入れる・外す。書けなければ、管理者の実行（`do shell script … with administrator privileges`）へ回す。**このアプリのものでない同名のものは、触らない**。リンクの場所・リンク先・管理者の実行は、差し替えられる（試験用） | なし（ファイルシステムが持つ） |
 | | `CapturePreferences` | 取り込みの設定（マイク・システム音声・画面の取り込み・まとめ方・プリセット）を、アプリの設定（`UserDefaults`）へ保存・読み込みする。**読むときに一度だけ検査して型にする**（壊れた値は、その項目だけ既定へ）。`MeetingController` が、選択のたびに保存し、起動時に読む | アプリの設定 |
+| | `ModelStore`、`ModelDownloader` | ダウンロードしたモデルの保管（`<データの置き場所>/models/`・0700／0600。ファイル名に SHA-256 の先頭。検証済みの印〔大きさ・更新時刻〕で、取得済みを見る。印が合わなければ、SHA-256 を確かめ、違えば消す）と、取得（固定した版を、Hugging Face から。`URLSession` のデータタスクで、`.part` へ書き、Range で続きから再開。完了で、大きさ → SHA-256 を確かめて、本来の名前・0600へ。同時に 1 つ。取り消しは、取得済みの分を残す。`discardPartial` は、途中のファイルだけを捨てる）。取得先・設定は、試験で差し替えられる | `.part` と印（ファイルシステムが持つ）。取得中のタスク |
 | | `PresetStore` | プリセットの置き場所と読み込み：同梱（`Contents/Resources/presets/`）と、自分のもの（`<データの置き場所>/presets/`）。同じ ID は自分のものが優先。`_`・`.` で始まるファイルと、読めないファイル（理由を持つ）は除く。自分のフォルダ（0700）とテンプレート（0600）を用意する | 同梱・自分のフォルダのファイル（読み取りのみ。テンプレートだけ書く） |
 | `Capture/` | `ScreenSnapshotter`、`ImageTools` | 画面の 1 枚撮り（ScreenCaptureKit。画面全体／アプリのいちばん大きいウィンドウ）と、画像の加工（48×27 の署名・1280 への縮小・JPEG）。画像はメモリ上だけで扱い、JPEG にするのは、渡す分だけ | なし |
 | `Capture/` | `MicrophoneCapture`、`SystemAudioCapture`、`SystemAudioTarget`、`CaptureApp`、`CaptureError` | マイク（`AVAudioEngine`。ボイス処理＝エコー除去を有効にし、他のアプリの音の抑え込みを最小にする）と、システム音声（ScreenCaptureKit。全体、または選んだアプリ。自分の音は除く）を、`AsyncStream<AVAudioPCMBuffer>` で流す。音声はメモリ上だけ。権限の確認（`MicrophoneCapture.isAuthorized`、`ScreenRecordingPermission.isGranted`）は要求をしない。`start` は、権限が未確認なら OS の確認を出すので、利用者の開始の操作の中だけで呼ぶ | `AVAudioEngine`／`SCStream`（取り込み中だけ） |
+| `Transcription/`（ダウンロード式） | `LocalTranscriber`、`NativeRecognizer`・`NativeVoiceActivity`（`NativeSpeech`） | ダウンロードしたモデル（SPEC §3.12）での文字起こし。`NativeSpeech` は、C の API（transcribe.cpp）の薄い包み（認識は、1 つのモデルで同時に 1 つなので、ロックで直列。VAD は、流れごと）。`LocalTranscriber` は、音声（ライブのバッファ・ファイル）を 16 kHz・モノラルへ変換し、VAD の確率を `UtteranceSegmenter` へ渡し、発話の範囲を、その発話の音声（直近 45 秒だけ保持）で認識して、確定した更新（`isFinal`）として返す。モデルは、マイクと相手の流れで共有し、会議が終わると解放する。失敗は `TranscriptionError`（取得されていなければ `modelUnavailable`） | モデル・VAD（会議の間）、直近の音声 |
 | `Transcription/`（ライブ） | `updates(forLive:)`、`AudioFormatConverter` | バッファの流れを `SpeechAnalyzer` の入力へ渡す。形式の変換（多チャンネルは先頭のみ）を含む。実時間の入力では `.fastResults` が要る（[検証記録](verification.md#実施記録)）。更新の `start`／`end` は、その流れの最初のバッファを 0 とした秒数 | なし |
 | `Session/` | `LiveSession`、`LiveInputs`、`LiveInputStream`、`LiveSessionNotice` | ライブのセッション 1 つ。`SessionLifecycle`・取り込みの流れ・`SessionPipeline`・時間を組み立てる。開始（取り込み）・一時停止（取り込みを止め、残りを確定して出し切る）・再開（時刻が続く）・終了（取り込みを止める → 出し切り → 記録 → 終了の出来事）。止めない失敗は `LiveSessionNotice` で知らせる。`LiveInputs` が、発言者ごとの「取り込み＋認識」の差し替え口（実機は `DeviceInputs`、テストは偽の流れ） | `SessionLifecycle`、`SessionPipeline`、発言者ごとの実行中の流れ、tick のタスク |
 | `Session/` | `SessionPipeline` | 「更新 → 発話（番号・版） → バッチ → 出来事」と、終了の手順（出し切り → 記録 → `ended`）。入力がファイルの再生でもライブでも、同じ流れを通す。**同期**（`await` なし）。時計は、更新が持つ秒数 | 発言者ごとの番号、`Batcher`、`Transcript`、出したバッチ数 |
@@ -71,8 +76,8 @@ flowchart TD
 | | `CLIRunner` | `Command` の実行（`mcp` は `MCPRunner` へ）。標準出力・標準エラー・文字起こしの部品を差し替えられる（検証とテスト用）。**失敗の見せ方（端末なら読める形、パイプなら JSON。終了コード）を決める唯一の場所** | なし |
 | | `TerminalStyle`、`CLIView` | 端末への見せ方。色は、端末・`NO_COLOR`・`TERM` で決め（パイプには付けない）、表の桁は、全角を 2 桁として揃える。ヘルプ・失敗（次にすること）・起動前の状態表・`doctor`・`transcribe`・`replay` の、人が読む形を作る（機械が読む JSON は `CLIRunner`） | なし |
 | `App/` | `Launch`（`MeetingAnalyzerApp`、`AppDelegate`） | 起動の入口。引数なしなら、アクセサリ（Dock に出ない）として起動し、メニューバーの項目を置く。CLI なら、実行して終了コードを返す。SIGTERM・メニューの終了は、同じ道（実行中の会議を `appQuit` で終えてから終了）を通す | `StatusMenu`、`MeetingController` |
-| | `MeetingController` | メニューの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込む音声の選択）だけを持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ |
-| | `StatusMenu`、`SettingsWindow`（`SettingsModel`・`SettingsView`）、`FailureText` | メニュー（開くたびに状態から作り直す。会議の操作・設定…・コマンド・フォルダ）、設定ウィンドウ（SwiftUI の Form を `NSWindow` に載せる。取り込みの設定・まとめ方・プリセット・保持期間を、メニューを開き直さずに選ぶ。`MeetingController.observe` で更新し、起動中のアプリの増減でアプリの候補も更新する。会議中は取り込みの設定を無効にする）、失敗の文言。**利用者への見せ方を決める境界**。開始は、確認のダイアログなしで、すぐ始まる | メニューバーの項目、ウィンドウ（1 つ） |
+| | `MeetingController` | メニュー・設定ウィンドウの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込みの選択・使う文字起こし・モデルのダウンロードの進み具合と失敗）だけを持つ。選択は `CapturePreferences` で覚える。モデルのダウンロード・削除・選択の規則（取得済みだけ選べる・使っているモデルを消したら Mac 標準へ）を持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ、進行中のダウンロード |
+| | `StatusMenu`、`SettingsWindow`（`SettingsModel`・`SettingsView`）、`FailureText` | メニュー（開くたびに状態から作り直す。会議の操作・設定…・コマンド・フォルダ）、設定ウィンドウ（SwiftUI の Form を `NSWindow` に載せる。文字起こしのモデルの選択・ダウンロード〔進み具合・取り消し・続きから〕・削除、取り込みの設定・まとめ方・プリセット・保持期間を、メニューを開き直さずに選ぶ。`@State` のマクロは、Command Line Tools だけの環境で使えないので、状態は `ObservableObject` に持つ。`MeetingController.observe` で更新し、起動中のアプリの増減でアプリの候補も更新する。会議中は取り込みの設定を無効にする）、失敗の文言。**利用者への見せ方を決める境界**。開始は、確認のダイアログなしで、すぐ始まる | メニューバーの項目、ウィンドウ（1 つ） |
 
 ### 取り込みと会議の接続
 

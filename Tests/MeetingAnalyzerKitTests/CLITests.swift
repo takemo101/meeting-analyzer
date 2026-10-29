@@ -23,9 +23,29 @@ struct CommandParserTests {
     func doctorAndTranscribe() {
         #expect(parse(["doctor"]) == .success(.doctor(locale: "ja_JP")))
         #expect(parse(["doctor", "--locale", "en_US"]) == .success(.doctor(locale: "en_US")))
-        #expect(parse(["transcribe", "a.wav"]) == .success(.transcribe(file: "a.wav", locale: "ja_JP")))
+        #expect(parse(["transcribe", "a.wav"]) == .success(.transcribe(file: "a.wav", locale: "ja_JP", model: .apple)))
         #expect(parse(["transcribe"]) == .failure(.usage("引数が 1 個必要です")))
         #expect(parse(["transcribe", "a.wav", "b.wav"]) == .failure(.usage("引数が 1 個必要です")))
+    }
+
+    @Test("--model：知っているモデルの ID か apple だけ。無指定は apple。知らない ID は、使い方の誤り。models の引数も、一度だけ検査する")
+    func modelOptions() {
+        #expect(parse(["transcribe", "a.wav", "--model", "qwen3-asr-0.6b"]) == .success(.transcribe(file: "a.wav", locale: "ja_JP", model: .local("qwen3-asr-0.6b"))))
+        #expect(parse(["transcribe", "a.wav", "--model", "apple"]) == .success(.transcribe(file: "a.wav", locale: "ja_JP", model: .apple)))
+        guard case .failure(.usage(let message)) = parse(["transcribe", "a.wav", "--model", "gpt"]) else { Issue.record("知らないモデルを断らない"); return }
+        #expect(message.contains("gpt") && message.contains("whisper-large-v3-turbo"))
+        guard case .success(.replay(let options)) = parse(["replay", "a.wav", "--model", "whisper-large-v3-turbo"]) else { Issue.record("parse failed"); return }
+        #expect(options.model == .local("whisper-large-v3-turbo"))
+        guard case .success(.replay(let plain)) = parse(["replay", "a.wav"]) else { Issue.record("parse failed"); return }
+        #expect(plain.model == .apple)
+        #expect(parse(["replay", "a.wav", "--model", "x"]) != .success(.replay(plain)))
+
+        #expect(parse(["models"]) == .success(.models(.list)))
+        #expect(parse(["models", "download", "qwen3-asr-1.7b"]) == .success(.models(.download(id: "qwen3-asr-1.7b"))))
+        #expect(parse(["models", "delete", "qwen3-asr-1.7b"]) == .success(.models(.delete(id: "qwen3-asr-1.7b"))))
+        for bad in [["models", "download"], ["models", "download", "nope"], ["models", "apple"], ["models", "download", "apple"], ["models", "list", "x", "y"]] {
+            guard case .failure(.usage) = parse(bad) else { Issue.record("\(bad) を断らない"); return }
+        }
     }
 
     @Test("replay の既定：発言者は相手、名前は音声ファイル名から、窓口を開けておく秒数は 0")
@@ -79,6 +99,72 @@ final class Output: @unchecked Sendable {
     var lines: [String] { lock.lock(); defer { lock.unlock() }; return storage }
 }
 
+/// `models` と `--model` の実行（通信・モデルは、差し替える）。
+@Suite("CLIRunner: models と --model")
+struct CLIModelsTests {
+    private final class Calls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [String] = []
+        func add(_ value: String) { lock.lock(); items.append(value); lock.unlock() }
+        var values: [String] { lock.lock(); defer { lock.unlock() }; return items }
+    }
+
+    private func environment(_ data: URL) -> [String: String] { ["MEETING_ANALYZER_DATA_DIR": data.path] }
+
+    @Test("models：パイプでは、モデルごとに 1 行の JSON（未取得）。置き場所は、データの置き場所の models/")
+    func list() async {
+        let out = Output(), err = Output()
+        let data = tempURL("models-cli")
+        let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { err.add($0) }).run(.models(.list))
+        #expect(code == 0)
+        let rows = out.lines.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        #expect(rows.map { $0["id"] as? String } == LocalModelCatalog.all.map(\.id))
+        #expect(rows.allSatisfy { $0["installed"] as? Bool == false && $0["downloadedBytes"] as? Int == 0 })
+    }
+
+    @Test("models download：音声区間の検出のモデルと、選んだモデルを、この順に取得する。成功は ok。通信の失敗は、終了コード 4（続きから再開できると伝える）")
+    func download() async {
+        let calls = Calls(), out = Output(), err = Output()
+        let data = tempURL("models-cli-dl")
+        let download: CLIRunner.ModelDownload = { artifact, store, progress in
+            calls.add(artifact.filename + "@" + store.directory.path)
+            progress(artifact.bytes, artifact.bytes)
+        }
+        let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { err.add($0) }, modelDownload: download).run(.models(.download(id: "qwen3-asr-0.6b")))
+        #expect(code == 0)
+        #expect(calls.values == ["silero-vad-v6.2-F32.gguf@\(data.path)/models", "Qwen3-ASR-0.6B-Q8_0.gguf@\(data.path)/models"])
+        #expect((try? JSONSerialization.jsonObject(with: Data((out.lines.last ?? "").utf8)) as? [String: Any])?["ok"] as? Bool == true)
+
+        let failingErr = Output()
+        let failing: CLIRunner.ModelDownload = { _, _, _ in throw ModelDownloadError.network("offline") }
+        let failedCode = await CLIRunner(environment: environment(data), out: { _ in }, err: { failingErr.add($0) }, modelDownload: failing).run(.models(.download(id: "qwen3-asr-0.6b")))
+        #expect(failedCode == 4 && errorCode(failingErr.lines.last) == "transcription")
+        #expect(failingErr.lines.last?.contains("続きから") == true && failingErr.lines.last?.contains("offline") == true)
+    }
+
+    @Test("transcribe --model：選んだモデルと、データの置き場所のモデルの保管場所を、文字起こしの部品へ渡す")
+    func transcribeWithModel() async throws {
+        let seen = Calls(), out = Output()
+        let data = tempURL("models-cli-tr")
+        let provider: CLIRunner.UpdatesProvider = { _, _, choice, store in
+            seen.add("\(choice.id)@\(store.directory.path)")
+            return AsyncThrowingStream { $0.yield(TranscriptionUpdate(text: "こんにちは", isFinal: true, start: 0, end: 1)); $0.finish() }
+        }
+        let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { _ in }, updates: provider).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .local("whisper-large-v3-turbo")))
+        #expect(code == 0 && seen.values == ["whisper-large-v3-turbo@\(data.path)/models"])
+        #expect(out.lines.count == 1)
+    }
+
+    @Test("選んだモデルが取得されていなければ、終了コード 4 で、取得の方法を示す（Mac 標準へ、黙って切り替えない）")
+    func missingModel() async throws {
+        let err = Output()
+        let data = tempURL("models-cli-missing")
+        let code = await CLIRunner(environment: environment(data), out: { _ in }, err: { err.add($0) }).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .local("qwen3-asr-0.6b")))
+        #expect(code == 4 && errorCode(err.lines.last) == "transcription")
+        #expect(err.lines.last?.contains("models download") == true)
+    }
+}
+
 /// ソケットのパスは 103 バイトまで。一時ディレクトリの深い場所は使えないので、短い場所に作る。
 private func shortSocketPath() -> String { "/tmp/ma-" + UUID().uuidString.prefix(8).lowercased() + ".sock" }
 
@@ -94,7 +180,7 @@ private func audioFile() throws -> URL {
 }
 
 private func fakeUpdates(_ items: [TranscriptionUpdate], failure: TranscriptionError? = nil) -> CLIRunner.UpdatesProvider {
-    { _, _ in
+    { _, _, _, _ in
         AsyncThrowingStream { continuation in
             for item in items { continuation.yield(item) }
             continuation.finish(throwing: failure)
@@ -167,7 +253,7 @@ struct CLIRunnerTests {
         let out = Output(), err = Output()
         let options = ReplayOptions(file: "/nonexistent/x.aiff", speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
         #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.replay(options)) == 2)
-        #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.transcribe(file: "/nonexistent/x.aiff", locale: "ja_JP")) == 2)
+        #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.transcribe(file: "/nonexistent/x.aiff", locale: "ja_JP", model: .apple)) == 2)
     }
 
     @Test("文字起こしの失敗は、終了コード 4。記録を書かず、終了の出来事も出さない")
@@ -230,7 +316,7 @@ struct CLIRunnerTests {
     @Test("transcribe は、確定した結果だけを 1 行ずつ出す")
     func transcribeOutputsFinals() async throws {
         let out = Output(), err = Output()
-        let code = await runner(out: out, err: err, updates: fakeUpdates(sample)).run(.transcribe(file: try audioFile().path, locale: "ja_JP"))
+        let code = await runner(out: out, err: err, updates: fakeUpdates(sample)).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .apple))
         #expect(code == 0)
         #expect(out.lines.count == 1)
         let line = try #require(JSONSerialization.jsonObject(with: Data(out.lines[0].utf8)) as? [String: Any])

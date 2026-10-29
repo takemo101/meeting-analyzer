@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# 文字起こしの推論の実行環境（transcribe.cpp。C のヘッダと静的ライブラリ）。ビルド済みなら、何もしない。
+./scripts/build-native.sh
 swift build -c release --arch arm64
 
 APP=build/MeetingAnalyzer.app
@@ -19,6 +21,10 @@ cp skills/meeting-analyzer/SKILL.md "$APP/Contents/Resources/SKILL.md"
 cp integrations/pi/meeting-analyzer.js "$APP/Contents/Resources/meeting-analyzer-pi.js"
 # opencode に、字幕を押し込むプラグイン（`meeting-analyzer opencode` が、その起動だけに載せる）。ディレクトリ（package.json + server.js）。
 cp -R integrations/opencode "$APP/Contents/Resources/meeting-analyzer-opencode"
+# 文字起こしの推論の実行環境（transcribe.cpp・ggml）のライセンス（MIT）。静的に取り込んでいるので、同梱する（SPEC §3.12）。
+mkdir -p "$APP/Contents/Resources/licenses"
+cp build/native/src/LICENSE "$APP/Contents/Resources/licenses/transcribe.cpp-LICENSE"
+cp build/native/src/THIRD-PARTY-LICENSES.md "$APP/Contents/Resources/licenses/transcribe.cpp-THIRD-PARTY-LICENSES.md"
 # 分析のプリセット（解説・提案・サマリーの出し方。メニューで選ぶ。SPEC §3.11）。自分のプリセットは、データの置き場所の presets/ に置く。
 cp -R presets "$APP/Contents/Resources/presets"
 # プリセットを作る・直すための skill（エージェントの skill フォルダへ、コピーして使う。docs/presets.md）。

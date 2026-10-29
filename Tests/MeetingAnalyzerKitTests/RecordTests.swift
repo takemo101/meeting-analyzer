@@ -114,7 +114,7 @@ struct CapturePreferencesTests {
     func roundTrip() {
         let defaults = defaults()
         #expect(CapturePreferences.load(defaults) == CapturePreferences())
-        #expect(CapturePreferences().microphone && CapturePreferences().system == .off && CapturePreferences().screen == .off)
+        #expect(CapturePreferences().microphone && CapturePreferences().system == .off && CapturePreferences().screen == .off && CapturePreferences().transcription == .apple)
 
         var saved = CapturePreferences()
         saved.microphone = false
@@ -122,6 +122,7 @@ struct CapturePreferencesTests {
         saved.screen = .app(bundleID: "com.google.Chrome", name: "Google Chrome")
         saved.batchMode = .digest
         saved.presetID = "minutes"
+        saved.transcription = .local("qwen3-asr-1.7b")
         saved.save(defaults)
         #expect(CapturePreferences.load(defaults) == saved)
 
