@@ -14,21 +14,23 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         /// true なら、最初の 1 つの断片を送ったあと、終わらずに待つ（取り消しの試験）。
         var stall = false
     }
-    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> Reply)?
-    nonisolated(unsafe) static var requests: [URLRequest] = []
+    /// 試験ごとに別の取得先（パス）を使い、その取得先の応答だけを登録する（試験が並行して動いても、混ざらない）。
+    nonisolated(unsafe) private static var handlers: [String: @Sendable (URLRequest) -> Reply] = [:]
+    nonisolated(unsafe) private static var requests: [String: [URLRequest]] = [:]
     private static let lock = NSLock()
 
-    static func reset(_ handler: @escaping @Sendable (URLRequest) -> Reply) {
-        lock.lock(); self.handler = handler; requests = []; lock.unlock()
+    static func register(_ artifact: ModelArtifact, _ handler: @escaping @Sendable (URLRequest) -> Reply) {
+        lock.lock(); handlers[artifact.downloadURL.path] = handler; requests[artifact.downloadURL.path] = []; lock.unlock()
     }
-    static var seenRequests: [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
+    static func seenRequests(_ artifact: ModelArtifact) -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests[artifact.downloadURL.path] ?? [] }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var stopped = false
 
     override func startLoading() {
-        Self.lock.lock(); Self.requests.append(request); let handler = Self.handler; Self.lock.unlock()
+        let key = request.url?.path ?? ""
+        Self.lock.lock(); Self.requests[key, default: []].append(request); let handler = Self.handlers[key]; Self.lock.unlock()
         guard let reply = handler?(request), let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return }
         let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -54,7 +56,7 @@ private func makeConfiguration() -> URLSessionConfiguration {
 private func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
 private func artifact(for data: Data, name: String = "m.gguf") -> ModelArtifact {
-    ModelArtifact(repository: "o/r", revision: "rev", filename: name, bytes: Int64(data.count), sha256: sha(data))
+    ModelArtifact(repository: "o/\(UUID().uuidString)", revision: "rev", filename: name, bytes: Int64(data.count), sha256: sha(data))
 }
 
 private func payload(_ n: Int, seed: UInt8 = 1) -> Data { Data((0..<n).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ Int(seed)) }) }
@@ -78,7 +80,7 @@ struct ModelDownloadTests {
         let data = payload(300_000)
         let store = makeStore(), item = artifact(for: data)
         defer { try? FileManager.default.removeItem(at: store.root) }
-        StubProtocol.reset(honestServer(data))
+        StubProtocol.register(item, honestServer(data))
         let reports = ProgressLog()
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { received, _ in reports.add(received) }
         #expect(store.isInstalled(item))
@@ -89,9 +91,9 @@ struct ModelDownloadTests {
         let values = reports.values
         #expect(values == values.sorted() && values.last == item.bytes)
         // 取得済みなら、通信しない
-        StubProtocol.reset { _ in .init(status: 500) }
+        StubProtocol.register(item) { _ in .init(status: 500) }
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
-        #expect(StubProtocol.seenRequests.isEmpty)
+        #expect(StubProtocol.seenRequests(item).isEmpty)
     }
 
     @Test("SHA-256 が違えば、失敗し、途中のファイルも、本来のファイルも残らない")
@@ -99,7 +101,7 @@ struct ModelDownloadTests {
         let data = payload(100_000)
         let store = makeStore(), item = artifact(for: data)
         defer { try? FileManager.default.removeItem(at: store.root) }
-        StubProtocol.reset(honestServer(payload(100_000, seed: 9)))   // 同じ大きさで、中身が違う
+        StubProtocol.register(item, honestServer(payload(100_000, seed: 9)))   // 同じ大きさで、中身が違う
         await #expect(throws: ModelDownloadError.checksumMismatch) {
             try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
         }
@@ -111,11 +113,11 @@ struct ModelDownloadTests {
         let data = payload(100_000)
         let store = makeStore(), item = artifact(for: data)
         defer { try? FileManager.default.removeItem(at: store.root) }
-        StubProtocol.reset { _ in .init(status: 200, body: data.prefix(40_000)) }
+        StubProtocol.register(item) { _ in .init(status: 200, body: data.prefix(40_000)) }
         await #expect(throws: ModelDownloadError.sizeMismatch(expected: 100_000, actual: 40_000)) {
             try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
         }
-        StubProtocol.reset { _ in .init(status: 404) }
+        StubProtocol.register(item) { _ in .init(status: 404) }
         await #expect(throws: ModelDownloadError.badStatus(404)) {
             try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
         }
@@ -128,15 +130,15 @@ struct ModelDownloadTests {
         defer { try? FileManager.default.removeItem(at: store.root) }
         try store.prepareDirectory()
         try data.prefix(70_000).write(to: store.partURL(item))
-        StubProtocol.reset(honestServer(data))
+        StubProtocol.register(item, honestServer(data))
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
-        #expect(StubProtocol.seenRequests.first?.value(forHTTPHeaderField: "Range") == "bytes=70000-")
+        #expect(StubProtocol.seenRequests(item).first?.value(forHTTPHeaderField: "Range") == "bytes=70000-")
         #expect(try Data(contentsOf: store.fileURL(item)) == data)
         store.delete(item)
 
         // Range を無視して、全体を 200 で返すサーバー：取得済みの分を捨てて、先頭から書き直す
         try data.prefix(70_000).write(to: store.partURL(item))
-        StubProtocol.reset { _ in .init(status: 200, body: data) }
+        StubProtocol.register(item) { _ in .init(status: 200, body: data) }
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
         #expect(try Data(contentsOf: store.fileURL(item)) == data)
     }
@@ -146,7 +148,7 @@ struct ModelDownloadTests {
         let data = payload(500_000)
         let store = makeStore(), item = artifact(for: data)
         defer { try? FileManager.default.removeItem(at: store.root) }
-        StubProtocol.reset { _ in .init(body: data, chunk: 100_000, stall: true) }   // 100 KB を送って、止まる
+        StubProtocol.register(item) { _ in .init(body: data, chunk: 100_000, stall: true) }   // 100 KB を送って、止まる
         let downloader = ModelDownloader(store: store, configuration: makeConfiguration())
         let running = Task { try await downloader.download(item) { _, _ in } }
         for _ in 0..<200 where store.downloadedBytes(item) < 100_000 { try await Task.sleep(for: .milliseconds(10)) }
@@ -155,9 +157,9 @@ struct ModelDownloadTests {
         let kept = store.downloadedBytes(item)
         #expect(kept >= 100_000 && kept < item.bytes && !store.isInstalled(item))
 
-        StubProtocol.reset(honestServer(data))
+        StubProtocol.register(item, honestServer(data))
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
-        #expect(StubProtocol.seenRequests.first?.value(forHTTPHeaderField: "Range") == "bytes=\(kept)-")
+        #expect(StubProtocol.seenRequests(item).first?.value(forHTTPHeaderField: "Range") == "bytes=\(kept)-")
         #expect(try Data(contentsOf: store.fileURL(item)) == data)
     }
 }
@@ -166,7 +168,7 @@ struct ModelDownloadTests {
 struct ModelStoreTests {
     private func install(_ data: Data) async throws -> (ModelStore, ModelArtifact) {
         let store = ModelStore(root: tempURL("models-store")), item = artifact(for: data)
-        StubProtocol.reset(honestServer(data))
+        StubProtocol.register(item, honestServer(data))
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { _, _ in }
         return (store, item)
     }
