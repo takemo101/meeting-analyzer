@@ -76,10 +76,15 @@ struct SettingsView: View {
         let _ = model.revision
         HStack(spacing: 0) {
             List(SettingsPage.allCases, selection: Binding<SettingsPage?>(get: { model.page }, set: { if let page = $0 { model.page = page } })) { page in
-                Label(page.title, systemImage: page.symbol).tag(page)
+                HStack(spacing: 10) {
+                    SidebarBadge(symbol: page.symbol, color: page.color)
+                    Text(page.title).font(.system(size: 13))
+                }
+                .padding(.vertical, 3)
+                .tag(page)
             }
             .listStyle(.sidebar)
-            .frame(width: 190)
+            .frame(width: 210)
             Divider()
             Form {
                 if locked, model.page != .record {
@@ -276,12 +281,37 @@ enum SettingsPage: CaseIterable, Hashable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .capture: return "mic"
-        case .transcription: return "text.bubble"
-        case .actors: return "person.2"
-        case .forwarding: return "paperplane"
-        case .record: return "doc.text"
+        case .capture: return "mic.fill"
+        case .transcription: return "text.bubble.fill"
+        case .actors: return "person.2.fill"
+        case .forwarding: return "paperplane.fill"
+        case .record: return "doc.text.fill"
         }
+    }
+
+    /// サイドバーの角丸のバッジの色（ページごとに変える）。
+    var color: Color {
+        switch self {
+        case .capture: return .pink
+        case .transcription: return .blue
+        case .actors: return .purple
+        case .forwarding: return .green
+        case .record: return .orange
+        }
+    }
+}
+
+/// サイドバーの項目の絵：色つきの角丸の四角に、白い記号（システム設定の見た目）。
+private struct SidebarBadge: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 26, height: 26)
+            .background(RoundedRectangle(cornerRadius: 6.5, style: .continuous).fill(color.gradient))
     }
 }
 
