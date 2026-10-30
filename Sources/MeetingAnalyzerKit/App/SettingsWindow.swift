@@ -95,7 +95,7 @@ struct SettingsView: View {
 
             Section("追加でダウンロードするモデル") {
                 ForEach(LocalModelCatalog.all) { entry in
-                    ModelRow(settings: model, model: entry, locked: locked)
+                    ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
                 }
                 Text("ダウンロードは、ここで押したときだけ、Hugging Face から行います（音声は送りません）。途中で止めても、続きから取得できます。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -156,14 +156,15 @@ struct SettingsView: View {
                     Button("選ぶ…") { controller.chooseActorFile() }
                 }
                 actorStatusView
-                Toggle("相手の話者を、内容から推定する", isOn: Binding(get: { controller.guessSpeakers }, set: { controller.setGuessSpeakers($0) }))
-                    .disabled(controller.actorFile == nil)
-                if case .unavailable(let reason) = controller.speakerGuessAvailability {
-                    Text("使えません: \(reason)").font(.caption).foregroundStyle(.red)
-                } else {
-                    Text("Mac 標準の言語モデル（Apple Intelligence。オンデバイス）が、発言の内容から、話した人を推定します。「推定:」と付き、決められないときは「相手」のままです。")
-                        .font(.caption).foregroundStyle(.secondary)
+                Picker("相手の話者の推定", selection: Binding(get: { controller.decisionModel?.id ?? "" }, set: { controller.setDecisionModel(DecisionModelCatalog.model(id: $0)) })) {
+                    Text("推定しない（相手のまま）").tag("")
+                    ForEach(DecisionModelCatalog.all.filter { controller.isInstalled($0) }) { entry in Text(entry.name).tag(entry.id) }
                 }
+                ForEach(DecisionModelCatalog.all) { entry in
+                    ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
+                }
+                Text("発言の内容から、一覧の中の誰が話したかを、確率つきで判断するモデル（System One 型。この Mac の中だけで動きます）。モデルを選んでいない・取得していないときは、推定せず、相手は「相手」のままです。ダウンロードは、ここで押したときだけ（Hugging Face。音声・文字は送りません）。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .disabled(locked)
 
@@ -213,36 +214,73 @@ private struct AppChoice {
     let title: String
 }
 
+/// 追加でダウンロードするモデル 1 つの、表示と操作（文字起こしのモデルも、話者の推定のモデルも、同じ行で扱う）。
+private struct ModelRowSpec {
+    let id: String
+    let name: String
+    let summary: String
+    let bytes: Int64
+    let installed: Bool
+    let downloadedBytes: Int64
+    /// いま使っているか（使っているモデルは、会議の実行中は消せない）。
+    let inUse: Bool
+    /// 削除の確認で見せる説明。
+    let deleteNote: String
+    let download: () -> Void
+    let discard: () -> Void
+    let delete: () -> Void
+
+    @MainActor init(_ model: LocalModel, _ controller: MeetingController) {
+        id = model.id; name = model.name; summary = model.summary; bytes = model.artifact.bytes
+        installed = controller.isInstalled(model)
+        downloadedBytes = controller.modelStore.downloadedBytes(model.artifact)
+        inUse = controller.transcription == .local(model.id)
+        deleteNote = inUse ? "使っているモデルです。削除すると、Mac 標準に戻ります。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
+        download = { controller.downloadModel(model) }
+        discard = { controller.discardPartialDownload(model) }
+        delete = { controller.deleteModel(model) }
+    }
+
+    @MainActor init(_ model: DecisionModel, _ controller: MeetingController) {
+        id = model.id; name = model.name; summary = model.summary; bytes = model.bytes
+        installed = controller.isInstalled(model)
+        downloadedBytes = controller.modelStore.downloadedBytes(model)
+        inUse = controller.decisionModel == model
+        deleteNote = inUse ? "使っているモデルです。削除すると、話者の推定をしなくなります（相手は「相手」のまま）。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
+        download = { controller.downloadDecisionModel(model) }
+        discard = { controller.discardPartialDownload(model) }
+        delete = { controller.deleteDecisionModel(model) }
+    }
+}
+
 /// 追加でダウンロードするモデル 1 つ：名前・説明・大きさと、取得（進み具合・取消）・削除。
 private struct ModelRow: View {
     @ObservedObject var settings: SettingsModel
-    let model: LocalModel
+    let spec: ModelRowSpec
     /// 会議の実行中（使っているモデルは、消せない）。
     let locked: Bool
 
     private var controller: MeetingController { settings.controller }
     private var confirmDelete: Binding<Bool> {
-        Binding(get: { settings.confirmingDelete == model.id }, set: { settings.confirmingDelete = $0 ? model.id : nil })
+        Binding(get: { settings.confirmingDelete == spec.id }, set: { settings.confirmingDelete = $0 ? spec.id : nil })
     }
     /// 途中までのダウンロードを捨てる確認（削除の確認と区別するため、別の印を使う）。
     private var confirmDiscard: Binding<Bool> {
-        Binding(get: { settings.confirmingDelete == "discard:" + model.id }, set: { settings.confirmingDelete = $0 ? "discard:" + model.id : nil })
+        Binding(get: { settings.confirmingDelete == "discard:" + spec.id }, set: { settings.confirmingDelete = $0 ? "discard:" + spec.id : nil })
     }
 
-    private var installed: Bool { controller.isInstalled(model) }
-    private var downloading: MeetingController.ModelDownload? { controller.download?.id == model.id ? controller.download : nil }
-    private var inUse: Bool { controller.transcription == .local(model.id) }
-    private var partial: Bool { !installed && controller.modelStore.downloadedBytes(model.artifact) > 0 }
+    private var downloading: MeetingController.ModelDownload? { controller.download?.id == spec.id ? controller.download : nil }
+    private var partial: Bool { !spec.installed && spec.downloadedBytes > 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(model.name)
-                        Text(Self.size(model.artifact.bytes)).font(.caption).foregroundStyle(.secondary)
+                        Text(spec.name)
+                        Text(Self.size(spec.bytes)).font(.caption).foregroundStyle(.secondary)
                     }
-                    Text(model.summary).font(.caption).foregroundStyle(.secondary)
+                    Text(spec.summary).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 control
@@ -251,35 +289,35 @@ private struct ModelRow: View {
                 ProgressView(value: Double(downloading.received), total: Double(max(1, downloading.total)))
                 Text("\(Self.size(downloading.received)) / \(Self.size(downloading.total))").font(.caption).foregroundStyle(.secondary)
             }
-            if let failure = controller.downloadFailure, failure.id == model.id {
+            if let failure = controller.downloadFailure, failure.id == spec.id {
                 Text(failure.reason).font(.caption).foregroundStyle(.red)
             }
         }
-        .confirmationDialog("「\(model.name)」の、途中までのダウンロードを捨てますか？", isPresented: confirmDiscard) {
-            Button("捨てる", role: .destructive) { controller.discardPartialDownload(model) }
+        .confirmationDialog("「\(spec.name)」の、途中までのダウンロードを捨てますか？", isPresented: confirmDiscard) {
+            Button("捨てる", role: .destructive) { spec.discard() }
         } message: {
-            Text("取得済みの分（\(Self.size(controller.modelStore.downloadedBytes(model.artifact)))）が消えます。もう一度使うには、最初からダウンロードします。")
+            Text("取得済みの分（\(Self.size(spec.downloadedBytes))）が消えます。もう一度使うには、最初からダウンロードします。")
         }
-        .confirmationDialog("「\(model.name)」を削除しますか？", isPresented: confirmDelete) {
-            Button("削除", role: .destructive) { controller.deleteModel(model) }
+        .confirmationDialog("「\(spec.name)」を削除しますか？", isPresented: confirmDelete) {
+            Button("削除", role: .destructive) { spec.delete() }
         } message: {
-            Text(inUse ? "使っているモデルです。削除すると、Mac 標準に戻ります。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。")
+            Text(spec.deleteNote)
         }
     }
 
     @ViewBuilder private var control: some View {
         if downloading != nil {
             Button("取り消す") { controller.cancelDownload() }
-        } else if installed {
-            Button("削除…", role: .destructive) { settings.confirmingDelete = model.id }
-                .disabled(inUse && locked)
+        } else if spec.installed {
+            Button("削除…", role: .destructive) { settings.confirmingDelete = spec.id }
+                .disabled(spec.inUse && locked)
         } else {
             HStack {
                 if partial {
-                    Button("破棄…", role: .destructive) { settings.confirmingDelete = "discard:" + model.id }
+                    Button("破棄…", role: .destructive) { settings.confirmingDelete = "discard:" + spec.id }
                         .disabled(controller.download != nil)
                 }
-                Button(partial ? "続きから取得" : "ダウンロード") { controller.downloadModel(model) }
+                Button(partial ? "続きから取得" : "ダウンロード") { spec.download() }
                     .disabled(controller.download != nil)
             }
         }

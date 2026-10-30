@@ -68,7 +68,7 @@ public struct Transcript: Sendable, Equatable {
         if let actors { header.append("- アクター（ACTOR.md）: \(actors.summary)") }
         let speakerNote = actors == nil
             ? "相手が複数人でも「相手」としか区別できません。"
-            : "「相手（推定: 名前）」は、発言の内容から、言語モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかったものです。"
+            : "「相手（推定: 名前）」は、発言の内容から、判断モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかった（または、判断しなかった）ものです。"
         var blocks = [
             header.joined(separator: "\n"),
             "> 音声認識の自動出力です。誤変換・欠落・聞き取れなかった箇所を含みます。専門用語や固有名詞、数値は特に不確かです。\(speakerNote)",

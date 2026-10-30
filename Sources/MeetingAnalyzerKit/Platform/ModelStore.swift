@@ -94,3 +94,16 @@ public struct ModelStore: Sendable {
         for url in [fileURL(artifact), partURL(artifact), receiptURL(artifact)] { try? FileManager.default.removeItem(at: url) }
     }
 }
+
+/// 判断モデル（重み＋トークナイザの 2 ファイル。`DecisionModel`）。すべてのファイルが、そろってはじめて「取得済み」。
+extension ModelStore {
+    public func isInstalled(_ model: DecisionModel) -> Bool { model.artifacts.allSatisfy(isInstalled) }
+
+    /// 取得済みのバイト数（途中を含む）。
+    public func downloadedBytes(_ model: DecisionModel) -> Int64 { model.artifacts.reduce(0) { $0 + downloadedBytes($1) } }
+
+    /// 途中のファイルだけを消す（取得済みのファイルには、触れない）。
+    public func discardPartial(_ model: DecisionModel) { model.artifacts.forEach(discardPartial) }
+
+    public func delete(_ model: DecisionModel) { model.artifacts.forEach(delete) }
+}

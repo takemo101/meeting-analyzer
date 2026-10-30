@@ -358,6 +358,7 @@ replayCase("R1", speaker: "others", expectedName: "相手")
 replayCase("R2", speaker: "you", expectedName: "本人", preset: "minutes", expectedPreset: ("minutes", "議事録"))
 replayCase("R3", speaker: "others", expectedName: "相手", channel: true, preset: "e2e-custom", expectedPreset: ("e2e-custom", "E2Eカスタム"))
 // R6: 「本人」を、ACTOR.md の本人の名前へ対応づける（モデルを使わない。推定ではない）。記録の行と見出しに、名前が入る。
+// 「相手」は、判断モデルを選ばない（--judge 無し）と、推定せず「相手」のまま。選んだモデルが未取得なら、終了コード 4 で、取得の方法を示す（黙って推定をやめない）。
 do {
     let id = "R6"
     if asrReady, sampleReady {
@@ -368,7 +369,14 @@ do {
         check(text.contains("本人（山田 太郎）:"), "記録の行に、本人の名前がない: \(text)")
         check(text.contains("アクター（ACTOR.md）: 山田 太郎（本人）、高橋 健"), "記録の見出しに、アクターの一覧がない")
         check(!text.contains("本人（推定"), "本人に、推定の印が付いている")
-        conclude(id, pass: "replay --actors：「本人」の発言に、ACTOR.md の本人の名前が付き、記録の見出しに一覧が入る")
+        let others = run(exe, ["replay", sample, "--speaker", "others", "--title", "e2e-\(id)-others", "--actors", actorFile], env: env, timeout: 90)
+        check(others.status == 0, "相手の replay の終了コード \(others.status): \(others.err)")
+        let othersText = (try? String(contentsOfFile: json(lastLine(others.out))?["transcriptPath"] as? String ?? "", encoding: .utf8)) ?? ""
+        let spoken = othersText.split(separator: "\n").filter { $0.hasPrefix("[") }
+        check(!spoken.isEmpty && spoken.allSatisfy { $0.contains("] 相手: ") }, "判断モデル無しで、相手に名前が付いている: \(spoken)")
+        let missing = run(exe, ["replay", sample, "--speaker", "others", "--actors", actorFile, "--judge", "tiny-jev-0.6b"], env: env, timeout: 30)
+        check(missing.status == 4 && lastLine(missing.err).contains("models download"), "未取得の判断モデルの扱いが想定と違う: \(missing.status) \(missing.err)")
+        conclude(id, pass: "replay --actors：「本人」に ACTOR.md の本人の名前が付き、見出しに一覧が入る。判断モデル無しの「相手」は推定されず、未取得のモデルは終了コード 4")
     } else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason) }
 }
 

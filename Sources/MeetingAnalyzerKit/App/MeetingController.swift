@@ -27,8 +27,8 @@ final class MeetingController {
     private(set) var transcription = TranscriptionChoice.apple
     /// 使う `ACTOR.md`（SPEC §3.13）。設定ウィンドウで選び、覚えておく。会議の開始のたびに、読み直す。
     private(set) var actorFile: String?
-    /// 「相手」の話者を、内容から推定するか（Mac 標準の言語モデル）。
-    private(set) var guessSpeakers = true
+    /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
+    private(set) var decisionModel: DecisionModel?
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -75,7 +75,8 @@ final class MeetingController {
         // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準に戻す（黙って別のものを使わないよう、設定を直す）。
         if case .local(let id) = saved.transcription, let model = LocalModelCatalog.model(id: id), modelStore.isInstalled(model.artifact) { transcription = saved.transcription }
         actorFile = saved.actorFile
-        guessSpeakers = saved.guessSpeakers
+        // 保存した判断モデルが、取得されていなければ（削除した・別の Mac から移した）、無しに戻す（推定しない）。
+        if let id = saved.decisionModel, let model = DecisionModelCatalog.model(id: id), modelStore.isInstalled(model) { decisionModel = model }
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
@@ -88,7 +89,7 @@ final class MeetingController {
         preferences.presetID = presetID
         preferences.transcription = transcription
         preferences.actorFile = actorFile
-        preferences.guessSpeakers = guessSpeakers
+        preferences.decisionModel = decisionModel?.id
         preferences.save(defaults)
     }
 
@@ -272,6 +273,73 @@ final class MeetingController {
         changed()
     }
 
+    // MARK: 話者の推定のモデル（SPEC §3.13）
+
+    func isInstalled(_ model: DecisionModel) -> Bool { modelStore.isInstalled(model) }
+
+    /// 話者の推定に使う判断モデルを選ぶ（`nil`＝推定しない）。取得済みのものだけ選べる。会議の実行中は、変えられない。
+    func setDecisionModel(_ model: DecisionModel?) {
+        guard state == .idle else { return }
+        if let model { guard isInstalled(model) else { return } }
+        decisionModel = model
+        persist()
+        changed()
+    }
+
+    /// 判断モデルを、ダウンロードする（利用者が押したときだけ。トークナイザ → 重みの順。途中のファイルがあれば、続きから）。取得できたら、そのモデルを選ぶ。
+    func downloadDecisionModel(_ model: DecisionModel) {
+        guard download == nil else { return }
+        downloadFailure = nil
+        download = ModelDownload(id: model.id, received: modelStore.downloadedBytes(model), total: model.bytes)
+        let downloader = ModelDownloader(store: modelStore)
+        self.downloader = downloader
+        let throttle = ProgressThrottle()
+        Task {
+            do {
+                var finished: Int64 = 0
+                for artifact in model.artifacts {
+                    let base = finished
+                    try await downloader.download(artifact) { received, _ in
+                        guard throttle.shouldReport(received: base + received, total: model.bytes) else { return }
+                        Task { @MainActor in self.download = ModelDownload(id: model.id, received: base + received, total: model.bytes) }
+                    }
+                    finished += artifact.bytes
+                }
+                download = nil
+                self.downloader = nil
+                if state == .idle { setDecisionModel(model) }
+                notice = "「\(model.name)」を取得しました"
+            } catch let error as ModelDownloadError {
+                download = nil
+                self.downloader = nil
+                if error != .cancelled { downloadFailure = (model.id, Self.describe(error)) }
+            } catch {
+                download = nil
+                self.downloader = nil
+                downloadFailure = (model.id, "\(error)")
+            }
+        }
+    }
+
+    /// 途中までのダウンロード（`.part`）を、捨てる。取得中・取得済みのモデルには、何もしない。
+    func discardPartialDownload(_ model: DecisionModel) {
+        guard download?.id != model.id, !isInstalled(model) else { return }
+        modelStore.discardPartial(model)
+        if downloadFailure?.id == model.id { downloadFailure = nil }
+        changed()
+    }
+
+    /// 取得した判断モデルを、削除する。使っているモデルなら、「推定しない」に戻す（会議の実行中は、使っているモデルを消せない）。
+    func deleteDecisionModel(_ model: DecisionModel) {
+        if decisionModel == model {
+            guard state == .idle else { return }
+            decisionModel = nil
+            persist()
+        }
+        modelStore.delete(model)
+        changed()
+    }
+
     private static func describe(_ error: ModelDownloadError) -> String {
         switch error {
         case .network(let reason): return "通信に失敗しました（\(reason)）。もう一度押すと、続きから取得します"
@@ -301,8 +369,6 @@ final class MeetingController {
         }
     }
 
-    /// 話者の推定に使う Mac 標準の言語モデルを使えるか（使えなければ、理由）。
-    var speakerGuessAvailability: AppleSpeakerJudge.Availability { AppleSpeakerJudge.availability(locale: Locale(identifier: CommandParser.defaultLocale)) }
 
     /// `ACTOR.md` を選ぶ（ファイルを選ぶパネル）。選んだら、検査して、状態を更新する。
     func chooseActorFile() {
@@ -325,12 +391,6 @@ final class MeetingController {
         changed()
     }
 
-    func setGuessSpeakers(_ enabled: Bool) {
-        guard state == .idle else { return }
-        guessSpeakers = enabled
-        persist()
-        changed()
-    }
 
     func setBatchMode(_ mode: BatchMode) {
         guard state == .idle else { return }
@@ -403,7 +463,7 @@ final class MeetingController {
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
-        let (actors, labeler, actorNotice) = actorSetup(selection)
+        let (actors, labeler, actorNotice) = await actorSetup(selection)
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
@@ -435,7 +495,9 @@ final class MeetingController {
     }
 
     /// 会議で使う `ACTOR.md` と、発話へ名前を付ける部品。読めない・推定を使えないときは、付けずに会議を始め、理由を知らせる（失敗を黙って捨てない）。
-    private func actorSetup(_ selection: AudioSelection) -> (ActorSource?, SpeakerLabeler?, String?) {
+    /// 判断モデルを選んでいない・取得していない・相手の音声を取り込まない・相手の側の候補がいないときは、**推定しない**（「本人」の対応づけだけ。相手は「相手」のまま）。
+    /// モデルの読み込み（初回は、GPU のコンパイルで数秒）は、画面を止めないよう、別のスレッドで行う。
+    private func actorSetup(_ selection: AudioSelection) async -> (ActorSource?, SpeakerLabeler?, String?) {
         guard let path = actorFile else { return (nil, nil, nil) }
         switch ActorFile.load(path: path) {
         case .failure(let error):
@@ -443,10 +505,19 @@ final class MeetingController {
         case .success(let list):
             var guesser: SpeakerGuesser?
             var problem: String?
-            if guessSpeakers, selection.system != .off, !list.others.isEmpty {
-                switch speakerGuessAvailability {
-                case .available: guesser = SpeakerGuesser(list: list, judge: AppleSpeakerJudge())
-                case .unavailable(let reason): problem = "相手の話者を推定できません: \(reason)"
+            if let model = decisionModel, selection.system != .off, !list.others.isEmpty {
+                let store = modelStore
+                do {
+                    let judge = try await Task.detached(priority: .userInitiated) { () throws -> SystemOneJudge in
+                        let judge = try SystemOneJudge(model: model, store: store)
+                        try judge.prepare()
+                        return judge
+                    }.value
+                    guesser = SpeakerGuesser(list: list, judge: judge)
+                } catch let error as DecisionModelError {
+                    problem = "相手の話者を推定できません: \(error.message)"
+                } catch {
+                    problem = "相手の話者を推定できません"
                 }
             }
             return (ActorSource(list: list, file: path), SpeakerLabeler(list: list, guesser: guesser), problem)

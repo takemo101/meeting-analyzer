@@ -27,9 +27,9 @@ enum CLIView {
             ("actors check <ACTOR.md>", ["ACTOR.md（会話に出てくる人の一覧）の書式を検査して、読み取れた内容を出す"]),
             ("doctor [--locale L]", ["その言語のオンデバイス認識が、この Mac で使えるか調べる（既定 ja_JP）"]),
             ("transcribe <音声ファイル> [--locale L] [--model ID]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）。--model で、ダウンロードしたモデルを使う"]),
-            ("models [download <ID>|delete <ID>]", ["ダウンロードして使える文字起こしのモデルの、一覧・取得（続きから再開できる）・削除"]),
+            ("models [download <ID>|delete <ID>]", ["ダウンロードして使えるモデル（文字起こし・話者の推定）の、一覧・取得（続きから再開できる）・削除"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>  --judge <ID>",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))
@@ -123,20 +123,27 @@ enum CLIView {
         return lines.joined(separator: "\n")
     }
 
-    static func models(_ models: [LocalModel], store: ModelStore, directory: String, _ style: TerminalStyle) -> String {
+    static func models(_ models: [LocalModel], decision: [DecisionModel], store: ModelStore, directory: String, _ style: TerminalStyle) -> String {
         let rows: [(name: String, text: [String])] = models.map { model in
             let state = store.isInstalled(model.artifact) ? style.success("取得済み") : (store.downloadedBytes(model.artifact) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
             return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.artifact.bytes)) + "  " + state, style.dim(model.summary)])
         }
         var lines = [style.bold("文字起こしのモデル（追加でダウンロードして使う。Mac 標準は、ダウンロード不要）")] + style.table(rows, label: style.cyan).map { "  " + $0 }
+        let decisionRows: [(name: String, text: [String])] = decision.map { model in
+            let state = store.isInstalled(model) ? style.success("取得済み") : (store.downloadedBytes(model) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
+            return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.bytes)) + "  " + state, style.dim(model.summary)])
+        }
+        lines.append("")
+        lines.append(style.bold("話者の推定のモデル（System One 型。選ばない・取得していないときは、推定しない）"))
+        lines += style.table(decisionRows, label: style.cyan).map { "  " + $0 }
         lines.append("")
         lines.append(style.dim("取得：\(AppInfo.name) models download <ID>（Hugging Face から。続きから再開できる）  削除：models delete <ID>"))
-        lines.append(style.dim("使う：transcribe・replay に --model <ID>、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))
+        lines.append(style.dim("使う：transcribe・replay に --model <ID>（文字起こし）、replay に --judge <ID>（話者の推定）、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))
         return lines.joined(separator: "\n")
     }
 
-    static func modelDownloaded(_ model: LocalModel, _ path: String, _ style: TerminalStyle) -> String {
-        "\(style.success("✔")) \(style.bold(model.name)) を取得しました（SHA-256 で検証済み）\n  \(style.dim(path))"
+    static func modelDownloaded(name: String, path: String, _ style: TerminalStyle) -> String {
+        "\(style.success("✔")) \(style.bold(name)) を取得しました（SHA-256 で検証済み）\n  \(style.dim(path))"
     }
 
     static func megabytes(_ bytes: Int64) -> String {

@@ -120,33 +120,54 @@ public struct CLIRunner {
         out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
     }
 
-    /// ダウンロード式のモデルの、一覧・取得・削除（SPEC §3.12）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
+    /// ダウンロード式のモデル（文字起こし・話者の推定）の、一覧・取得・削除（SPEC §3.12・§3.13）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
     private func models(_ action: ModelsCommand) async throws {
         let store = modelStore
         switch action {
         case .list:
-            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
+            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, decision: DecisionModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
             for model in LocalModelCatalog.all {
-                out(Self.json(["id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+                out(Self.json(["kind": "transcription", "id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+            }
+            for model in DecisionModelCatalog.all {
+                out(Self.json(["kind": "decision", "id": model.id, "name": model.name, "bytes": model.bytes, "installed": store.isInstalled(model), "downloadedBytes": store.downloadedBytes(model)]))
             }
         case .download(let id):
-            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
-            let interactive = errIsTerminal
-            let report = ProgressLine(enabled: interactive, write: err)
+            let report = ProgressLine(enabled: errIsTerminal, write: err)
+            let name: String, path: String
             do {
-                // 音声区間の検出のモデル（小さい）も、一緒に取得する。
-                try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
-                try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
+                if let model = LocalModelCatalog.model(id: id) {
+                    name = model.name; path = store.fileURL(model.artifact).path
+                    // 音声区間の検出のモデル（小さい）も、一緒に取得する。
+                    try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
+                    try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
+                } else if let model = DecisionModelCatalog.model(id: id) {
+                    name = model.name; path = store.fileURL(model.weights).path
+                    var finished: Int64 = 0
+                    for artifact in model.artifacts {
+                        let base = finished
+                        try await modelDownload(artifact, store) { received, _ in report.update(name: model.name, received: base + received, total: model.bytes) }
+                        finished += artifact.bytes
+                    }
+                } else {
+                    throw CLIError.usage("知らないモデルです: \(id)")
+                }
             } catch let error as ModelDownloadError {
                 report.finish()
                 throw CLIError.transcription("ダウンロードできませんでした: \(Self.describe(error))（もう一度実行すると、続きから取得します）")
             }
             report.finish()
-            out(outIsTerminal ? CLIView.modelDownloaded(model, store.fileURL(model.artifact).path, outStyle) : Self.json(["ok": true, "id": model.id, "path": store.fileURL(model.artifact).path]))
+            out(outIsTerminal ? CLIView.modelDownloaded(name: name, path: path, outStyle) : Self.json(["ok": true, "id": id, "path": path]))
         case .delete(let id):
-            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
-            store.delete(model.artifact)
-            out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            if let model = LocalModelCatalog.model(id: id) {
+                store.delete(model.artifact)
+                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            } else if let model = DecisionModelCatalog.model(id: id) {
+                store.delete(model)
+                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            } else {
+                throw CLIError.usage("知らないモデルです: \(id)")
+            }
         }
     }
 
@@ -253,10 +274,15 @@ public struct CLIRunner {
             switch ActorFile.load(path: absolute) {
             case .failure(let error): throw CLIError.input(error.message)
             case .success(let list):
+                // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。
                 var guesser: SpeakerGuesser?
-                if options.speaker == .others, !list.others.isEmpty {
-                    if case .unavailable(let reason) = AppleSpeakerJudge.availability(locale: Locale(identifier: options.locale)) { throw CLIError.input("話者を推定できません: \(reason)") }
-                    guesser = SpeakerGuesser(list: list, judge: AppleSpeakerJudge())
+                if options.speaker == .others, !list.others.isEmpty, let id = options.judge, let model = DecisionModelCatalog.model(id: id) {
+                    guard modelStore.isInstalled(model) else { throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）") }
+                    do {
+                        let judge = try SystemOneJudge(model: model, store: modelStore)
+                        try judge.prepare()
+                        guesser = SpeakerGuesser(list: list, judge: judge)
+                    } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
                 }
                 actorSource = ActorSource(list: list, file: absolute)
                 labeler = SpeakerLabeler(list: list, guesser: guesser)

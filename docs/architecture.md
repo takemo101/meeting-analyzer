@@ -6,7 +6,7 @@ meeting-analyzer の Module の責務・状態の所有・時間と並行・失�
 
 ## Module と責務
 
-外部の Swift パッケージはなく、Foundation・AVFoundation・Speech・FoundationModels（話者の名前の推定）・ScreenCaptureKit・AppKit・SwiftUI・CryptoKit だけを使う（外部のコードは、ダウンロードしたモデルを動かす transcribe.cpp〔C++・ggml・MIT〕だけ。固定した commit を、`scripts/build-native.sh` が、`build/native` へ静的ライブラリとしてビルドし、`Package.swift` が、`-force_load` で取り込む）。コードは SwiftPM の 5 つのターゲットに分かれる。
+外部の Swift パッケージはなく、Foundation・AVFoundation・Speech・Metal・MetalPerformanceShadersGraph（判断モデルの実行）・ScreenCaptureKit・AppKit・SwiftUI・CryptoKit だけを使う（外部のコードは、ダウンロードしたモデルを動かす transcribe.cpp〔C++・ggml・MIT〕だけ。固定した commit を、`scripts/build-native.sh` が、`build/native` へ静的ライブラリとしてビルドし、`Package.swift` が、`-force_load` で取り込む）。コードは SwiftPM の 5 つのターゲットに分かれる。
 
 | ターゲット | 場所 | 役割 |
 |---|---|---|
@@ -16,7 +16,7 @@ meeting-analyzer の Module の責務・状態の所有・時間と並行・失�
 | `CaptureProbe`（実行ファイル） | `Sources/CaptureProbe/main.swift` | 取り込みの実験用（製品の CLI ではない）。マイク・システム音声・音声ファイルを実時間のライブ入力として認識し、遅延と音量を測る。権限は `--request` なしでは要求しない |
 | `MeetingAnalyzerKitTests` | `Tests/MeetingAnalyzerKitTests/` | Swift Testing の単体テスト（`scripts/test.sh`） |
 
-`MeetingAnalyzerKit` は、変わる理由ごとに 9 つのディレクトリへ分ける。**依存は上から下へだけ**向く。
+`MeetingAnalyzerKit` は、変わる理由ごとに 10 のディレクトリへ分ける。**依存は上から下へだけ**向く。
 
 ```mermaid
 flowchart TD
@@ -34,6 +34,9 @@ flowchart TD
     CLI --> Platform
     Capture --> Transcription
     Hub --> Core
+    Session --> Decision[Decision: 判断モデルの実行（MPSGraph）]
+    CLI --> Decision
+    Decision --> Core
     Platform --> Core
 ```
 
@@ -52,7 +55,7 @@ flowchart TD
 | | `Transcript` | セッション全体の記録。upsert で溜め、開始時刻順に並べ、Markdown にする（撮った画像は、時刻の順に、発話の間へ相対パスで入れる。終了が `nil` なら、会議の途中の書き足し）。純粋な規則 | 発話の辞書、画像の（秒・相対パス）の並び |
 | | `TranscriptEvent`、`CaptionUpdate`、`EventSink` | エージェントへ渡す出来事（`started`・`captions`・`ended`）の JSON の形（`Codable`）と、それを受け取る口（`EventSink.publish`。**失敗しない**）。実機はハブ、テストは記録するだけの偽物 | なし |
 | | `Actor`、`ActorList`、`ActorLabel` | アクター（SPEC §3.13）。`ActorList.parse` が、`ACTOR.md`（「## 名前」の節・`役割`・`呼ばれ方`・`話題`・`本人`）を、一度だけ検査して型にする（アクターなし・同名・本人の複数・多すぎる・長すぎる名前は断り、知らない項目・長い値は警告にする）。`ActorLabel` は、発話に付ける名前と、推定か（`guessed`）。純粋な規則 | なし（値型） |
-| | `SpeakerGuesser`、`SpeakerJudge`、`SpeakerPrompt` | 「相手」の発話から、話者を推定する規則（SPEC §3.13）。**規則はここ（コード）が持つ**：短い発言は付けない・名乗りはその人・名前が出た人は候補から外す（共通の語は外さない）・手がかりが無ければ付けない・候補が 1 人ならその人。モデルに任せるのは、閉じた 2 つの問い（`SpeakerJudge.hasCue`・`choose`）だけ。`SpeakerPrompt` は、問いの文面。判断モデルは、差し替えられる（テストは偽物） | なし |
+| | `SpeakerGuesser`、`SpeakerJudge`、`SpeakerJudgement`、`SpeakerGate`、`SpeakerPrompt`、`DecisionModel`、`DecisionModelCatalog` | 「相手」の発話から、話者を推定する規則（SPEC §3.13）。**規則はここ（コード）が持つ**：短い発言は付けない・名乗りはその人・名前が出た人は候補から外す（共通の語は外さない）・確信度（0.9 以上）と「内容を持たない」確率（0.5 未満）が足りなければ付けない。判断モデル（`SpeakerJudge`）は、候補ごとの確率と、「内容を持たない」確率を返すだけ（差し替えられる。テストは偽物）。`DecisionModel`・`DecisionModelCatalog` は、ダウンロードできる判断モデルの一覧（System One 型。固定する情報：リポジトリ・版・ファイル名・バイト数・SHA-256〔重みとトークナイザ〕と、Qwen3 の形）。純粋なデータ・規則 | なし |
 | `Transcription/` | `AppleSpeechTranscriber`、`TranscriptionUpdate`、`SpeechReadiness` | `SpeechTranscriber`（オンデバイス）で音声ファイルを解析し、更新（確定前を含む）を `AsyncThrowingStream` で返す。言語が使えるかの確認。モデルが無ければ OS の仕組みで取得する。失敗は `TranscriptionError` | なし（呼ぶたびに、解析器を作る） |
 | `Hub/` | `HubServer` | エージェントへ渡す窓口。アプリの中で、Unix ドメインソケット（ディレクトリ 0700・ソケット 0600・同じユーザーだけ。`getpeereid`）で待ち、出来事を、つながっている受け手すべてへ流す。直近の出来事（最大 2000 件）を、メモリ上だけに保持し、あとから接続した受け手へ先に渡す（`hello` → これまで → `sync` → 新しいもの）。新しいセッションの開始で、前のものを捨てる。受け手ごとの書き込みは、専用の待ち行列で行い、遅い・切れた受け手が、会議の処理を止めない。書き込みの失敗（EPIPE）で落ちないよう、SIGPIPE を無視する。**受け手が切れた直後の書き込みは、`SO_NOSIGPIPE` が設定できず、SIGPIPE でプロセスが終了する**（単体テストで再現し、直した） | 出来事のログ、受け手の一覧 |
 | | `HubClient`、`HubWire`、`HubMessage` | 受け手側。窓口へつなぎ、1 行ずつ読んで流す。つながらない・切れたときは、間隔をあけて、つなぎ直す。1 行 1 件の JSON の形 | 接続（専用スレッド） |
@@ -61,15 +64,19 @@ flowchart TD
 | | `MCPServer`、`MCPRunner` | エージェント向けの MCP サーバー（標準入出力の JSON-RPC）。窓口の出来事を保持し（最大 2000 件）、ツール `get_events`（カーソルより新しいもの）で返す。`--channel` では、接続後の新しい出来事を `notifications/claude/channel` で押し込む。ハブの識別子が変わったら、持っているものを捨てる。同じハブへのつなぎ直しでは、重複を入れない | 出来事のバッファ、カーソル、接続の状態 |
 | `Platform/` | `RuntimePaths`、`SessionStore`、`ScreenshotStore`、`RecordRetention`、`PresetStore`、`CommandLineTool`、`CapturePreferences` | 置き場所（環境変数が優先。データの置き場所・窓口のソケット）、記録の書き込み（ディレクトリ 0700・ファイル 0600）、画面の JPEG の保存（記録のフォルダの `screens/`。0700／0600・枚数の上限なし）、記録の保持（`RecordRetention.deleteExpired`：期限を過ぎた記録を、文字起こしも画像も、フォルダごと消す。実行中は除く。以前の版の `screens/<id>/` も。日数は、利用者の設定 `RecordRetentionSetting`＝アプリの設定、既定 7 日・「消さない」あり。起動時・会議の開始と終了・設定の変更・6 時間ごと）。失敗は `Result` | なし |
 | | `CommandLineTool` | コマンド `meeting-analyzer`（`/usr/local/bin` からアプリの実行ファイルへのシンボリックリンク）の状態（`unavailable`・`notInstalled`・`installed`・`stale`・`other`）と、入れる・外す。書けなければ、管理者の実行（`do shell script … with administrator privileges`）へ回す。**このアプリのものでない同名のものは、触らない**。リンクの場所・リンク先・管理者の実行は、差し替えられる（試験用） | なし（ファイルシステムが持つ） |
-| | `CapturePreferences` | 取り込みの設定（マイク・システム音声・画面の取り込み・まとめ方・プリセット・使う文字起こし・ACTOR.md のパスと推定の入り切り）を、アプリの設定（`UserDefaults`）へ保存・読み込みする。**読むときに一度だけ検査して型にする**（壊れた値は、その項目だけ既定へ）。`MeetingController` が、選択のたびに保存し、起動時に読む | アプリの設定 |
+| | `CapturePreferences` | 取り込みの設定（マイク・システム音声・画面の取り込み・まとめ方・プリセット・使う文字起こし・ACTOR.md のパスと、話者の推定に使う判断モデルの ID）を、アプリの設定（`UserDefaults`）へ保存・読み込みする。**読むときに一度だけ検査して型にする**（壊れた値は、その項目だけ既定へ）。`MeetingController` が、選択のたびに保存し、起動時に読む | アプリの設定 |
 | | `ActorFile` | `ACTOR.md` の読み取り：上限（64 KB）・UTF-8 を確かめ、`ActorList.parse` へ渡す。失敗は理由つきの `ActorFileError`（`actors check`・設定ウィンドウが、同じ文を見せる）。大きなファイルは、上限 + 1 バイトだけ読んで断る | なし |
-| | `AppleSpeakerJudge` | `SpeakerJudge` の実機の実装：Apple のオンデバイスの言語モデル（`FoundationModels`）。答えは、ガイド付き生成（`DynamicGenerationSchema` の `anyOf`）で、選択肢の文字列に限る。1 問ごとに新しいセッション。使えるか（`availability`：非対応・Apple Intelligence オフ・準備中・日本語に非対応）を、理由つきで返す | なし |
+| | `ModelStore`（判断モデルの拡張） | `DecisionModel`（重み＋トークナイザの 2 ファイル）の、取得済みの判定（**両方がそろって、取得済み**）・取得済みのバイト数・途中のファイルの破棄・削除 | なし（ファイルシステムが持つ） |
 | | `ModelStore`、`ModelDownloader` | ダウンロードしたモデルの保管（`<データの置き場所>/models/`・0700／0600。ファイル名に SHA-256 の先頭。検証済みの印〔大きさ・更新時刻〕で、取得済みを見る。印が合わなければ、SHA-256 を確かめ、違えば消す）と、取得（固定した版を、Hugging Face から。`URLSession` のデータタスクで、`.part` へ書き、Range で続きから再開。完了で、大きさ → SHA-256 を確かめて、本来の名前・0600へ。同時に 1 つ。取り消しは、取得済みの分を残す。`discardPartial` は、途中のファイルだけを捨てる）。取得先・設定は、試験で差し替えられる | `.part` と印（ファイルシステムが持つ）。取得中のタスク |
 | | `PresetStore` | プリセットの置き場所と読み込み：同梱（`Contents/Resources/presets/`）と、自分のもの（`<データの置き場所>/presets/`）。同じ ID は自分のものが優先。`_`・`.` で始まるファイルと、読めないファイル（理由を持つ）は除く。自分のフォルダ（0700）とテンプレート（0600）を用意する | 同梱・自分のフォルダのファイル（読み取りのみ。テンプレートだけ書く） |
 | `Capture/` | `ScreenSnapshotter`、`ImageTools` | 画面の 1 枚撮り（ScreenCaptureKit。画面全体／アプリのいちばん大きいウィンドウ）と、画像の加工（48×27 の署名・1280 への縮小・JPEG）。画像はメモリ上だけで扱い、JPEG にするのは、渡す分だけ | なし |
 | `Capture/` | `MicrophoneCapture`、`SystemAudioCapture`、`SystemAudioTarget`、`CaptureApp`、`CaptureError` | マイク（`AVAudioEngine`。ボイス処理＝エコー除去を有効にし、他のアプリの音の抑え込みを最小にする）と、システム音声（ScreenCaptureKit。全体、または選んだアプリ。自分の音は除く）を、`AsyncStream<AVAudioPCMBuffer>` で流す。音声はメモリ上だけ。権限の確認（`MicrophoneCapture.isAuthorized`、`ScreenRecordingPermission.isGranted`）は要求をしない。`start` は、権限が未確認なら OS の確認を出すので、利用者の開始の操作の中だけで呼ぶ | `AVAudioEngine`／`SCStream`（取り込み中だけ） |
 | `Transcription/`（ダウンロード式） | `LocalTranscriber`、`NativeRecognizer`・`NativeVoiceActivity`（`NativeSpeech`） | ダウンロードしたモデル（SPEC §3.12）での文字起こし。`NativeSpeech` は、C の API（transcribe.cpp）の薄い包み（認識は、1 つのモデルで同時に 1 つなので、ロックで直列。VAD は、流れごと）。`LocalTranscriber` は、音声（ライブのバッファ・ファイル）を 16 kHz・モノラルへ変換し、VAD の確率を `UtteranceSegmenter` へ渡し、発話の範囲を、その発話の音声（直近 45 秒だけ保持）で認識して、確定した更新（`isFinal`）として返す。モデルは、マイクと相手の流れで共有し、会議が終わると解放する。失敗は `TranscriptionError`（取得されていなければ `modelUnavailable`） | モデル・VAD（会議の間）、直近の音声 |
 | `Transcription/`（ライブ） | `updates(forLive:)`、`AudioFormatConverter` | バッファの流れを `SpeechAnalyzer` の入力へ渡す。形式の変換（多チャンネルは先頭のみ）を含む。実時間の入力では `.fastResults` が要る（[検証記録](verification.md#実施記録)）。更新の `start`／`end` は、その流れの最初のバッファを 0 とした秒数 | なし |
+| `Decision/` | `SystemOneJudge` | `SpeakerJudge` の実機の実装：ダウンロードした System One 型の判断モデルで、「誰が話したか」（選択肢の確率）と「内容を持たない発言か」（真偽）に答える。会議の開始のときに読み込み（`prepare` で、GPU のグラフのコンパイルを済ませる）、会議が終わると手放して解放する。1 つのモデルは、ロックで直列に使う | 読み込んだモデル（会議の間） |
+| | `QwenDecision` | Qwen3 の decoder ＋ 1 次元の判断の頭（Tiny-Jev）を、MPSGraph（Metal）で動かす。重み（bf16）を safetensors から読み、28 層の注意（GQA・RoPE・q/k の正規化）・MLP を、グラフとして組む。系列長は固定（512。右側を詰める）。正規化・softmax・判断の頭は fp32。PyTorch（bf16）との差は、確率で最大 0.022（検証記録）。外部のコードを使わない | グラフ（重みを定数で持つ） |
+| | `OptionMarkerPrompt` | 「状態・問い・選択肢」を、判断モデルが読むトークン列にする（選択肢ごとに印〔`<opt>`〕を置き、その直前の位置を採点する）。長い状態は、先頭の 7 割と末尾を残して切り詰める。純粋な規則（トークナイザを差し替えられるので、試験できる） | なし |
+| | `BPETokenizer`、`Safetensors` | Qwen2 のバイトレベル BPE（`tokenizer.json`。NFC → 追加トークン → 正規表現 → バイト → BPE。Hugging Face と同じ ID）と、safetensors の読み取り（メモリへの対応づけ。ヘッダが、ファイルに収まるかを、読むときに一度だけ検査）。失敗は `DecisionModelError`（`message` が、利用者に見せる文） | なし |
 | `Session/` | `LiveSession`、`LiveInputs`、`LiveInputStream`、`LiveSessionNotice` | ライブのセッション 1 つ。`SessionLifecycle`・取り込みの流れ・`SessionPipeline`・時間を組み立てる。開始（取り込み）・一時停止（取り込みを止め、残りを確定して出し切る）・再開（時刻が続く）・終了（取り込みを止める → 出し切り → 記録 → 終了の出来事）。止めない失敗は `LiveSessionNotice` で知らせる。`LiveInputs` が、発言者ごとの「取り込み＋認識」の差し替え口（実機は `DeviceInputs`、テストは偽の流れ）。**確定した「相手」の発話は、`SpeakerLabeler` の推定を待ってから、パイプラインへ入れる**（同じ流れの次の更新は、その間、順に待つ。失敗したら、1 回知らせて、以後は付けない） | `SessionLifecycle`、`SessionPipeline`、発言者ごとの実行中の流れ、tick のタスク、推定が失敗したか |
 | | `SpeakerLabeler`、`ActorSource` | 発話にアクターを付ける部品（本人は ACTOR.md の本人へ対応づけ、相手は `SpeakerGuesser`）と、会議で使う ACTOR.md（一覧とパス）。`LiveSession` と、`replay --actors` が使う | なし |
 | `Session/` | `SessionPipeline` | 「更新 → 発話（番号・版） → バッチ → 出来事」と、終了の手順（出し切り → 記録 → `ended`）。入力がファイルの再生でもライブでも、同じ流れを通す。**同期**（`await` なし）。時計は、更新が持つ秒数 | 発言者ごとの番号、`Batcher`、`Transcript`、出したバッチ数 |
@@ -81,9 +88,9 @@ flowchart TD
 | | `CLIRunner` | `Command` の実行（`mcp` は `MCPRunner` へ）。標準出力・標準エラー・文字起こしの部品を差し替えられる（検証とテスト用）。**失敗の見せ方（端末なら読める形、パイプなら JSON。終了コード）を決める唯一の場所** | なし |
 | | `TerminalStyle`、`CLIView` | 端末への見せ方。色は、端末・`NO_COLOR`・`TERM` で決め（パイプには付けない）、表の桁は、全角を 2 桁として揃える。ヘルプ・失敗（次にすること）・起動前の状態表・`doctor`・`transcribe`・`replay` の、人が読む形を作る（機械が読む JSON は `CLIRunner`） | なし |
 | `App/` | `Launch`（`MeetingAnalyzerApp`、`AppDelegate`） | 起動の入口。引数なしなら、アクセサリ（Dock に出ない）として起動し、メニューバーの項目を置く。CLI なら、実行して終了コードを返す。SIGTERM・メニューの終了は、同じ道（実行中の会議を `appQuit` で終えてから終了）を通す | `StatusMenu`、`MeetingController` |
-| | `MeetingController` | メニュー・設定ウィンドウの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込みの選択・使う文字起こし・モデルのダウンロードの進み具合と失敗）だけを持つ。選択は `CapturePreferences` で覚える。モデルのダウンロード・削除・選択の規則（取得済みだけ選べる・使っているモデルを消したら Mac 標準へ）を持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ、進行中のダウンロード |
+| | `MeetingController` | メニュー・設定ウィンドウの操作を `LiveSession` へ結ぶ。**表示のための状態**（操作中か・知らせ・取り込みの選択・使う文字起こし・使う判断モデル・モデルのダウンロードの進み具合と失敗）だけを持つ。選択は `CapturePreferences` で覚える。モデルのダウンロード・削除・選択の規則（取得済みだけ選べる・使っているモデルを消したら Mac 標準／「推定しない」へ）を持つ。会議の状態の所有者は `LiveSession` | `LiveSession`、選んだアプリ、知らせ、進行中のダウンロード |
 | | `StatusMenu`、`SettingsWindow`（`SettingsModel`・`SettingsView`）、`FailureText` | メニュー（開くたびに状態から作り直す。会議の操作・設定…・コマンド・フォルダ）、設定ウィンドウ（SwiftUI の Form を `NSWindow` に載せる。文字起こしのモデルの選択・ダウンロード〔進み具合・取り消し・続きから〕・削除、取り込みの設定・まとめ方・プリセット・保持期間を、メニューを開き直さずに選ぶ。`@State` のマクロは、Command Line Tools だけの環境で使えないので、状態は `ObservableObject` に持つ。`MeetingController.observe` で更新し、起動中のアプリの増減でアプリの候補も更新する。会議中は取り込みの設定を無効にする）、失敗の文言。**利用者への見せ方を決める境界**。開始は、確認のダイアログなしで、すぐ始まる | メニューバーの項目、ウィンドウ（1 つ） |
-| | アクターの設定（`MeetingController`・`SettingsView`） | ACTOR.md の選択（ファイルを選ぶパネル）・外す・推定の入り切りを、`CapturePreferences` で覚える。**会議の開始のたびに** `ActorFile.load` で読み直し、`SpeakerLabeler`（推定が使えるときだけ `SpeakerGuesser`＋`AppleSpeakerJudge`）を `LiveSession` へ渡す。読めない・推定を使えないときは、付けずに会議を始め、理由をメニューの知らせに出す（会議を止めない）。設定ウィンドウは、選んだファイルの状態（人数・警告・エラー）と、言語モデルを使えるかを、表示のたびに読んで示す | 選んだパス・推定の入り切り |
+| | アクターの設定（`MeetingController`・`SettingsView`） | ACTOR.md の選択（ファイルを選ぶパネル）・外す・判断モデルの選択とダウンロードを、`CapturePreferences` で覚える。**会議の開始のたびに** `ActorFile.load` で読み直し、`SpeakerLabeler` を `LiveSession` へ渡す。**判断モデルを選んでいる・取得している・相手の音声を取り込む・相手の側の候補がいるときだけ**、`SystemOneJudge` を（画面を止めないよう、別のスレッドで）読み込み、`SpeakerGuesser` を組む。それ以外は、推定しない（「相手」のまま）。読めない・読み込めないときは、付けずに会議を始め、理由をメニューの知らせに出す（会議を止めない）。設定ウィンドウは、選んだファイルの状態（人数・警告・エラー）を、表示のたびに読んで示し、文字起こしのモデルと判断モデルを、同じ行（`ModelRow`）で扱う | 選んだパス・選んだ判断モデル |
 
 ### 取り込みと会議の接続
 

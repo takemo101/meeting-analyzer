@@ -57,87 +57,90 @@ struct ActorListTests {
     }
 }
 
-/// 決まった答えを返し、呼ばれ方を記録する偽の判断モデル。
+/// 決まった確率を返し、呼ばれ方を記録する偽の判断モデル。
 private final class FakeJudge: SpeakerJudge, @unchecked Sendable {
     private let lock = NSLock()
-    var cue = true
-    /// `choose` が選ぶ名前（候補にいなければ、先頭）。
-    var pick: String?
-    private(set) var cueCalls = 0
-    private(set) var candidateNames: [[String]] = []
+    /// 名前 → 確率（候補にいない名前は、無視。候補で、指定が無い人は 0）。候補が 1 人のときは、1。
+    var probabilities: [String: Double] = [:]
+    var filler = 0.0
+    /// 候補の数と違う長さの答えを返す（壊れた判断モデル）。
+    var malformed = false
+    private(set) var calls: [[String]] = []
 
-    func hasCue(in utterance: String, among actors: [Actor]) async throws -> Bool {
-        lock.withLock { cueCalls += 1 }
-        return cue
-    }
-
-    func choose(for utterance: String, among candidates: [Actor]) async throws -> Int {
-        lock.withLock { candidateNames.append(candidates.map(\.name)) }
-        return candidates.firstIndex { $0.name == pick } ?? 0
+    func judge(utterance: String, candidates: [Actor]) async throws -> SpeakerJudgement {
+        lock.withLock { calls.append(candidates.map(\.name)) }
+        if malformed { return SpeakerJudgement(probabilities: [1], filler: 0) }
+        let p = candidates.count == 1 ? [1.0] : candidates.map { probabilities[$0.name] ?? 0 }
+        return SpeakerJudgement(probabilities: p, filler: filler)
     }
 }
 
 @Suite("SpeakerGuesser：規則は、モデルでなく、コードが決める")
 struct SpeakerGuesserTests {
-    private func guesser(_ judge: FakeJudge, _ text: String = sample) throws -> SpeakerGuesser {
-        SpeakerGuesser(list: try list(text), judge: judge)
+    private func guesser(_ judge: FakeJudge, _ text: String = sample, gate: SpeakerGate = SpeakerGate()) throws -> SpeakerGuesser {
+        SpeakerGuesser(list: try list(text), judge: judge, gate: gate)
     }
 
-    @Test("手がかりがある発言は、モデルが選んだ人。候補に、本人（マイクの人）は入らない")
-    func choosesAmongOthers() async throws {
+    @Test("確信度が足りたときだけ付ける。候補に、本人（マイクの人）は入らない")
+    func confidenceGate() async throws {
         let judge = FakeJudge()
-        judge.pick = "田中 美咲"
+        judge.probabilities = ["田中 美咲": 0.95, "佐藤 花子": 0.05]
         let actor = try await guesser(judge).guess("月末の締め処理に間に合うかが関心事です")
         #expect(actor?.name == "田中 美咲")
-        #expect(judge.candidateNames == [["佐藤 花子", "田中 美咲"]])
+        #expect(judge.calls == [["佐藤 花子", "田中 美咲"]])
+        judge.probabilities = ["田中 美咲": 0.6, "佐藤 花子": 0.4]
+        #expect(try await guesser(judge).guess("月末の締め処理に間に合うかが関心事です") == nil, "確信度が、足りない")
+        #expect(try await guesser(judge, gate: SpeakerGate(minimumConfidence: 0.55)).guess("月末の締め処理に間に合うかが関心事です")?.name == "田中 美咲", "しきい値は、設定できる")
     }
 
-    @Test("名前を呼ばれた人・言及された人は、話者の候補から外す（呼びかけを、話者と取り違えない）")
+    @Test("内容を持たない発言（相づち・進行）は、付けない")
+    func fillerIsNotLabeled() async throws {
+        let judge = FakeJudge()
+        judge.probabilities = ["田中 美咲": 0.97, "佐藤 花子": 0.03]
+        judge.filler = 0.8
+        #expect(try await guesser(judge).guess("では、次の議題に進みましょう") == nil)
+        judge.filler = 0.49
+        #expect(try await guesser(judge).guess("では、次の議題に進みましょう")?.name == "田中 美咲")
+    }
+
+    @Test("名前を呼ばれた人・言及された人は、話者の候補から外す（呼びかけを、話者と取り違えない）。1 人になっても、判断モデルの確認は通す")
     func excludesMentioned() async throws {
         let judge = FakeJudge()
-        judge.pick = "佐藤 花子"
         let actor = try await guesser(judge).guess("田中さんが言っていた件は、APIで対応できます")
         #expect(actor?.name == "佐藤 花子")
-        #expect(judge.cueCalls == 1)
-        // 候補が 1 人になれば、選ぶ問いは要らない。
-        #expect(judge.candidateNames.isEmpty)
+        #expect(judge.calls == [["佐藤 花子"]])
+        judge.filler = 0.9
+        #expect(try await guesser(judge).guess("田中さんが言っていた件は、APIで対応できます") == nil, "残りが 1 人でも、内容を持たない発言には、付けない")
     }
 
     @Test("姓だけの呼びかけ・敬称つきの呼ばれ方でも外す。2 人に共通の語では、外さない")
     func mentionVariants() async throws {
         let judge = FakeJudge()
         _ = try await guesser(judge).guess("佐藤様、来週のスケジュールを確認します")
-        #expect(judge.candidateNames == [], "佐藤が外れて、田中だけが残る")
+        #expect(judge.calls == [["田中 美咲"]], "佐藤が外れて、田中だけが残る")
         let twins = "## 山田 一郎\n- 呼ばれ方: 一郎さん\n## 山田 二郎\n- 呼ばれ方: 二郎さん\n## 佐藤 花子\n"
         let second = FakeJudge()
         _ = try await guesser(second, twins).guess("山田さん、確認をお願いします")
-        #expect(second.candidateNames == [["山田 一郎", "山田 二郎", "佐藤 花子"]], "「山田」は 2 人の共通の語なので、誰のことか決められない")
+        #expect(second.calls == [["山田 一郎", "山田 二郎", "佐藤 花子"]], "「山田」は 2 人の共通の語なので、誰のことか決められない")
     }
 
     @Test("名乗り（「佐藤です」）は、その人。モデルを使わない。ただし、別の人の名前も呼んでいれば、名乗りだけでは決めない")
     func selfIntroduction() async throws {
         let judge = FakeJudge()
         let actor = try await guesser(judge).guess("佐藤です。よろしくお願いします")
-        #expect(actor?.name == "佐藤 花子" && judge.cueCalls == 0 && judge.candidateNames.isEmpty)
+        #expect(actor?.name == "佐藤 花子" && judge.calls.isEmpty)
         let named = try await guesser(judge).guess("佐藤です。田中さんに確認をお願いしました")
         #expect(named == nil || named?.name != "田中 美咲")
     }
 
-    @Test("手がかりが無い発言（相づち・進行）は、付けない。短すぎる発言は、モデルへ問わない")
-    func abstains() async throws {
+    @Test("短すぎる発言は、モデルへ問わない。相手の側の人がいない一覧（本人だけ）では、何も付けない。壊れた答え（候補の数と違う）は、付けない")
+    func guards() async throws {
         let judge = FakeJudge()
-        judge.cue = false
-        #expect(try await guesser(judge).guess("では、次の議題に進みましょう") == nil)
-        #expect(judge.cueCalls == 1 && judge.candidateNames.isEmpty)
         #expect(try await guesser(judge).guess("そうですね") == nil)
-        #expect(judge.cueCalls == 1, "短い発言は、問わない")
-    }
-
-    @Test("相手の側の人がいない一覧（本人だけ）では、何も付けない")
-    func nobodyElse() async throws {
-        let judge = FakeJudge()
         #expect(try await guesser(judge, "## 山田\n- 本人: はい\n").guess("優先順位を決めましょう") == nil)
-        #expect(judge.cueCalls == 0)
+        #expect(judge.calls.isEmpty)
+        judge.malformed = true
+        #expect(try await guesser(judge).guess("月末の締め処理に間に合うかが関心事です") == nil)
     }
 }
 
@@ -245,18 +248,20 @@ struct ActorFileTests {
         #expect(ActorFile.load(path: try write(Data("説明だけ".utf8))) == .failure(.invalid(.empty)))
     }
 
-    @Test("設定の保存：ACTOR.md のパスと推定の入り切りを覚える。絶対パスでない値は、無しに戻す")
+    @Test("設定の保存：ACTOR.md のパスと、判断モデルの ID を覚える。絶対パスでない値・知らないモデルは、無しに戻す")
     func preferences() throws {
         let defaults = try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))
         var saved = CapturePreferences()
         saved.actorFile = "/work/ACTOR.md"
-        saved.guessSpeakers = false
+        saved.decisionModel = "tiny-jev-0.6b"
         saved.save(defaults)
         let loaded = CapturePreferences.load(defaults)
-        #expect(loaded.actorFile == "/work/ACTOR.md" && loaded.guessSpeakers == false)
+        #expect(loaded.actorFile == "/work/ACTOR.md" && loaded.decisionModel == "tiny-jev-0.6b")
         defaults.set("relative/ACTOR.md", forKey: CapturePreferences.keys.actorFile)
         #expect(CapturePreferences.load(defaults).actorFile == nil)
-        #expect(CapturePreferences.load(try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))).guessSpeakers == true, "既定は、推定する")
+        defaults.set("no-such-model", forKey: CapturePreferences.keys.decisionModel)
+        #expect(CapturePreferences.load(defaults).decisionModel == nil, "知らないモデルの ID は、推定しない")
+        #expect(CapturePreferences.load(try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))).decisionModel == nil, "既定は、推定しない")
     }
 }
 
