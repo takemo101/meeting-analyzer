@@ -80,6 +80,42 @@ public struct SpeakerGuesser: Sendable {
         return candidates[top]
     }
 
+    /// 分割した 1 区間：本文と、付けた名前（付けられなければ `nil`）。
+    public struct Segment: Equatable, Sendable {
+        public let text: String
+        public let actor: Actor?
+
+        public init(text: String, actor: Actor?) {
+            self.text = text
+            self.actor = actor
+        }
+    }
+
+    /// 1 つの発話（無音で区切られた単位）を、**話者ごとの区間に分ける**（SPEC §3.13）。
+    /// 文（`SentenceSplitter`）ごとに、`guess` と同じ規則・確信度で、話者を判断し、**確信をもって判断された、隣り合う文の話者が、別の人のところで区切る**。
+    /// 判断されなかった文（相づち・短い文・確信度が足りない文）は、前の区間に付ける（先頭なら、最初に判断された区間に付ける）。
+    /// 区切りが無く、どの文も判断されなかったときは、本文全体で、もう一度判断する。文が 1 つなら、これまでどおり、その本文を判断する。
+    /// 区間の本文をつなぐと、元の本文に戻る（文の間の空白は、区切りで落ちる）。
+    public func segments(_ text: String) async throws -> [Segment] {
+        let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentences = SentenceSplitter.split(whole)
+        guard sentences.count > 1 else { return [Segment(text: whole, actor: try await guess(whole))] }
+        var groups: [(sentences: [String], actor: Actor?)] = []
+        for sentence in sentences {
+            let found = try await guess(sentence)
+            guard var last = groups.popLast() else { groups.append(([sentence], found)); continue }
+            if let found, last.actor == nil {
+                last.actor = found; last.sentences.append(sentence); groups.append(last)
+            } else if let found, found != last.actor {
+                groups.append(last); groups.append(([sentence], found))
+            } else {
+                last.sentences.append(sentence); groups.append(last)
+            }
+        }
+        if groups.count == 1, groups[0].actor == nil { return [Segment(text: whole, actor: try await guess(whole))] }
+        return groups.map { Segment(text: $0.sentences.joined(), actor: $0.actor) }
+    }
+
     private static let introductions = ["です", "と申します", "といいます", "と言います", "でございます"]
 
     /// 発言に名前が出た人（`others` の位置）。`introduced`：名乗り（「山田です」）だけで出てきた人。`mentioned`：呼びかけ・言及で出た人（名乗りだけの人は含まない）。

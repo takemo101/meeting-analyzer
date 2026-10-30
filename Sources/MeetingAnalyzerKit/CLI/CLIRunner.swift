@@ -300,11 +300,11 @@ public struct CLIRunner {
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
-                var actor: ActorLabel?
-                if let labeler, options.speaker == .you || update.isFinal {
-                    do { actor = try await labeler.label(options.speaker, update.text) } catch { throw CLIError.input("話者の推定に失敗しました") }
+                var parts: [(update: TranscriptionUpdate, actor: ActorLabel?)] = [(update, nil)]
+                if let labeler {
+                    do { parts = try await labeler.split(update, speaker: options.speaker) } catch { throw CLIError.input("話者の推定に失敗しました") }
                 }
-                pipeline.ingest(update, speaker: options.speaker, actor: actor)
+                for part in parts { pipeline.ingest(part.update, speaker: options.speaker, actor: part.actor) }
                 lastEnd = max(lastEnd, update.end)
             }
         } catch let error as TranscriptionError { throw error.cliError }

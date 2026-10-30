@@ -201,8 +201,7 @@ public actor LiveSession {
     private func consume(_ stream: LiveInputStream, speaker: Speaker, origin: TimeInterval) async {
         do {
             for try await update in stream.updates {
-                let actor = await label(update, speaker: speaker)
-                ingest(update, speaker: speaker, origin: origin, actor: actor)
+                for part in await labeled(update, speaker: speaker) { ingest(part.update, speaker: speaker, origin: origin, actor: part.actor) }
             }
             if !stopping { notify(.captureStopped(speaker)) }
         } catch {
@@ -210,18 +209,17 @@ public actor LiveSession {
         }
     }
 
-    /// 発話に付けるアクター。「相手」は、確定した発話だけを推定する（暫定の文は、付けない）。推定の待ちの間、同じ流れの次の更新は、順に待つ。
-    /// 失敗したら、1 回だけ知らせ、以後は付けない（会議は続ける）。
-    private func label(_ update: TranscriptionUpdate, speaker: Speaker) async -> ActorLabel? {
-        guard let labeler, !labelingFailed else { return nil }
-        if speaker == .others && !update.isFinal { return nil }
+    /// 更新を、話者ごとの区間に分け、アクターを付ける（SPEC §3.13）。「相手」は、確定した更新だけ（暫定の文は、分けず、名前も付けない）。推定の待ちの間、同じ流れの次の更新は、順に待つ。
+    /// 区間は、別の発話（別の `id`）になり、元の時刻を文字数で按分した時刻を持つ。失敗したら、1 回だけ知らせ、以後は分けず・付けない（会議は続ける。この更新は、そのまま流す）。
+    private func labeled(_ update: TranscriptionUpdate, speaker: Speaker) async -> [(update: TranscriptionUpdate, actor: ActorLabel?)] {
+        guard let labeler, !labelingFailed else { return [(update, nil)] }
         do {
-            return try await labeler.label(speaker, update.text)
+            return try await labeler.split(update, speaker: speaker)
         } catch {
-            if Task.isCancelled || error is CancellationError { return nil }
+            if Task.isCancelled || error is CancellationError { return [(update, nil)] }
             labelingFailed = true
             notify(.speakerGuessFailed)
-            return nil
+            return [(update, nil)]
         }
     }
 

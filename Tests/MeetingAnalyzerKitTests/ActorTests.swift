@@ -144,6 +144,78 @@ struct SpeakerGuesserTests {
     }
 }
 
+/// 発言に含まれる言葉で、話者を決める偽の判断モデル（言葉が無ければ、確率は、均等＝確信度が足りない）。
+private struct KeywordJudge: SpeakerJudge {
+    let keywords: [String: [String]] = ["佐藤 花子": ["マイグレーション", "API", "データベース"], "田中 美咲": ["経理", "月末", "請求書"]]
+
+    func judge(utterance: String, candidates: [Actor]) async throws -> SpeakerJudgement {
+        let hit = candidates.map { c in keywords[c.name]?.contains { utterance.contains($0) } == true }
+        guard hit.contains(true) else { return SpeakerJudgement(probabilities: Array(repeating: 1 / Double(candidates.count), count: candidates.count), filler: 0) }
+        let others = Double(candidates.count - hit.filter { $0 }.count)
+        let p = hit.map { $0 ? 0.97 / Double(hit.filter { $0 }.count) : 0.03 / max(1, others) }
+        return SpeakerJudgement(probabilities: p, filler: 0)
+    }
+}
+
+@Suite("文の分割と、話者ごとの区間への分割（SPEC §3.13）")
+struct SpeakerSegmentTests {
+    @Test("文は、「。」「！」「？」「…」と改行で切る。終わりの記号・閉じ括弧は、その文に含める。記号が無ければ、1 文")
+    func sentenceSplitting() {
+        #expect(SentenceSplitter.split("来週です。確認します！本当ですか？はい") == ["来週です。", "確認します！", "本当ですか？", "はい"])
+        #expect(SentenceSplitter.split("「できます。」と言いました。次です") == ["「できます。」", "と言いました。", "次です"])
+        #expect(SentenceSplitter.split("えっ？！そうなんですか…本当に") == ["えっ？！", "そうなんですか…", "本当に"])
+        #expect(SentenceSplitter.split("1 行目\n2 行目\n\n  ") == ["1 行目", "2 行目"])
+        #expect(SentenceSplitter.split("記号の無い本文です") == ["記号の無い本文です"])
+        #expect(SentenceSplitter.split("   ") == [])
+        let text = "月末の締め処理です。マイグレーションをします。"
+        #expect(SentenceSplitter.split(text).joined() == text, "つなぐと、元の本文")
+    }
+
+    private func guesser() throws -> SpeakerGuesser { SpeakerGuesser(list: try list(), judge: KeywordJudge()) }
+
+    @Test("確信をもって判断された、隣り合う文の話者が別の人のところで、区切る。同じ人の文は、まとまる")
+    func splitsWhereTheSpeakerChanges() async throws {
+        let two = try await guesser().segments("経理としては、月末の締め処理が気になります。マイグレーションに三十分ほどかかります。")
+        #expect(two.map(\.actor?.name) == ["田中 美咲", "佐藤 花子"])
+        #expect(two.map(\.text).joined() == "経理としては、月末の締め処理が気になります。マイグレーションに三十分ほどかかります。")
+        let same = try await guesser().segments("経理としては、月末の締め処理が気になります。請求書の確認も済みました。")
+        #expect(same.count == 1 && same[0].actor?.name == "田中 美咲")
+    }
+
+    @Test("判断されなかった文（相づち・短い文）は、前の区間に付く。先頭なら、最初に判断された区間に付く")
+    func unlabeledSentencesAttach() async throws {
+        let trailing = try await guesser().segments("経理としては、月末の締め処理が気になります。そうですね。")
+        #expect(trailing.count == 1 && trailing[0].actor?.name == "田中 美咲" && trailing[0].text.hasSuffix("そうですね。"))
+        let leading = try await guesser().segments("ええと。マイグレーションに三十分ほどかかります。経理としては、月末の締め処理が気になります。")
+        #expect(leading.map(\.actor?.name) == ["佐藤 花子", "田中 美咲"] && leading[0].text.hasPrefix("ええと。"))
+    }
+
+    @Test("どの文も判断されなければ、本文全体で、もう一度判断する。文が 1 つなら、そのまま判断する")
+    func fallbacks() async throws {
+        let none = try await guesser().segments("そうですね。わかりました。")
+        #expect(none.count == 1 && none[0].actor == nil && none[0].text == "そうですね。わかりました。")
+        let single = try await guesser().segments("マイグレーションに三十分ほどかかります。")
+        #expect(single.count == 1 && single[0].actor?.name == "佐藤 花子")
+    }
+
+    @Test("更新を区間ごとに分けるとき、元の時刻（開始〜終了）を、文字数で按分して、切れ目なくつなぐ。1 区間のもの・暫定の更新・本人は、分けない")
+    func timeAllocation() async throws {
+        let labeler = SpeakerLabeler(list: try list(), guesser: try guesser())
+        let update = TranscriptionUpdate(text: "経理の月末の件です。マイグレーションの件です。", isFinal: true, start: 10, end: 20)
+        let parts = try await labeler.split(update, speaker: .others)
+        #expect(parts.count == 2)
+        #expect(parts[0].update.start == 10 && parts[1].update.end == 20 && parts[0].update.end == parts[1].update.start)
+        let boundary = 10 + 10.0 * Double(parts[0].update.text.count) / Double(update.text.count)
+        #expect(abs(parts[0].update.end - boundary) < 1e-9, "切れ目は、文字数の割合")
+        #expect(parts.allSatisfy { $0.update.isFinal })
+        let partial = TranscriptionUpdate(text: update.text, isFinal: false, start: 10, end: 20)
+        let unsplit = try await labeler.split(partial, speaker: .others)
+        #expect(unsplit.count == 1 && unsplit[0].update == partial && unsplit[0].actor == nil)
+        let mine = try await labeler.split(update, speaker: .you)
+        #expect(mine.count == 1 && mine[0].update == update && mine[0].actor == ActorLabel(name: "山田 太郎", guessed: false))
+    }
+}
+
 /// 決まった名前を付ける偽の部品で、会議（`LiveSession`）の流れを通す。
 private struct Rig {
     let fake = FakeInputs()
@@ -172,7 +244,7 @@ struct ActorFlowTests {
         let seen = Seen()
         let labeler = SpeakerLabeler { speaker, text in
             seen.add("\(speaker.rawValue):\(text)")
-            return speaker == .you ? ActorLabel(name: "山田 太郎", guessed: false) : ActorLabel(name: "佐藤 花子", guessed: true)
+            return [LabeledSegment(text: text, actor: speaker == .you ? ActorLabel(name: "山田 太郎", guessed: false) : ActorLabel(name: "佐藤 花子", guessed: true))]
         }
         let session = rig.session(labeler: labeler, actors: actors)
         try await session.start()
@@ -193,6 +265,27 @@ struct ActorFlowTests {
         let text = try String(contentsOfFile: try #require(outcome.transcriptPath), encoding: .utf8)
         #expect(text.contains("相手（推定: 佐藤 花子）: APIの仕様を共有します") && text.contains("本人（山田 太郎）: 確認します"))
         #expect(text.contains("アクター（ACTOR.md）: 山田 太郎（本人）、佐藤 花子、田中 美咲"))
+    }
+
+    @Test("1 つの発話に、2 人分の文が続いていれば、別の発話（別の id）に分かれ、それぞれに名前が付く。字幕・記録に、順に載る")
+    func splitsAnUtteranceByActor() async throws {
+        let rig = Rig()
+        let guesser = SpeakerGuesser(list: try list(), judge: KeywordJudge())
+        let session = rig.session(labeler: SpeakerLabeler(list: try list(), guesser: guesser), actors: try source())
+        try await session.start()
+        rig.fake.emit(.others, "経理としては、月末の締め処理が気になります。マイグレーションに三十分ほどかかります。", final: true, 10, 18)
+        rig.clock.advance(65)
+        let outcome = try await session.end(reason: .user)
+
+        let others = rig.sink.batches.flatMap(\.updates).filter { $0.source == "others" && $0.isFinal }
+        #expect(others.map(\.id) == ["others-1", "others-2"])
+        #expect(others.map(\.actor) == ["田中 美咲", "佐藤 花子"] && others.allSatisfy { $0.actorGuessed == true })
+        #expect(others.map(\.text) == ["経理としては、月末の締め処理が気になります。", "マイグレーションに三十分ほどかかります。"])
+        #expect(others[0].timestamp < others[1].timestamp, "時刻は、文字数で按分して、順に並ぶ")
+        #expect(outcome.utterances == 2)
+        let text = try String(contentsOfFile: try #require(outcome.transcriptPath), encoding: .utf8)
+        let lines = text.split(separator: "\n").filter { $0.hasPrefix("[") }
+        #expect(lines.count == 2 && lines[0].contains("相手（推定: 田中 美咲）") && lines[1].contains("相手（推定: 佐藤 花子）"))
     }
 
     @Test("推定が失敗したら、1 回だけ知らせ、以後は名前を付けない。文字起こしと転送は、続く")
