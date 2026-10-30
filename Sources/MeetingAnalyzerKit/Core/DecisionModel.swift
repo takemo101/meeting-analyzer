@@ -61,7 +61,7 @@ public enum DecisionModelCatalog {
     public static let all: [DecisionModel] = [
         DecisionModel(
             id: "tiny-jev-0.6b", name: "Tiny-Jev 0.6B",
-            summary: "Qwen3-0.6B を、確率つきの判断用に学習したモデル（Apache-2.0）。英語向けの学習だが、日本語でも動く。軽く、速い（1 問 約 70 ms。読み込みのメモリは、ピークで約 3 GB）。",
+            summary: "軽く速い（1 問 約 70 ms・メモリ 約 3 GB）。",
             weights: ModelArtifact(
                 repository: "lostargon/Tiny-Jev", revision: "62449fb3272d68fb8c8fe8a33082566643a76d0b", filename: "model.safetensors",
                 bytes: 1_191_594_564, sha256: "513411b17cb0eca54839ca3948b4353e7f65710723ffcde8d13e3cb04328633e"),
@@ -72,7 +72,7 @@ public enum DecisionModelCatalog {
         ),
         DecisionModel(
             id: "tiny-jev-1.7b", name: "Tiny-Jev 1.7B",
-            summary: "Qwen3-1.7B を、確率つきの判断用に学習したモデル（Apache-2.0）。0.6B より大きく（約 3.4 GB）、遅いが（1 問 約 150 ms。読み込みのメモリは、ピークで約 9 GB）、精度が高い傾向。英語向けの学習だが、日本語でも動く。",
+            summary: "精度が高い傾向（1 問 約 150 ms・メモリ 約 9 GB）。",
             weights: ModelArtifact(
                 repository: "lostargon/Tiny-Jev-1.7B", revision: "c41bcf3f191407c779bd2ebce1b992dd1469437f", filename: "model.safetensors",
                 bytes: 3_440_104_404, sha256: "49ff7a60951abe35631b9f0632b8250acdb9142f79f39a57f56aa42befac7a3b"),

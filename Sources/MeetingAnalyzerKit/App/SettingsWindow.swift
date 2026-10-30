@@ -163,7 +163,7 @@ struct SettingsView: View {
                 ForEach(DecisionModelCatalog.all) { entry in
                     ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
                 }
-                Text("発言の内容から、一覧の中の誰が話したかを、確率つきで判断するモデル（System One 型。この Mac の中だけで動きます）。モデルを選んでいない・取得していないときは、推定せず、相手は「相手」のままです。ダウンロードは、ここで押したときだけ（Hugging Face。音声・文字は送りません）。")
+                Text("発言の内容から、誰が話したかを判断します（この Mac の中だけで動作）。選んでいないときは、「相手」のままです。ダウンロードは、押したときだけ（Hugging Face）。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .disabled(locked)
