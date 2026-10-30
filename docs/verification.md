@@ -710,3 +710,13 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **利用者の依頼**：システム設定のように、かっこいいアイコンで選びたい。**変更**：各項目の絵を、色つきの角丸の四角（グラデーション）に、白い塗りの記号にした（取り込み＝ピンク・マイク、文字起こし＝青・吹き出し、話者＝紫・人、転送＝緑・紙飛行機、記録＝オレンジ・書類）。項目の文字は 13 pt、行の余白を足し、サイドバーの幅を 210 に。機能は、変えていない。
 - **確認**：単体 245 件 pass、E2E 16/16。実機（隔離した複製の PID だけ。自分のウィンドウだけを撮った画像）：5 項目に色つきの角丸のアイコンが付き、選んだ行が強調される。確認後、複製を終了し、設定・画像を消した。
 - **未確認**：ダークモードでの見え方。ほかのページの見た目（今回は、「取り込み」の画像だけ）。
+
+### 2026-10-31 — v0.1.11 のリリース（MIK-013）
+
+- **内容**：話者の名前（ACTOR.md・System One 型の判断モデル Tiny-Jev 0.6B／1.7B・発話者の分割・出席者の選択・ACTOR.md のメニューでの切り替え・本人の立場での提案）と、設定ウィンドウのサイドバー。MIK-012。
+- **操作**：PR #17・#18（スタック。GitHub の仕様で、スタックの merge は、非同期の merge API〔`merge-async`〕だけ。#18 の head `ffaaff1` に束縛して、2 つとも merge。merge commit `df8cbe9`）→ `but pull`（2 ブランチとも integrated・ローカルから削除）→ 版の更新 PR #20（`CLEAN` と、PR のチェック〔release のドライラン。5 分 0 秒〕の**終了を確かめてから**、head `006a03a` に束縛して normal merge。merge commit `6f7a661`）→ `but pull`。`origin/main` と同期した `6f7a661` に、注釈つきタグ `v0.1.11` を付けて push。版は、`Info.plist`（2 か所）・`AppInfo.version`・README・E2E の期待の 4 か所を揃えた（単体テストが、`Info.plist` と `AppInfo.version` の一致を見る）。
+- **確認（merge 前）**：単体 245 件・E2E 16/16 pass。PR のチェック（Build, test and inspect the DMG／Check the artifact hand-off）が、pass。
+- **ワークフロー**（`release.yml`。run `41146101302`）：すべて通り、Release を作成した。
+- **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.11（draft でも prerelease でもない）。`MeetingAnalyzer-0.1.11.dmg`（4,069,807 バイト。SHA-256 `bf01e4b6…26ee`）と `.sha256`。ダウンロードして `shasum -a 256 -c` が OK。DMG を読み取り専用でマウントして、アプリの `CFBundleShortVersionString` が `0.1.11`・同梱の skill に `meeting-analyzer-actors`・`meeting-analyzer-presets` があることを確かめた（確認後、取り外し・ダウンロードを削除）。`verify-dmg.sh` は、ワークフローの中で通っている。
+- **ワークスペース**：`but status` は、`main`（`df8cbe9` から `6f7a661`）と同期し、未コミットの変更なし・適用中のブランチなし。
+- **未確認**：実際のマイク・システム音声での会議、実会議の音声での名前の精度・分割の当たり方、会議の実行中に出席者を変えたときの効き方、提案の質（人間）。判断モデルのダウンロード（約 1.2／3.4 GB）を、リリースの DMG から入れたアプリで試していない。独立レビューは未実施。
