@@ -59,10 +59,13 @@ public struct ReplayOptions: Equatable {
     public var actors: String?
     /// 話者の推定に使う判断モデルの ID（`DecisionModelCatalog`。SPEC §3.13）。無指定なら、推定しない（「相手」のまま）。
     public var judge: String?
+    /// 出席者の名前（相手の側の人。SPEC §3.13）。無指定なら、ACTOR.md の全員。
+    public var attendees: [String]?
 
-    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple, actors: String? = nil, judge: String? = nil) {
+    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple, actors: String? = nil, judge: String? = nil, attendees: [String]? = nil) {
         self.actors = actors
         self.judge = judge
+        self.attendees = attendees
         self.model = model
         self.file = file
         self.speaker = speaker
@@ -130,7 +133,7 @@ public enum CommandParser {
             default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
             }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model", "--actors", "--judge"], positional: 1).flatMap { parsed in
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model", "--actors", "--judge", "--attendees"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
                 let chosen: TranscriptionChoice
@@ -140,6 +143,9 @@ public enum CommandParser {
                 }
                 if let judge = parsed.values["--judge"], DecisionModelCatalog.model(id: judge) == nil {
                     return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
+                }
+                if parsed.values["--attendees"] != nil, parsed.values["--actors"] == nil {
+                    return .failure(.usage("--attendees は、--actors と一緒に使います"))
                 }
                 var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
                 for name in ["--hold", "--wait"] {
@@ -151,7 +157,8 @@ public enum CommandParser {
                 return .success(.replay(ReplayOptions(
                     file: parsed.positional[0], speaker: speaker,
                     title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen, actors: parsed.values["--actors"], judge: parsed.values["--judge"]
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen, actors: parsed.values["--actors"], judge: parsed.values["--judge"],
+                    attendees: parsed.values["--attendees"].map { $0.split(whereSeparator: { $0 == "," || $0 == "、" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
                 )))
             }
         case _ where LaunchableAgent(rawValue: first) != nil:

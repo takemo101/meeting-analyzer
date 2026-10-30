@@ -70,6 +70,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        // 話者（アクター）：出席者（会議の途中でも変えられる）と、使う ACTOR.md の切り替え（待機中だけ）。
+        let choices = controller.actorChoices
+        if !choices.isEmpty { menu.addItem(attendeesItem(choices)) }
+        menu.addItem(actorFileItem())
+        menu.addItem(.separator())
+
         // 設定ウィンドウ（取り込み・まとめ方・プリセット・保持期間）と、アプリの操作（コマンド・フォルダ）。
         menu.addItem(action("設定…", #selector(openSettings), key: ","))
         menu.addItem(commandItem())
@@ -104,6 +110,51 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return item
     }
 
+    /// 出席者の選択（相手の側の人。チェックした人から、話者を判断する）。**会議の途中でも、押せる**（次の判断から効く）。
+    private func attendeesItem(_ choices: [MeetingController.ActorChoice]) -> NSMenuItem {
+        let item = NSMenuItem(title: "出席者（\(choices.filter(\.present).count)/\(choices.count) 人）", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        submenu.addItem(label("チェックした人から、相手の話者を判断します"))
+        for choice in choices {
+            let child = NSMenuItem(title: choice.role.map { "\(choice.name)（\($0)）" } ?? choice.name, action: #selector(toggleAttendee(_:)), keyEquivalent: "")
+            child.target = self
+            child.state = choice.present ? .on : .off
+            child.representedObject = choice.name
+            submenu.addItem(child)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    /// 使う ACTOR.md の切り替え（最近使ったもの）。会議の実行中は、切り替えられない（開始のとき読んだものを、使い続ける）。
+    private func actorFileItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "アクター定義: " + (controller.actorFile.map(Self.shortName) ?? "なし"), action: nil, keyEquivalent: "")
+        item.isEnabled = controller.state == .idle
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        let none = action("使わない", #selector(clearActorFile))
+        none.state = controller.actorFile == nil ? .on : .off
+        submenu.addItem(none)
+        for path in controller.actorFiles where FileManager.default.fileExists(atPath: path) {
+            let child = action(Self.shortName(path), #selector(selectActorFile(_:)))
+            child.representedObject = path
+            child.toolTip = path
+            child.state = path == controller.actorFile ? .on : .off
+            submenu.addItem(child)
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(action("別のファイルを選ぶ…", #selector(chooseActorFile)))
+        item.submenu = submenu
+        return item
+    }
+
+    /// 「親のフォルダ名/ファイル名」（ACTOR.md は、プロジェクトごとにあるので、フォルダ名で区別する）。
+    private static func shortName(_ path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        return url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent
+    }
+
     /// コマンド `meeting-analyzer`（`/usr/local/bin` へのリンク）を、入れる・外す。入っていれば、チェック。
     private func commandItem() -> NSMenuItem {
         let name = CommandLineTool.name
@@ -129,6 +180,20 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func openDataFolder() { controller.openDataFolder() }
 
     @objc private func openSettings() { settings.show() }
+
+    @objc private func toggleAttendee(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        controller.setPresent(name, sender.state != .on)
+    }
+
+    @objc private func selectActorFile(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        controller.setActorFile(path)
+    }
+
+    @objc private func clearActorFile() { controller.setActorFile(nil) }
+
+    @objc private func chooseActorFile() { controller.chooseActorFile() }
 
     // MARK: 会議の操作
 

@@ -142,6 +142,24 @@ struct SpeakerGuesserTests {
         judge.malformed = true
         #expect(try await guesser(judge).guess("月末の締め処理に間に合うかが関心事です") == nil)
     }
+
+    @Test("出席者から外した人は、話者の候補にしない。会議の途中で変えると、次の判断から効く。相手の側の全員を外すと、判断しない")
+    func attendance() async throws {
+        let judge = FakeJudge()
+        let attendance = Attendance()
+        let guesser = SpeakerGuesser(list: try list(), judge: judge, attendance: attendance)
+        let text = "月末の締め処理に間に合うかが関心事です"
+        _ = try await guesser.guess(text)
+        attendance.setPresent("田中 美咲", false)
+        _ = try await guesser.guess(text)
+        attendance.setPresent("田中 美咲", true)
+        attendance.setPresent("佐藤 花子", false)
+        _ = try await guesser.guess(text)
+        #expect(judge.calls == [["佐藤 花子", "田中 美咲"], ["佐藤 花子"], ["田中 美咲"]])
+        attendance.setPresent("田中 美咲", false)
+        #expect(try await guesser.guess(text) == nil)
+        #expect(judge.calls.count == 3, "候補がいなければ、判断モデルへ問わない")
+    }
 }
 
 /// 発言に含まれる言葉で、話者を決める偽の判断モデル（言葉が無ければ、確率は、均等＝確信度が足りない）。
@@ -356,6 +374,35 @@ struct ActorFileTests {
         #expect(CapturePreferences.load(defaults).decisionModel == nil, "知らないモデルの ID は、推定しない")
         #expect(CapturePreferences.load(try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))).decisionModel == nil, "既定は、推定しない")
     }
+
+    @Test("最近の ACTOR.md：選んだものが先頭に来る（重複しない）。上限を超えた古いものは捨てる。外した人は、ファイルごとに覚える。壊れた値は、その項目だけ捨てる")
+    func recentFilesAndAbsentActors() throws {
+        var saved = CapturePreferences()
+        for index in 0..<(CapturePreferences.maxActorFiles + 2) { saved.remember(actorFile: "/p\(index)/ACTOR.md") }
+        saved.remember(actorFile: "/p5/ACTOR.md")
+        #expect(saved.actorFiles.count == CapturePreferences.maxActorFiles)
+        #expect(saved.actorFiles.first == "/p5/ACTOR.md" && saved.actorFiles.filter { $0 == "/p5/ACTOR.md" }.count == 1)
+        #expect(!saved.actorFiles.contains("/p0/ACTOR.md"), "古いものから捨てる")
+
+        saved.actorFile = "/p5/ACTOR.md"
+        saved.setAbsent(["田中 美咲", "高橋 健"], for: "/p5/ACTOR.md")
+        saved.setAbsent(["鈴木 一郎"], for: "/p1/ACTOR.md")
+        let defaults = try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))
+        saved.save(defaults)
+        #expect(CapturePreferences.load(defaults) == saved)
+        saved.setAbsent([], for: "/p1/ACTOR.md")
+        #expect(saved.absentActors["/p1/ACTOR.md"] == nil, "全員出席に戻したら、項目ごと消す")
+
+        // 一覧の項目が無かった版の設定（選んでいる ACTOR.md だけ）を引き継ぐ。壊れた値は、その項目だけ捨てる。
+        let old = try #require(UserDefaults(suiteName: "ma-actors-" + UUID().uuidString))
+        old.set("/old/ACTOR.md", forKey: CapturePreferences.keys.actorFile)
+        #expect(CapturePreferences.load(old).actorFiles == ["/old/ACTOR.md"])
+        old.set(["/a/ACTOR.md", "relative/ACTOR.md", "/a/ACTOR.md"], forKey: CapturePreferences.keys.actorFiles)
+        old.set(["/a/ACTOR.md": ["田中 美咲"], "relative": ["x"], "/b/ACTOR.md": []], forKey: CapturePreferences.keys.absentActors)
+        let loaded = CapturePreferences.load(old)
+        #expect(loaded.actorFiles == ["/old/ACTOR.md", "/a/ACTOR.md"], "選んでいるものが、先頭")
+        #expect(loaded.absentActors == ["/a/ACTOR.md": ["田中 美咲"]])
+    }
 }
 
 @Suite("CLI：actors check と replay --actors")
@@ -368,6 +415,22 @@ struct ActorCommandTests {
         }
         guard case .success(.replay(let options)) = CommandParser.parse(["replay", "a.wav", "--actors", "ACTOR.md"]) else { Issue.record("parse failed"); return }
         #expect(options.actors == "ACTOR.md")
+    }
+
+    @Test("--attendees：名前を、「,」「、」で区切って渡す。--actors と一緒でなければ断る。ACTOR.md の相手の側に無い名前は、再生の前に断る（終了コード 2）")
+    func attendees() async throws {
+        guard case .success(.replay(let options)) = CommandParser.parse(["replay", "a.wav", "--actors", "ACTOR.md", "--attendees", "佐藤 花子、田中 美咲, "]) else { Issue.record("parse failed"); return }
+        #expect(options.attendees == ["佐藤 花子", "田中 美咲"])
+        guard case .success(.replay(let plain)) = CommandParser.parse(["replay", "a.wav", "--actors", "ACTOR.md"]) else { Issue.record("parse failed"); return }
+        #expect(plain.attendees == nil)
+        guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav", "--attendees", "佐藤 花子"]) else { Issue.record("--actors なしを断らない"); return }
+
+        let actors = tempURL("attendees-actors", ext: "md")
+        try Data(sample.utf8).write(to: actors)
+        let err = Output()
+        let run = ReplayOptions(file: actors.path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0, actors: actors.path, attendees: ["高橋 健", "山田 太郎"])
+        let code = await CLIRunner(environment: ["MEETING_ANALYZER_DATA_DIR": tempURL("attendees-data").path], out: { _ in }, err: { err.add($0) }).run(.replay(run))
+        #expect(code == 2 && (err.lines.first ?? "").contains("高橋 健") && (err.lines.first ?? "").contains("山田 太郎"), "\(err.lines)")
     }
 }
 

@@ -168,6 +168,23 @@ struct SettingsView: View {
             }
             .disabled(locked)
 
+            // 出席者は、会議の実行中でも変えられる（ほかの設定のように、ロックしない）。
+            let choices = controller.actorChoices
+            if !choices.isEmpty {
+                Section("出席者（相手として、判断する人）") {
+                    ForEach(choices, id: \.name) { choice in
+                        Toggle(isOn: Binding(get: { choice.present }, set: { controller.setPresent(choice.name, $0) })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(choice.name)
+                                if let role = choice.role { Text(role).font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }
+                    }
+                    Text("チェックした人の中から、相手の話者を判断します。会議の途中でも変えられます（変えたあとの発言から効きます）。チェックし忘れた人の発言は、別の人に付くか、付きません。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section("記録") {
                 Picker("記録の保持期間", selection: Binding(get: { controller.retentionDays }, set: { controller.setRetentionDays($0) })) {
                     ForEach(RecordRetentionSetting.choices, id: \.self) { days in Text(RecordRetentionSetting.title(days)).tag(days) }

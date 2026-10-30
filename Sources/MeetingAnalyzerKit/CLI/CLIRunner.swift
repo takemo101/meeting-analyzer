@@ -274,6 +274,14 @@ public struct CLIRunner {
             switch ActorFile.load(path: absolute) {
             case .failure(let error): throw CLIError.input(error.message)
             case .success(let list):
+                // 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。
+                let attendance = Attendance()
+                if let names = options.attendees {
+                    let known = Set(list.others.map(\.name))
+                    let unknown = names.filter { !known.contains($0) }
+                    guard unknown.isEmpty else { throw CLIError.input("--attendees に、ACTOR.md の相手の側に無い名前があります: \(unknown.joined(separator: "・"))（\(list.others.map(\.name).joined(separator: "・"))）") }
+                    attendance.replace(excluded: known.subtracting(names))
+                }
                 // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。
                 var guesser: SpeakerGuesser?
                 if options.speaker == .others, !list.others.isEmpty, let id = options.judge, let model = DecisionModelCatalog.model(id: id) {
@@ -281,7 +289,7 @@ public struct CLIRunner {
                     do {
                         let judge = try SystemOneJudge(model: model, store: modelStore)
                         try judge.prepare()
-                        guesser = SpeakerGuesser(list: list, judge: judge)
+                        guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance)
                     } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
                 }
                 actorSource = ActorSource(list: list, file: absolute)

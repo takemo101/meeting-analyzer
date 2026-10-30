@@ -55,17 +55,20 @@ public struct SpeakerGuesser: Sendable {
     public let list: ActorList
     private let judge: any SpeakerJudge
     private let gate: SpeakerGate
+    /// 今日の出席者。外された人は、話者の候補にしない（会議の途中で変わり得る。判断のたびに見る）。
+    private let attendance: Attendance
 
-    public init(list: ActorList, judge: any SpeakerJudge, gate: SpeakerGate = SpeakerGate()) {
+    public init(list: ActorList, judge: any SpeakerJudge, gate: SpeakerGate = SpeakerGate(), attendance: Attendance = Attendance()) {
         self.list = list
         self.judge = judge
         self.gate = gate
+        self.attendance = attendance
     }
 
     public func guess(_ text: String) async throws -> Actor? {
         let utterance = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard utterance.count >= Self.minimumLength else { return nil }
-        let others = list.others
+        let others = attendance.present(list.others)
         guard !others.isEmpty else { return nil }
 
         let found = Self.mentions(of: others, in: utterance)
