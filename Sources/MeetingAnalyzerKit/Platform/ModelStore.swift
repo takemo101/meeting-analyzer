@@ -105,5 +105,12 @@ extension ModelStore {
     /// 途中のファイルだけを消す（取得済みのファイルには、触れない）。
     public func discardPartial(_ model: DecisionModel) { model.artifacts.forEach(discardPartial) }
 
-    public func delete(_ model: DecisionModel) { model.artifacts.forEach(delete) }
+    /// 重みを消す。トークナイザは、**同じファイル（SHA-256 が同じ）を使う、ほかの取得済みの判断モデルがあれば、残す**。
+    public func delete(_ model: DecisionModel) {
+        delete(model.weights)
+        let shared = DecisionModelCatalog.all.contains { other in
+            other.id != model.id && other.tokenizer.sha256 == model.tokenizer.sha256 && isInstalled(other.weights)
+        }
+        if !shared { delete(model.tokenizer) }
+    }
 }

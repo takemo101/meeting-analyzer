@@ -130,7 +130,7 @@ enum CLIView {
         }
         var lines = [style.bold("文字起こしのモデル（追加でダウンロードして使う。Mac 標準は、ダウンロード不要）")] + style.table(rows, label: style.cyan).map { "  " + $0 }
         let decisionRows: [(name: String, text: [String])] = decision.map { model in
-            let state = store.isInstalled(model) ? style.success("取得済み") : (store.downloadedBytes(model) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
+            let state = store.isInstalled(model) ? style.success("取得済み") : (store.downloadedBytes(model.weights) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
             return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.bytes)) + "  " + state, style.dim(model.summary)])
         }
         lines.append("")

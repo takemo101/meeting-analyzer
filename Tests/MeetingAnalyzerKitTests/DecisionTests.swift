@@ -106,6 +106,31 @@ struct DecisionModelStoreTests {
             #expect(m.weights != m.tokenizer)
         }
     }
+
+    /// 大きさだけ合う、中身が空の（疎な）ファイル。大きなモデルの保管を、試験で再現するため。
+    private func sparseFile(_ url: URL, bytes: Int64) throws {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(bytes))
+        try handle.close()
+    }
+
+    @Test("2 つの判断モデルが、同じトークナイザのファイルを使うとき、片方を消しても、もう一方が使っているあいだは、トークナイザを残す。最後の 1 つを消すと、消える")
+    func sharedTokenizerSurvives() throws {
+        let small = try #require(DecisionModelCatalog.model(id: "tiny-jev-0.6b")), large = try #require(DecisionModelCatalog.model(id: "tiny-jev-1.7b"))
+        #expect(small.tokenizer.sha256 == large.tokenizer.sha256, "同じファイルなので、保管の場所も同じ")
+        let store = ModelStore(root: tempURL("shared-tokenizer"))
+        try store.prepareDirectory()
+        for m in [small, large] {
+            for a in m.artifacts { try sparseFile(store.fileURL(a), bytes: a.bytes); store.markVerified(a) }
+        }
+        #expect(store.isInstalled(small) && store.isInstalled(large))
+        store.delete(small)
+        #expect(!store.isInstalled(small.weights) && store.isInstalled(large), "大きいほうは、そのまま使える")
+        store.delete(large)
+        #expect(!store.isInstalled(large.tokenizer), "最後の 1 つを消すと、トークナイザも消える")
+        try? FileManager.default.removeItem(at: store.directory)
+    }
 }
 
 @Suite("CLI：--judge と、判断モデルの models")

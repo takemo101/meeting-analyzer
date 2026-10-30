@@ -244,7 +244,8 @@ private struct ModelRowSpec {
     @MainActor init(_ model: DecisionModel, _ controller: MeetingController) {
         id = model.id; name = model.name; summary = model.summary; bytes = model.bytes
         installed = controller.isInstalled(model)
-        downloadedBytes = controller.modelStore.downloadedBytes(model)
+        // 途中かどうかは、重みで見る（トークナイザは、ほかのモデルと共有していて、先に取得済みのことがある）。
+        downloadedBytes = controller.modelStore.downloadedBytes(model.weights)
         inUse = controller.decisionModel == model
         deleteNote = inUse ? "使っているモデルです。削除すると、話者の推定をしなくなります（相手は「相手」のまま）。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
         download = { controller.downloadDecisionModel(model) }
