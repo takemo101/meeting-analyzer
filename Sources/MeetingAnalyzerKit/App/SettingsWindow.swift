@@ -38,6 +38,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var revision = 0
     /// 削除の確認を出しているモデルの ID（`@State` のマクロは、Command Line Tools だけの環境で使えないため、ここに持つ）。
     @Published var confirmingDelete: String?
+    /// サイドバーで選んでいるページ（`@State` を使えないので、ここに持つ）。
+    @Published var page: SettingsPage = .capture
     private var tokens: [NSObjectProtocol] = []
 
     init(controller: MeetingController) {
@@ -72,130 +74,161 @@ struct SettingsView: View {
     var body: some View {
         // `revision` を読んで、コントローラーの変化のたびに、表示を作り直す。
         let _ = model.revision
-        Form {
-            if locked {
-                Section {
-                    Label("会議の途中は、取り込みの設定を変えられません。会議を終了してから変えてください。", systemImage: "lock")
-                        .foregroundStyle(.secondary)
-                }
+        HStack(spacing: 0) {
+            List(SettingsPage.allCases, selection: Binding<SettingsPage?>(get: { model.page }, set: { if let page = $0 { model.page = page } })) { page in
+                Label(page.title, systemImage: page.symbol).tag(page)
             }
-            Section("文字起こし") {
-                Picker("使うモデル", selection: Binding(get: { controller.transcription }, set: { controller.setTranscription($0) })) {
-                    Text("Mac 標準").tag(TranscriptionChoice.apple)
-                    ForEach(LocalModelCatalog.all.filter { controller.isInstalled($0) }) { model in
-                        Text(model.name).tag(TranscriptionChoice.local(model.id))
+            .listStyle(.sidebar)
+            .frame(width: 190)
+            Divider()
+            Form {
+                if locked, model.page != .record {
+                    Section {
+                        Label("会議の途中は、取り込みの設定を変えられません。会議を終了してから変えてください。" + (model.page == .actors ? "（出席者は、途中でも変えられます）" : ""), systemImage: "lock")
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .disabled(locked)
-                Text(controller.transcription == .apple
-                     ? "Mac の音声認識（オンデバイス）。話している途中から、暫定の文字が出ます。"
-                     : "ダウンロードしたモデル（オンデバイス）。話し終わって、少し間があってから、文字になります（暫定の文字は出ません）。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("追加でダウンロードするモデル") {
-                ForEach(LocalModelCatalog.all) { entry in
-                    ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
+                switch model.page {
+                case .capture: captureSections
+                case .transcription: transcriptionSections
+                case .actors: actorSections
+                case .forwarding: forwardingSections
+                case .record: recordSections
                 }
-                Text("ダウンロードは、ここで押したときだけ、Hugging Face から行います（音声は送りません）。途中で止めても、続きから取得できます。")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .formStyle(.grouped)
+        }
+        .frame(width: 820, height: 560)
+    }
 
-            Section("取り込む音声") {
-                Toggle("マイク（本人）", isOn: Binding(get: { controller.selection.microphone }, set: { controller.setMicrophone($0) }))
-                Picker("システム音声（相手）", selection: Binding(get: { controller.selection.system }, set: { controller.setSystem($0) })) {
-                    Text("オフ").tag(SystemSource.off)
-                    Text("全体（Mac から出ている音すべて）").tag(SystemSource.all)
-                    Divider()
-                    ForEach(appChoices(current: controller.selection.system), id: \.bundleID) { app in
-                        Text(app.title).tag(SystemSource.app(bundleID: app.bundleID, name: app.name))
-                    }
+    // MARK: ページ
+
+    @ViewBuilder private var captureSections: some View {
+        Section("取り込む音声") {
+            Toggle("マイク（本人）", isOn: Binding(get: { controller.selection.microphone }, set: { controller.setMicrophone($0) }))
+            Picker("システム音声（相手）", selection: Binding(get: { controller.selection.system }, set: { controller.setSystem($0) })) {
+                Text("オフ").tag(SystemSource.off)
+                Text("全体（Mac から出ている音すべて）").tag(SystemSource.all)
+                Divider()
+                ForEach(appChoices(current: controller.selection.system), id: \.bundleID) { app in
+                    Text(app.title).tag(SystemSource.app(bundleID: app.bundleID, name: app.name))
+                }
+            }
+        }
+        .disabled(locked)
+
+        Section("画面") {
+            Picker("画面の取り込み", selection: Binding(get: { controller.screen }, set: { controller.setScreen($0) })) {
+                Text("オフ").tag(ScreenSelection.off)
+                Text("画面全体（メインの画面）").tag(ScreenSelection.display)
+                Divider()
+                ForEach(appChoices(current: screenApp(controller.screen)), id: \.bundleID) { app in
+                    Text(app.title).tag(ScreenSelection.app(bundleID: app.bundleID, name: app.name))
+                }
+            }
+            Text("オフ以外では、画面に変化があったときだけ、縮小した画像を字幕に添えて渡し、記録にも入れます（画面収録の許可が要ります）。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(locked)
+    }
+
+    @ViewBuilder private var transcriptionSections: some View {
+        Section("使うモデル") {
+            Picker("文字起こし", selection: Binding(get: { controller.transcription }, set: { controller.setTranscription($0) })) {
+                Text("Mac 標準").tag(TranscriptionChoice.apple)
+                ForEach(LocalModelCatalog.all.filter { controller.isInstalled($0) }) { model in
+                    Text(model.name).tag(TranscriptionChoice.local(model.id))
                 }
             }
             .disabled(locked)
+            Text(controller.transcription == .apple
+                 ? "Mac の音声認識（オンデバイス）。話している途中から、暫定の文字が出ます。"
+                 : "ダウンロードしたモデル（オンデバイス）。話し終わって、少し間があってから、文字になります（暫定の文字は出ません）。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
 
-            Section("画面") {
-                Picker("画面の取り込み", selection: Binding(get: { controller.screen }, set: { controller.setScreen($0) })) {
-                    Text("オフ").tag(ScreenSelection.off)
-                    Text("画面全体（メインの画面）").tag(ScreenSelection.display)
-                    Divider()
-                    ForEach(appChoices(current: screenApp(controller.screen)), id: \.bundleID) { app in
-                        Text(app.title).tag(ScreenSelection.app(bundleID: app.bundleID, name: app.name))
+        Section("追加でダウンロードするモデル") {
+            ForEach(LocalModelCatalog.all) { entry in
+                ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
+            }
+            Text("ダウンロードは、ここで押したときだけ、Hugging Face から行います（音声は送りません）。途中で止めても、続きから取得できます。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var actorSections: some View {
+        Section("アクター定義") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ACTOR.md")
+                    if let path = controller.actorFile {
+                        Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    } else {
+                        Text("選ぶと、記録と転送に、本人・相手の名前を入れます").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text("オフ以外では、画面に変化があったときだけ、縮小した画像を字幕に添えて渡し、記録にも入れます（画面収録の許可が要ります）。")
-                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if controller.actorFile != nil { Button("外す") { controller.setActorFile(nil) } }
+                Button("選ぶ…") { controller.chooseActorFile() }
             }
-            .disabled(locked)
+            actorStatusView
+        }
+        .disabled(locked)
 
-            Section("エージェントへの転送") {
-                Picker("転送のまとめ方", selection: Binding(get: { controller.batchMode }, set: { controller.setBatchMode($0) })) {
-                    ForEach(BatchMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
-                }
-                Picker("分析のプリセット", selection: Binding(get: { currentPresetID }, set: { controller.setPreset($0) })) {
-                    ForEach(controller.presets(), id: \.id) { preset in
-                        Text(preset.name + (preset.source == .user ? "（自分）" : "")).tag(preset.id)
-                    }
-                }
-                Button("プリセットのフォルダを開く（自分のものを足す）") { controller.openPresetFolder() }
+        Section("相手の話者の推定") {
+            Picker("使うモデル", selection: Binding(get: { controller.decisionModel?.id ?? "" }, set: { controller.setDecisionModel(DecisionModelCatalog.model(id: $0)) })) {
+                Text("推定しない（相手のまま）").tag("")
+                ForEach(DecisionModelCatalog.all.filter { controller.isInstalled($0) }) { entry in Text(entry.name).tag(entry.id) }
             }
-            .disabled(locked)
+            ForEach(DecisionModelCatalog.all) { entry in
+                ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
+            }
+            Text("発言の内容から、誰が話したかを判断します（この Mac の中だけで動作）。選んでいないときは、「相手」のままです。ダウンロードは、押したときだけ（Hugging Face）。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(locked)
 
-            Section("話者（アクター）") {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("アクター定義（ACTOR.md）")
-                        if let path = controller.actorFile {
-                            Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        } else {
-                            Text("選ぶと、記録と転送に、本人・相手の名前を入れます").font(.caption).foregroundStyle(.secondary)
+        // 出席者は、会議の実行中でも変えられる（ほかの設定のように、ロックしない）。
+        let choices = controller.actorChoices
+        if !choices.isEmpty {
+            Section("出席者（相手として、判断する人）") {
+                ForEach(choices, id: \.name) { choice in
+                    Toggle(isOn: Binding(get: { choice.present }, set: { controller.setPresent(choice.name, $0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(choice.name)
+                            if let role = choice.role { Text(role).font(.caption).foregroundStyle(.secondary) }
                         }
                     }
-                    Spacer()
-                    if controller.actorFile != nil { Button("外す") { controller.setActorFile(nil) } }
-                    Button("選ぶ…") { controller.chooseActorFile() }
                 }
-                actorStatusView
-                Picker("相手の話者の推定", selection: Binding(get: { controller.decisionModel?.id ?? "" }, set: { controller.setDecisionModel(DecisionModelCatalog.model(id: $0)) })) {
-                    Text("推定しない（相手のまま）").tag("")
-                    ForEach(DecisionModelCatalog.all.filter { controller.isInstalled($0) }) { entry in Text(entry.name).tag(entry.id) }
-                }
-                ForEach(DecisionModelCatalog.all) { entry in
-                    ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
-                }
-                Text("発言の内容から、誰が話したかを判断します（この Mac の中だけで動作）。選んでいないときは、「相手」のままです。ダウンロードは、押したときだけ（Hugging Face）。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .disabled(locked)
-
-            // 出席者は、会議の実行中でも変えられる（ほかの設定のように、ロックしない）。
-            let choices = controller.actorChoices
-            if !choices.isEmpty {
-                Section("出席者（相手として、判断する人）") {
-                    ForEach(choices, id: \.name) { choice in
-                        Toggle(isOn: Binding(get: { choice.present }, set: { controller.setPresent(choice.name, $0) })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(choice.name)
-                                if let role = choice.role { Text(role).font(.caption).foregroundStyle(.secondary) }
-                            }
-                        }
-                    }
-                    Text("チェックした人の中から、相手の話者を判断します。会議の途中でも変えられます（変えたあとの発言から効きます）。チェックし忘れた人の発言は、別の人に付くか、付きません。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-
-            Section("記録") {
-                Picker("記録の保持期間", selection: Binding(get: { controller.retentionDays }, set: { controller.setRetentionDays($0) })) {
-                    ForEach(RecordRetentionSetting.choices, id: \.self) { days in Text(RecordRetentionSetting.title(days)).tag(days) }
-                }
-                Text("期限を過ぎると、文字起こしも画像も、フォルダごと消えます。")
+                Text("チェックした人の中から、相手の話者を判断します。会議の途中でも変えられます（変えたあとの発言から効きます）。チェックし忘れた人の発言は、別の人に付くか、付きません。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var forwardingSections: some View {
+        Section("エージェントへの転送") {
+            Picker("転送のまとめ方", selection: Binding(get: { controller.batchMode }, set: { controller.setBatchMode($0) })) {
+                ForEach(BatchMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+            }
+            Picker("分析のプリセット", selection: Binding(get: { currentPresetID }, set: { controller.setPreset($0) })) {
+                ForEach(controller.presets(), id: \.id) { preset in
+                    Text(preset.name + (preset.source == .user ? "（自分）" : "")).tag(preset.id)
+                }
+            }
+            Button("プリセットのフォルダを開く（自分のものを足す）") { controller.openPresetFolder() }
+        }
+        .disabled(locked)
+    }
+
+    @ViewBuilder private var recordSections: some View {
+        Section("記録") {
+            Picker("記録の保持期間", selection: Binding(get: { controller.retentionDays }, set: { controller.setRetentionDays($0) })) {
+                ForEach(RecordRetentionSetting.choices, id: \.self) { days in Text(RecordRetentionSetting.title(days)).tag(days) }
+            }
+            Text("期限を過ぎると、文字起こしも画像も、フォルダごと消えます。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var actorStatusView: some View {
@@ -222,6 +255,33 @@ struct SettingsView: View {
             choices.insert(AppChoice(bundleID: id, name: name, title: "\(name)（起動していません）"), at: 0)
         }
         return choices
+    }
+}
+
+/// 設定ウィンドウのサイドバーのページ（取り込み・文字起こし・話者・転送・記録）。
+enum SettingsPage: CaseIterable, Hashable, Identifiable {
+    case capture, transcription, actors, forwarding, record
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .capture: return "取り込み"
+        case .transcription: return "文字起こし"
+        case .actors: return "話者（アクター）"
+        case .forwarding: return "転送"
+        case .record: return "記録"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .capture: return "mic"
+        case .transcription: return "text.bubble"
+        case .actors: return "person.2"
+        case .forwarding: return "paperplane"
+        case .record: return "doc.text"
+        }
     }
 }
 
