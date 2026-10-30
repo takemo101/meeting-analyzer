@@ -48,6 +48,8 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case screenshotFailed(String)
     /// 「本人」の発話が、直近の「相手」の発話とほとんど同じ。相手の声が、マイクへ回り込んでいる疑い（ヘッドホンの案内）。セッションにつき 1 回。
     case possibleEcho
+    /// 話者の推定が失敗した（モデルを使えない・応答しない、など）。以後、「相手」への名前の推定を止め、文字起こしと転送は続ける。セッションにつき 1 回。
+    case speakerGuessFailed
 }
 
 public struct LiveSessionOutcome: Sendable, Equatable {
@@ -86,6 +88,8 @@ public actor LiveSession {
     private var screenFailureReported = false
     private var echo = EchoDetector()
     private var echoReported = false
+    private let labeler: SpeakerLabeler?
+    private var labelingFailed = false
 
     private struct Running {
         let stream: LiveInputStream
@@ -97,6 +101,7 @@ public actor LiveSession {
         policy: BatchingPolicy = .standard, clock: @escaping @Sendable () -> Date = { Date() },
         tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5),
         screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10, preset: PresetInfo? = nil,
+        actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil,
         notify: @escaping @Sendable (LiveSessionNotice) -> Void
     ) {
         let startedAt = clock()
@@ -110,11 +115,12 @@ public actor LiveSession {
         self.tickInterval = tickInterval
         self.finalizeTimeout = finalizeTimeout
         self.notify = notify
+        self.labeler = labeler
         self.screen = screen
         self.screenshots = screenshots
         self.screenInterval = screenInterval
         self.screenGate = ScreenshotGate(minGap: screenMinGap)
-        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset, checkpointInterval: 10)
+        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset, actors: actors, checkpointInterval: 10)
     }
 
     public var phase: SessionLifecycle.Phase { lifecycle.phase }
@@ -194,17 +200,33 @@ public actor LiveSession {
 
     private func consume(_ stream: LiveInputStream, speaker: Speaker, origin: TimeInterval) async {
         do {
-            for try await update in stream.updates { ingest(update, speaker: speaker, origin: origin) }
+            for try await update in stream.updates {
+                for part in await labeled(update, speaker: speaker) { ingest(part.update, speaker: speaker, origin: origin, actor: part.actor) }
+            }
             if !stopping { notify(.captureStopped(speaker)) }
         } catch {
             if !stopping && !Task.isCancelled { notify(.transcriptionFailed(speaker, String(describing: error))) }
         }
     }
 
-    private func ingest(_ update: TranscriptionUpdate, speaker: Speaker, origin: TimeInterval) {
+    /// 更新を、話者ごとの区間に分け、アクターを付ける（SPEC §3.13）。「相手」は、確定した更新だけ（暫定の文は、分けず、名前も付けない）。推定の待ちの間、同じ流れの次の更新は、順に待つ。
+    /// 区間は、別の発話（別の `id`）になり、元の時刻を文字数で按分した時刻を持つ。失敗したら、1 回だけ知らせ、以後は分けず・付けない（会議は続ける。この更新は、そのまま流す）。
+    private func labeled(_ update: TranscriptionUpdate, speaker: Speaker) async -> [(update: TranscriptionUpdate, actor: ActorLabel?)] {
+        guard let labeler, !labelingFailed else { return [(update, nil)] }
+        do {
+            return try await labeler.split(update, speaker: speaker)
+        } catch {
+            if Task.isCancelled || error is CancellationError { return [(update, nil)] }
+            labelingFailed = true
+            notify(.speakerGuessFailed)
+            return [(update, nil)]
+        }
+    }
+
+    private func ingest(_ update: TranscriptionUpdate, speaker: Speaker, origin: TimeInterval, actor: ActorLabel?) {
         guard segmentActive else { return }
         let shifted = TranscriptionUpdate(text: update.text, isFinal: update.isFinal, start: update.start + origin, end: update.end + origin)
-        pipeline.ingest(shifted, speaker: speaker)
+        pipeline.ingest(shifted, speaker: speaker, actor: actor)
         if echo.observe(speaker: speaker, key: "\(speaker.rawValue)-\(shifted.start)", text: shifted.text, at: shifted.end), !echoReported {
             echoReported = true
             notify(.possibleEcho)

@@ -25,6 +25,18 @@ final class MeetingController {
     private(set) var presetID = AnalysisPreset.defaultID
     /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。設定ウィンドウで選び、覚えておく。
     private(set) var transcription = TranscriptionChoice.apple
+    /// 使う `ACTOR.md`（SPEC §3.13）。設定ウィンドウで選び、覚えておく。会議の開始のたびに、読み直す。
+    private(set) var actorFile: String?
+    /// 最近使った `ACTOR.md`（新しい順。メニューで切り替える）。
+    private(set) var actorFiles: [String] = []
+    /// 今日の出席者（外した人）。会議の途中でも変えられ、判断のたびに、この状態を見る（SPEC §3.13）。
+    let attendance = Attendance()
+    /// `ACTOR.md` ごとの、外した人の名前（覚えておく）。
+    private var absentActors: [String: [String]] = [:]
+    /// 実行中の会議が、開始のときに読んだ一覧（会議の途中で、ファイルが書き換わっても、メニューは、会議が使っている一覧を見せる）。
+    private var activeActors: ActorList?
+    /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
+    private(set) var decisionModel: DecisionModel?
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -70,6 +82,12 @@ final class MeetingController {
         retentionDays = RecordRetentionSetting.load(defaults)
         // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準に戻す（黙って別のものを使わないよう、設定を直す）。
         if case .local(let id) = saved.transcription, let model = LocalModelCatalog.model(id: id), modelStore.isInstalled(model.artifact) { transcription = saved.transcription }
+        actorFile = saved.actorFile
+        actorFiles = saved.actorFiles
+        absentActors = saved.absentActors
+        attendance.replace(excluded: Set(saved.actorFile.flatMap { saved.absentActors[$0] } ?? []))
+        // 保存した判断モデルが、取得されていなければ（削除した・別の Mac から移した）、無しに戻す（推定しない）。
+        if let id = saved.decisionModel, let model = DecisionModelCatalog.model(id: id), modelStore.isInstalled(model) { decisionModel = model }
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
@@ -81,6 +99,10 @@ final class MeetingController {
         preferences.batchMode = batchMode
         preferences.presetID = presetID
         preferences.transcription = transcription
+        preferences.actorFile = actorFile
+        preferences.actorFiles = actorFiles
+        preferences.absentActors = absentActors
+        preferences.decisionModel = decisionModel?.id
         preferences.save(defaults)
     }
 
@@ -264,6 +286,73 @@ final class MeetingController {
         changed()
     }
 
+    // MARK: 話者の推定のモデル（SPEC §3.13）
+
+    func isInstalled(_ model: DecisionModel) -> Bool { modelStore.isInstalled(model) }
+
+    /// 話者の推定に使う判断モデルを選ぶ（`nil`＝推定しない）。取得済みのものだけ選べる。会議の実行中は、変えられない。
+    func setDecisionModel(_ model: DecisionModel?) {
+        guard state == .idle else { return }
+        if let model { guard isInstalled(model) else { return } }
+        decisionModel = model
+        persist()
+        changed()
+    }
+
+    /// 判断モデルを、ダウンロードする（利用者が押したときだけ。トークナイザ → 重みの順。途中のファイルがあれば、続きから）。取得できたら、そのモデルを選ぶ。
+    func downloadDecisionModel(_ model: DecisionModel) {
+        guard download == nil else { return }
+        downloadFailure = nil
+        download = ModelDownload(id: model.id, received: modelStore.downloadedBytes(model), total: model.bytes)
+        let downloader = ModelDownloader(store: modelStore)
+        self.downloader = downloader
+        let throttle = ProgressThrottle()
+        Task {
+            do {
+                var finished: Int64 = 0
+                for artifact in model.artifacts {
+                    let base = finished
+                    try await downloader.download(artifact) { received, _ in
+                        guard throttle.shouldReport(received: base + received, total: model.bytes) else { return }
+                        Task { @MainActor in self.download = ModelDownload(id: model.id, received: base + received, total: model.bytes) }
+                    }
+                    finished += artifact.bytes
+                }
+                download = nil
+                self.downloader = nil
+                if state == .idle { setDecisionModel(model) }
+                notice = "「\(model.name)」を取得しました"
+            } catch let error as ModelDownloadError {
+                download = nil
+                self.downloader = nil
+                if error != .cancelled { downloadFailure = (model.id, Self.describe(error)) }
+            } catch {
+                download = nil
+                self.downloader = nil
+                downloadFailure = (model.id, "\(error)")
+            }
+        }
+    }
+
+    /// 途中までのダウンロード（`.part`）を、捨てる。取得中・取得済みのモデルには、何もしない。
+    func discardPartialDownload(_ model: DecisionModel) {
+        guard download?.id != model.id, !isInstalled(model) else { return }
+        modelStore.discardPartial(model)
+        if downloadFailure?.id == model.id { downloadFailure = nil }
+        changed()
+    }
+
+    /// 取得した判断モデルを、削除する。使っているモデルなら、「推定しない」に戻す（会議の実行中は、使っているモデルを消せない）。
+    func deleteDecisionModel(_ model: DecisionModel) {
+        if decisionModel == model {
+            guard state == .idle else { return }
+            decisionModel = nil
+            persist()
+        }
+        modelStore.delete(model)
+        changed()
+    }
+
     private static func describe(_ error: ModelDownloadError) -> String {
         switch error {
         case .network(let reason): return "通信に失敗しました（\(reason)）。もう一度押すと、続きから取得します"
@@ -274,6 +363,85 @@ final class MeetingController {
         case .writeFailed(let reason): return "ディスクに書けません（\(reason)）"
         }
     }
+
+    // MARK: アクター（ACTOR.md。SPEC §3.13）
+
+    /// 設定ウィンドウに見せる、選んだ `ACTOR.md` の状態。
+    enum ActorStatus: Equatable {
+        case none
+        case loaded(count: Int, hasSelf: Bool, warnings: [String])
+        case failed(String)
+    }
+
+    /// 選んだファイルを、いま読んで検査した結果（読むのは、設定ウィンドウの表示のときだけ。小さいファイル）。
+    var actorStatus: ActorStatus {
+        guard let actorFile else { return .none }
+        switch ActorFile.load(path: actorFile) {
+        case .success(let list): return .loaded(count: list.actors.count, hasSelf: list.selfActor != nil, warnings: list.warnings)
+        case .failure(let error): return .failed(error.message)
+        }
+    }
+
+    /// 出席者の選択肢の 1 人分（相手の側の人。本人は、出さない）。
+    struct ActorChoice: Equatable {
+        let name: String
+        let role: String?
+        let present: Bool
+    }
+
+    /// 出席者の選択肢。会議の実行中は、開始のときに読んだ一覧。待機中は、選んだファイルを、いま読む（読めなければ、空）。
+    var actorChoices: [ActorChoice] {
+        let list: ActorList?
+        if state != .idle, let activeActors {
+            list = activeActors
+        } else if let actorFile, case .success(let loaded) = ActorFile.load(path: actorFile) {
+            list = loaded
+        } else {
+            list = nil
+        }
+        return (list?.others ?? []).map { ActorChoice(name: $0.name, role: $0.role, present: attendance.isPresent($0.name)) }
+    }
+
+    /// 出席者を、足す・外す。**会議の実行中でも、変えられる**（次の判断から効く。すでに付いた名前は、付け直さない）。選んだ ACTOR.md ごとに、覚える。
+    func setPresent(_ name: String, _ present: Bool) {
+        guard let actorFile else { return }
+        attendance.setPresent(name, present)
+        let absent = attendance.excludedNames
+        absentActors[actorFile] = absent.isEmpty ? nil : absent.sorted()
+        persist()
+        changed()
+    }
+
+
+    /// `ACTOR.md` を選ぶ（ファイルを選ぶパネル）。選んだら、検査して、状態を更新する。
+    func chooseActorFile() {
+        guard state == .idle else { return }
+        let panel = NSOpenPanel()
+        panel.title = "アクター定義（ACTOR.md）を選ぶ"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.plainText, .init(filenameExtension: "md") ?? .plainText]
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setActorFile(url.path)
+    }
+
+    func setActorFile(_ path: String?) {
+        guard state == .idle else { return }
+        actorFile = path
+        if let path {
+            var preferences = CapturePreferences()
+            preferences.actorFiles = actorFiles
+            preferences.remember(actorFile: path)
+            actorFiles = preferences.actorFiles
+        }
+        // 出席者は、選んだ ACTOR.md ごとに覚えている（別のファイルへ切り替えると、そのファイルで外した人に変わる）。
+        attendance.replace(excluded: Set(path.flatMap { absentActors[$0] } ?? []))
+        persist()
+        changed()
+    }
+
 
     func setBatchMode(_ mode: BatchMode) {
         guard state == .idle else { return }
@@ -346,6 +514,7 @@ final class MeetingController {
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
+        let (actors, labeler, actorNotice) = await actorSetup(selection)
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
@@ -356,12 +525,15 @@ final class MeetingController {
             screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
             screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
             preset: presetStore.resolve(id: presetID)?.info,
+            actors: actors,
+            labeler: labeler,
             notify: notify
         )
         do {
             try await session.start()
             self.session = session
             state = .running
+            if let actorNotice { notice = actorNotice }
         } catch let error as LiveSessionError {
             if case .capture(.permissionDenied(let permission, _)) = error {
                 fail(FailureText.start(error), settings: permission.settingsURL)
@@ -370,6 +542,38 @@ final class MeetingController {
             }
         } catch {
             fail(error.localizedDescription)
+        }
+    }
+
+    /// 会議で使う `ACTOR.md` と、発話へ名前を付ける部品。読めない・推定を使えないときは、付けずに会議を始め、理由を知らせる（失敗を黙って捨てない）。
+    /// 判断モデルを選んでいない・取得していない・相手の音声を取り込まない・相手の側の候補がいないときは、**推定しない**（「本人」の対応づけだけ。相手は「相手」のまま）。
+    /// モデルの読み込み（初回は、GPU のコンパイルで数秒）は、画面を止めないよう、別のスレッドで行う。
+    private func actorSetup(_ selection: AudioSelection) async -> (ActorSource?, SpeakerLabeler?, String?) {
+        activeActors = nil
+        guard let path = actorFile else { return (nil, nil, nil) }
+        switch ActorFile.load(path: path) {
+        case .failure(let error):
+            return (nil, nil, "ACTOR.md を使えません: \(error.message)")
+        case .success(let list):
+            activeActors = list
+            var guesser: SpeakerGuesser?
+            var problem: String?
+            if let model = decisionModel, selection.system != .off, !list.others.isEmpty {
+                let store = modelStore
+                do {
+                    let judge = try await Task.detached(priority: .userInitiated) { () throws -> SystemOneJudge in
+                        let judge = try SystemOneJudge(model: model, store: store)
+                        try judge.prepare()
+                        return judge
+                    }.value
+                    guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance)
+                } catch let error as DecisionModelError {
+                    problem = "相手の話者を推定できません: \(error.message)"
+                } catch {
+                    problem = "相手の話者を推定できません"
+                }
+            }
+            return (ActorSource(list: list, file: path), SpeakerLabeler(list: list, guesser: guesser), problem)
         }
     }
 

@@ -87,6 +87,7 @@ public struct CLIRunner {
             case .version: out("\(AppInfo.name) \(AppInfo.version)")
             case .doctor(let locale): try await doctor(locale)
             case .presets: listPresets()
+            case .actorsCheck(let file): try actorsCheck(file)
             case .transcribe(let file, let locale, let model): try await transcribe(file, locale, model)
             case .models(let action): try await models(action)
             case .replay(let options): try await replay(options)
@@ -119,33 +120,54 @@ public struct CLIRunner {
         out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
     }
 
-    /// ダウンロード式のモデルの、一覧・取得・削除（SPEC §3.12）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
+    /// ダウンロード式のモデル（文字起こし・話者の推定）の、一覧・取得・削除（SPEC §3.12・§3.13）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
     private func models(_ action: ModelsCommand) async throws {
         let store = modelStore
         switch action {
         case .list:
-            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
+            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, decision: DecisionModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
             for model in LocalModelCatalog.all {
-                out(Self.json(["id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+                out(Self.json(["kind": "transcription", "id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+            }
+            for model in DecisionModelCatalog.all {
+                out(Self.json(["kind": "decision", "id": model.id, "name": model.name, "bytes": model.bytes, "installed": store.isInstalled(model), "downloadedBytes": store.downloadedBytes(model)]))
             }
         case .download(let id):
-            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
-            let interactive = errIsTerminal
-            let report = ProgressLine(enabled: interactive, write: err)
+            let report = ProgressLine(enabled: errIsTerminal, write: err)
+            let name: String, path: String
             do {
-                // 音声区間の検出のモデル（小さい）も、一緒に取得する。
-                try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
-                try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
+                if let model = LocalModelCatalog.model(id: id) {
+                    name = model.name; path = store.fileURL(model.artifact).path
+                    // 音声区間の検出のモデル（小さい）も、一緒に取得する。
+                    try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
+                    try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
+                } else if let model = DecisionModelCatalog.model(id: id) {
+                    name = model.name; path = store.fileURL(model.weights).path
+                    var finished: Int64 = 0
+                    for artifact in model.artifacts {
+                        let base = finished
+                        try await modelDownload(artifact, store) { received, _ in report.update(name: model.name, received: base + received, total: model.bytes) }
+                        finished += artifact.bytes
+                    }
+                } else {
+                    throw CLIError.usage("知らないモデルです: \(id)")
+                }
             } catch let error as ModelDownloadError {
                 report.finish()
                 throw CLIError.transcription("ダウンロードできませんでした: \(Self.describe(error))（もう一度実行すると、続きから取得します）")
             }
             report.finish()
-            out(outIsTerminal ? CLIView.modelDownloaded(model, store.fileURL(model.artifact).path, outStyle) : Self.json(["ok": true, "id": model.id, "path": store.fileURL(model.artifact).path]))
+            out(outIsTerminal ? CLIView.modelDownloaded(name: name, path: path, outStyle) : Self.json(["ok": true, "id": id, "path": path]))
         case .delete(let id):
-            guard let model = LocalModelCatalog.model(id: id) else { throw CLIError.usage("知らないモデルです: \(id)") }
-            store.delete(model.artifact)
-            out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            if let model = LocalModelCatalog.model(id: id) {
+                store.delete(model.artifact)
+                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            } else if let model = DecisionModelCatalog.model(id: id) {
+                store.delete(model)
+                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+            } else {
+                throw CLIError.usage("知らないモデルです: \(id)")
+            }
         }
     }
 
@@ -217,8 +239,25 @@ public struct CLIRunner {
             : "\(agent.command) を起動できません（errno \(code)）")
     }
 
+    /// `ACTOR.md` を読んで、書式を検査し、読み取れた内容を出す（SPEC §3.13）。読めなければ、理由と一緒に、入力の誤りとして断る。
+    private func actorsCheck(_ path: String) throws {
+        let absolute = URL(fileURLWithPath: path).path
+        switch ActorFile.load(path: absolute) {
+        case .failure(let error): throw CLIError.input(error.message)
+        case .success(let list):
+            if outIsTerminal { out(CLIView.actors(list, path: absolute, outStyle)); return }
+            let actors: [[String: Any]] = list.actors.map { actor in
+                var item: [String: Any] = ["name": actor.name, "aliases": actor.aliases, "topics": actor.topics, "self": actor.isSelf]
+                if let role = actor.role { item["role"] = role }
+                return item
+            }
+            out(Self.json(["ok": true, "path": absolute, "actors": actors, "warnings": list.warnings]))
+        }
+    }
+
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
+    /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、Mac 標準の言語モデルで推定する）。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
         var preset: PresetInfo?
@@ -228,6 +267,35 @@ public struct CLIRunner {
         } else {
             preset = presetStore.resolve(id: nil)?.info
         }
+        var actorSource: ActorSource?
+        var labeler: SpeakerLabeler?
+        if let path = options.actors {
+            let absolute = URL(fileURLWithPath: path).path
+            switch ActorFile.load(path: absolute) {
+            case .failure(let error): throw CLIError.input(error.message)
+            case .success(let list):
+                // 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。
+                let attendance = Attendance()
+                if let names = options.attendees {
+                    let known = Set(list.others.map(\.name))
+                    let unknown = names.filter { !known.contains($0) }
+                    guard unknown.isEmpty else { throw CLIError.input("--attendees に、ACTOR.md の相手の側に無い名前があります: \(unknown.joined(separator: "・"))（\(list.others.map(\.name).joined(separator: "・"))）") }
+                    attendance.replace(excluded: known.subtracting(names))
+                }
+                // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。
+                var guesser: SpeakerGuesser?
+                if options.speaker == .others, !list.others.isEmpty, let id = options.judge, let model = DecisionModelCatalog.model(id: id) {
+                    guard modelStore.isInstalled(model) else { throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）") }
+                    do {
+                        let judge = try SystemOneJudge(model: model, store: modelStore)
+                        try judge.prepare()
+                        guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance)
+                    } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
+                }
+                actorSource = ActorSource(list: list, file: absolute)
+                labeler = SpeakerLabeler(list: list, guesser: guesser)
+            }
+        }
         let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         do { try hub.start() } catch let error as HubError { throw error.cliError }
         defer { hub.stop() }
@@ -235,12 +303,16 @@ public struct CLIRunner {
         let deadline = Date().addingTimeInterval(options.wait)
         while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
 
-        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset)
+        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
-                pipeline.ingest(update, speaker: options.speaker)
+                var parts: [(update: TranscriptionUpdate, actor: ActorLabel?)] = [(update, nil)]
+                if let labeler {
+                    do { parts = try await labeler.split(update, speaker: options.speaker) } catch { throw CLIError.input("話者の推定に失敗しました") }
+                }
+                for part in parts { pipeline.ingest(part.update, speaker: options.speaker, actor: part.actor) }
                 lastEnd = max(lastEnd, update.end)
             }
         } catch let error as TranscriptionError { throw error.cliError }

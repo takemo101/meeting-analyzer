@@ -55,8 +55,17 @@ public struct ReplayOptions: Equatable {
     public var preset: String?
     /// 使う文字起こし（SPEC §3.12）。無指定なら、Mac 標準。
     public var model: TranscriptionChoice
+    /// 使う `ACTOR.md` のパス（SPEC §3.13）。無指定なら、アクターを使わない。
+    public var actors: String?
+    /// 話者の推定に使う判断モデルの ID（`DecisionModelCatalog`。SPEC §3.13）。無指定なら、推定しない（「相手」のまま）。
+    public var judge: String?
+    /// 出席者の名前（相手の側の人。SPEC §3.13）。無指定なら、ACTOR.md の全員。
+    public var attendees: [String]?
 
-    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple) {
+    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple, actors: String? = nil, judge: String? = nil, attendees: [String]? = nil) {
+        self.actors = actors
+        self.judge = judge
+        self.attendees = attendees
         self.model = model
         self.file = file
         self.speaker = speaker
@@ -68,7 +77,7 @@ public struct ReplayOptions: Equatable {
     }
 }
 
-/// `models` の操作。ID は、一覧（`LocalModelCatalog`）にあるものだけ（読み取りの境界で検査済み）。
+/// `models` の操作。ID は、一覧（`LocalModelCatalog`・`DecisionModelCatalog`）にあるものだけ（読み取りの境界で検査済み）。
 public enum ModelsCommand: Equatable {
     case list
     case download(id: String)
@@ -76,6 +85,8 @@ public enum ModelsCommand: Equatable {
 }
 
 public enum Command: Equatable {
+    /// `ACTOR.md` の書式を検査して、読み取れた内容を出す（SPEC §3.13）。
+    case actorsCheck(file: String)
     case gui
     case help
     case version
@@ -104,6 +115,9 @@ public enum CommandParser {
         case "--version", "-v": return rest.isEmpty ? .success(.version) : .failure(.usage("--version に引数はありません"))
         case "presets":
             return options(rest, allowed: [], positional: 0).map { _ in .presets }
+        case "actors":
+            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md>")) }
+            return .success(.actorsCheck(file: rest[1]))
         case "doctor":
             return options(rest, allowed: ["--locale"], positional: 0).map { .doctor(locale: $0.values["--locale"] ?? defaultLocale) }
         case "transcribe":
@@ -114,18 +128,24 @@ public enum CommandParser {
             switch rest.count {
             case 0: return .success(.models(.list))
             case 2 where rest[0] == "download" || rest[0] == "delete":
-                guard LocalModelCatalog.model(id: rest[1]) != nil else { return .failure(.usage(unknownModel(rest[1], includingApple: false))) }
+                guard LocalModelCatalog.model(id: rest[1]) != nil || DecisionModelCatalog.model(id: rest[1]) != nil else { return .failure(.usage(unknownModel(rest[1], includingApple: false, includingDecision: true))) }
                 return .success(.models(rest[0] == "download" ? .download(id: rest[1]) : .delete(id: rest[1])))
             default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
             }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model"], positional: 1).flatMap { parsed in
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model", "--actors", "--judge", "--attendees"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
                 let chosen: TranscriptionChoice
                 switch model(parsed.values["--model"]) {
                 case .success(let value): chosen = value
                 case .failure(let error): return .failure(error)
+                }
+                if let judge = parsed.values["--judge"], DecisionModelCatalog.model(id: judge) == nil {
+                    return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
+                }
+                if parsed.values["--attendees"] != nil, parsed.values["--actors"] == nil {
+                    return .failure(.usage("--attendees は、--actors と一緒に使います"))
                 }
                 var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
                 for name in ["--hold", "--wait"] {
@@ -137,7 +157,8 @@ public enum CommandParser {
                 return .success(.replay(ReplayOptions(
                     file: parsed.positional[0], speaker: speaker,
                     title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen, actors: parsed.values["--actors"], judge: parsed.values["--judge"],
+                    attendees: parsed.values["--attendees"].map { $0.split(whereSeparator: { $0 == "," || $0 == "、" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
                 )))
             }
         case _ where LaunchableAgent(rawValue: first) != nil:
@@ -154,12 +175,12 @@ public enum CommandParser {
     /// `--model` の値を、一度だけ検査して、選択にする。無指定は、Mac 標準。
     private static func model(_ value: String?) -> Result<TranscriptionChoice, CLIError> {
         guard let value else { return .success(.apple) }
-        guard let choice = TranscriptionChoice(id: value) else { return .failure(.usage(unknownModel(value, includingApple: true))) }
+        guard let choice = TranscriptionChoice(id: value) else { return .failure(.usage(unknownModel(value, includingApple: true, includingDecision: false))) }
         return .success(choice)
     }
 
-    private static func unknownModel(_ value: String, includingApple: Bool) -> String {
-        let ids = (includingApple ? ["apple"] : []) + LocalModelCatalog.all.map(\.id)
+    private static func unknownModel(_ value: String, includingApple: Bool, includingDecision: Bool) -> String {
+        let ids = (includingApple ? ["apple"] : []) + LocalModelCatalog.all.map(\.id) + (includingDecision ? DecisionModelCatalog.all.map(\.id) : [])
         return "知らないモデルです: \(value)（\(ids.joined(separator: "・"))）"
     }
 

@@ -111,14 +111,15 @@ struct CLIModelsTests {
 
     private func environment(_ data: URL) -> [String: String] { ["MEETING_ANALYZER_DATA_DIR": data.path] }
 
-    @Test("models：パイプでは、モデルごとに 1 行の JSON（未取得）。置き場所は、データの置き場所の models/")
+    @Test("models：パイプでは、モデルごとに 1 行の JSON（未取得。文字起こし → 話者の推定の順。kind つき）。置き場所は、データの置き場所の models/")
     func list() async {
         let out = Output(), err = Output()
         let data = tempURL("models-cli")
         let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { err.add($0) }).run(.models(.list))
         #expect(code == 0)
         let rows = out.lines.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
-        #expect(rows.map { $0["id"] as? String } == LocalModelCatalog.all.map(\.id))
+        #expect(rows.map { $0["id"] as? String } == LocalModelCatalog.all.map(\.id) + DecisionModelCatalog.all.map(\.id))
+        #expect(rows.map { $0["kind"] as? String } == LocalModelCatalog.all.map { _ in "transcription" } + DecisionModelCatalog.all.map { _ in "decision" })
         #expect(rows.allSatisfy { $0["installed"] as? Bool == false && $0["downloadedBytes"] as? Int == 0 })
     }
 

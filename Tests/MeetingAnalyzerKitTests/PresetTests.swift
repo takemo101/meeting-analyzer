@@ -134,7 +134,7 @@ struct PresetEventTests {
         let sink = RecordingSink()
         let info = PresetInfo(id: "video", name: "動画", instructions: "あらすじを出す")
         SessionPipeline(title: "t", sink: sink, store: nil, preset: info).begin(sources: [.others])
-        guard case .started(_, _, _, _, let carried)? = sink.events.first else { Issue.record("no started"); return }
+        guard case .started(_, _, _, _, let carried, _)? = sink.events.first else { Issue.record("no started"); return }
         #expect(carried == info)
     }
 

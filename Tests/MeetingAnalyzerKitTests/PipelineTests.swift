@@ -112,7 +112,7 @@ struct SessionPipelineTests {
         pipeline.ingest(update("来週のリリース", final: true, 0, 1), speaker: .others)
         pipeline.finish(reason: .user, at: 1)
         #expect(sink.kinds == ["started", "captions", "ended"])
-        guard case .started(let id, let title, _, let sources, _) = sink.events[0] else { Issue.record("not started"); return }
+        guard case .started(let id, let title, _, let sources, _, _) = sink.events[0] else { Issue.record("not started"); return }
         #expect(id == pipeline.sessionId.uuidString.lowercased() && title == "定例" && sources == ["you", "others"])
     }
 

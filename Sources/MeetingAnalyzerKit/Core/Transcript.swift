@@ -11,6 +11,9 @@ public struct Transcript: Sendable, Equatable {
         let path: String
     }
 
+    /// 会議で使った `ACTOR.md` のアクター（SPEC §3.13）。あれば、記録の見出しに書く。
+    public var actors: ActorList?
+
     public init() {}
 
     public var isEmpty: Bool { byKey.isEmpty }
@@ -62,9 +65,13 @@ public struct Transcript: Sendable, Equatable {
         }
         header.append("- 発話数: \(utteranceCount)")
         if !shots.isEmpty { header.append("- 画像: \(shots.count) 枚") }
+        if let actors { header.append("- アクター（ACTOR.md）: \(actors.summary)") }
+        let speakerNote = actors == nil
+            ? "相手が複数人でも「相手」としか区別できません。"
+            : "「相手（推定: 名前）」は、発言の内容から、判断モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかった（または、判断しなかった）ものです。"
         var blocks = [
             header.joined(separator: "\n"),
-            "> 音声認識の自動出力です。誤変換・欠落・聞き取れなかった箇所を含みます。専門用語や固有名詞、数値は特に不確かです。相手が複数人でも「相手」としか区別できません。",
+            "> 音声認識の自動出力です。誤変換・欠落・聞き取れなかった箇所を含みます。専門用語や固有名詞、数値は特に不確かです。\(speakerNote)",
         ]
         var pending = shots.sorted { $0.offset < $1.offset }[...]
         func image(_ shot: Shot) -> String { "![画面 \(Transcript.clock(shot.offset))](\(shot.path))" }
@@ -73,7 +80,7 @@ public struct Transcript: Sendable, Equatable {
                 blocks.append(image(shot))
                 pending.removeFirst()
             }
-            blocks.append("[\(Transcript.clock(utterance.startedAt))] \(utterance.speaker.displayName): \(utterance.text)")
+            blocks.append("[\(Transcript.clock(utterance.startedAt))] \(utterance.speakerLabel): \(utterance.text)")
         }
         for shot in pending { blocks.append(image(shot)) }
         return blocks.joined(separator: "\n\n") + "\n"
