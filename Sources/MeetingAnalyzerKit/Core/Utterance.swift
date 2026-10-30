@@ -11,14 +11,23 @@ public struct Utterance: Sendable, Equatable {
     public var startedAt: TimeInterval
     /// 本文が変わるたびに 1 ずつ増える（1 から）。
     public var version: Int
+    /// `ACTOR.md` のアクター。無ければ `nil`（「本人」「相手」のまま）。
+    public var actor: ActorLabel?
 
-    public init(id: Int, speaker: Speaker, text: String, isFinal: Bool, startedAt: TimeInterval, version: Int = 1) {
+    public init(id: Int, speaker: Speaker, text: String, isFinal: Bool, startedAt: TimeInterval, version: Int = 1, actor: ActorLabel? = nil) {
         self.id = id
         self.speaker = speaker
         self.text = text
         self.isFinal = isFinal
         self.startedAt = startedAt
         self.version = version
+        self.actor = actor
+    }
+
+    /// 発言者の表示：「相手」・「相手（推定: 佐藤 花子）」・「本人（山田 太郎）」。
+    public var speakerLabel: String {
+        guard let actor else { return speaker.displayName }
+        return actor.guessed ? "\(speaker.displayName)（推定: \(actor.name)）" : "\(speaker.displayName)（\(actor.name)）"
     }
 
     /// 発言者と番号で一意。バッチ・記録の更新（upsert）に使う。

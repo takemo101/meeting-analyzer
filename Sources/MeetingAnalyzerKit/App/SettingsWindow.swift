@@ -141,6 +141,32 @@ struct SettingsView: View {
             }
             .disabled(locked)
 
+            Section("話者（アクター）") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("アクター定義（ACTOR.md）")
+                        if let path = controller.actorFile {
+                            Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        } else {
+                            Text("選ぶと、記録と転送に、本人・相手の名前を入れます").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if controller.actorFile != nil { Button("外す") { controller.setActorFile(nil) } }
+                    Button("選ぶ…") { controller.chooseActorFile() }
+                }
+                actorStatusView
+                Toggle("相手の話者を、内容から推定する", isOn: Binding(get: { controller.guessSpeakers }, set: { controller.setGuessSpeakers($0) }))
+                    .disabled(controller.actorFile == nil)
+                if case .unavailable(let reason) = controller.speakerGuessAvailability {
+                    Text("使えません: \(reason)").font(.caption).foregroundStyle(.red)
+                } else {
+                    Text("Mac 標準の言語モデル（Apple Intelligence。オンデバイス）が、発言の内容から、話した人を推定します。「推定:」と付き、決められないときは「相手」のままです。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(locked)
+
             Section("記録") {
                 Picker("記録の保持期間", selection: Binding(get: { controller.retentionDays }, set: { controller.setRetentionDays($0) })) {
                     ForEach(RecordRetentionSetting.choices, id: \.self) { days in Text(RecordRetentionSetting.title(days)).tag(days) }
@@ -152,6 +178,16 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var actorStatusView: some View {
+        switch controller.actorStatus {
+        case .none: EmptyView()
+        case .failed(let reason): Text(reason).font(.caption).foregroundStyle(.red)
+        case .loaded(let count, let hasSelf, let warnings):
+            Text("\(count) 人を読み込みました" + (hasSelf ? "" : "（「本人: はい」の人がいないので、マイクの発話は「本人」のままです）")).font(.caption).foregroundStyle(.secondary)
+            ForEach(warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+        }
     }
 
     private var currentPresetID: String { controller.presetStore.resolve(id: controller.presetID)?.id ?? AnalysisPreset.defaultID }

@@ -55,8 +55,11 @@ public struct ReplayOptions: Equatable {
     public var preset: String?
     /// 使う文字起こし（SPEC §3.12）。無指定なら、Mac 標準。
     public var model: TranscriptionChoice
+    /// 使う `ACTOR.md` のパス（SPEC §3.13）。無指定なら、アクターを使わない。
+    public var actors: String?
 
-    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple) {
+    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple, actors: String? = nil) {
+        self.actors = actors
         self.model = model
         self.file = file
         self.speaker = speaker
@@ -76,6 +79,8 @@ public enum ModelsCommand: Equatable {
 }
 
 public enum Command: Equatable {
+    /// `ACTOR.md` の書式を検査して、読み取れた内容を出す（SPEC §3.13）。
+    case actorsCheck(file: String)
     case gui
     case help
     case version
@@ -104,6 +109,9 @@ public enum CommandParser {
         case "--version", "-v": return rest.isEmpty ? .success(.version) : .failure(.usage("--version に引数はありません"))
         case "presets":
             return options(rest, allowed: [], positional: 0).map { _ in .presets }
+        case "actors":
+            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md>")) }
+            return .success(.actorsCheck(file: rest[1]))
         case "doctor":
             return options(rest, allowed: ["--locale"], positional: 0).map { .doctor(locale: $0.values["--locale"] ?? defaultLocale) }
         case "transcribe":
@@ -119,7 +127,7 @@ public enum CommandParser {
             default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
             }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model"], positional: 1).flatMap { parsed in
+            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model", "--actors"], positional: 1).flatMap { parsed in
                 let speakerText = parsed.values["--speaker"] ?? "others"
                 guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
                 let chosen: TranscriptionChoice
@@ -137,7 +145,7 @@ public enum CommandParser {
                 return .success(.replay(ReplayOptions(
                     file: parsed.positional[0], speaker: speaker,
                     title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen
+                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen, actors: parsed.values["--actors"]
                 )))
             }
         case _ where LaunchableAgent(rawValue: first) != nil:

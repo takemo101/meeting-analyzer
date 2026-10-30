@@ -37,7 +37,8 @@ checks() {
     [ -s "${app}/Contents/Resources/presets/standard.md" ] || fail "既定のプリセット（Resources/presets/standard.md）が無い"
     [ "$(ls "${app}/Contents/Resources/presets"/*.md | wc -l | tr -d " ")" -ge 6 ] || fail "同梱のプリセットが 6 件に満たない"
     [ -s "${app}/Contents/Resources/skills/meeting-analyzer-presets/SKILL.md" ] || fail "プリセットを作る skill（Resources/skills/meeting-analyzer-presets/SKILL.md）が無い"
-    ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン、プリセット、プリセットを作る skill）"
+    [ -s "${app}/Contents/Resources/skills/meeting-analyzer-actors/SKILL.md" ] || fail "アクターの一覧を作る skill（Resources/skills/meeting-analyzer-actors/SKILL.md）が無い"
+    ok "同梱物（skill、pi・omp の拡張、opencode のプラグイン、プリセット、プリセットを作る skill、アクターの一覧を作る skill）"
 
     local plist="${app}/Contents/Info.plist"
     local icon_name

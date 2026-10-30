@@ -25,6 +25,10 @@ final class MeetingController {
     private(set) var presetID = AnalysisPreset.defaultID
     /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。設定ウィンドウで選び、覚えておく。
     private(set) var transcription = TranscriptionChoice.apple
+    /// 使う `ACTOR.md`（SPEC §3.13）。設定ウィンドウで選び、覚えておく。会議の開始のたびに、読み直す。
+    private(set) var actorFile: String?
+    /// 「相手」の話者を、内容から推定するか（Mac 標準の言語モデル）。
+    private(set) var guessSpeakers = true
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -70,6 +74,8 @@ final class MeetingController {
         retentionDays = RecordRetentionSetting.load(defaults)
         // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準に戻す（黙って別のものを使わないよう、設定を直す）。
         if case .local(let id) = saved.transcription, let model = LocalModelCatalog.model(id: id), modelStore.isInstalled(model.artifact) { transcription = saved.transcription }
+        actorFile = saved.actorFile
+        guessSpeakers = saved.guessSpeakers
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
@@ -81,6 +87,8 @@ final class MeetingController {
         preferences.batchMode = batchMode
         preferences.presetID = presetID
         preferences.transcription = transcription
+        preferences.actorFile = actorFile
+        preferences.guessSpeakers = guessSpeakers
         preferences.save(defaults)
     }
 
@@ -275,6 +283,55 @@ final class MeetingController {
         }
     }
 
+    // MARK: アクター（ACTOR.md。SPEC §3.13）
+
+    /// 設定ウィンドウに見せる、選んだ `ACTOR.md` の状態。
+    enum ActorStatus: Equatable {
+        case none
+        case loaded(count: Int, hasSelf: Bool, warnings: [String])
+        case failed(String)
+    }
+
+    /// 選んだファイルを、いま読んで検査した結果（読むのは、設定ウィンドウの表示のときだけ。小さいファイル）。
+    var actorStatus: ActorStatus {
+        guard let actorFile else { return .none }
+        switch ActorFile.load(path: actorFile) {
+        case .success(let list): return .loaded(count: list.actors.count, hasSelf: list.selfActor != nil, warnings: list.warnings)
+        case .failure(let error): return .failed(error.message)
+        }
+    }
+
+    /// 話者の推定に使う Mac 標準の言語モデルを使えるか（使えなければ、理由）。
+    var speakerGuessAvailability: AppleSpeakerJudge.Availability { AppleSpeakerJudge.availability(locale: Locale(identifier: CommandParser.defaultLocale)) }
+
+    /// `ACTOR.md` を選ぶ（ファイルを選ぶパネル）。選んだら、検査して、状態を更新する。
+    func chooseActorFile() {
+        guard state == .idle else { return }
+        let panel = NSOpenPanel()
+        panel.title = "アクター定義（ACTOR.md）を選ぶ"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.plainText, .init(filenameExtension: "md") ?? .plainText]
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setActorFile(url.path)
+    }
+
+    func setActorFile(_ path: String?) {
+        guard state == .idle else { return }
+        actorFile = path
+        persist()
+        changed()
+    }
+
+    func setGuessSpeakers(_ enabled: Bool) {
+        guard state == .idle else { return }
+        guessSpeakers = enabled
+        persist()
+        changed()
+    }
+
     func setBatchMode(_ mode: BatchMode) {
         guard state == .idle else { return }
         batchMode = mode
@@ -346,6 +403,7 @@ final class MeetingController {
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
+        let (actors, labeler, actorNotice) = actorSetup(selection)
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
@@ -356,12 +414,15 @@ final class MeetingController {
             screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
             screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
             preset: presetStore.resolve(id: presetID)?.info,
+            actors: actors,
+            labeler: labeler,
             notify: notify
         )
         do {
             try await session.start()
             self.session = session
             state = .running
+            if let actorNotice { notice = actorNotice }
         } catch let error as LiveSessionError {
             if case .capture(.permissionDenied(let permission, _)) = error {
                 fail(FailureText.start(error), settings: permission.settingsURL)
@@ -370,6 +431,25 @@ final class MeetingController {
             }
         } catch {
             fail(error.localizedDescription)
+        }
+    }
+
+    /// 会議で使う `ACTOR.md` と、発話へ名前を付ける部品。読めない・推定を使えないときは、付けずに会議を始め、理由を知らせる（失敗を黙って捨てない）。
+    private func actorSetup(_ selection: AudioSelection) -> (ActorSource?, SpeakerLabeler?, String?) {
+        guard let path = actorFile else { return (nil, nil, nil) }
+        switch ActorFile.load(path: path) {
+        case .failure(let error):
+            return (nil, nil, "ACTOR.md を使えません: \(error.message)")
+        case .success(let list):
+            var guesser: SpeakerGuesser?
+            var problem: String?
+            if guessSpeakers, selection.system != .off, !list.others.isEmpty {
+                switch speakerGuessAvailability {
+                case .available: guesser = SpeakerGuesser(list: list, judge: AppleSpeakerJudge())
+                case .unavailable(let reason): problem = "相手の話者を推定できません: \(reason)"
+                }
+            }
+            return (ActorSource(list: list, file: path), SpeakerLabeler(list: list, guesser: guesser), problem)
         }
     }
 

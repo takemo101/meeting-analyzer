@@ -10,10 +10,14 @@ public struct CapturePreferences: Sendable, Equatable {
     public var presetID = AnalysisPreset.defaultID
     /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。
     public var transcription = TranscriptionChoice.apple
+    /// 使う `ACTOR.md` のパス（SPEC §3.13）。無ければ `nil`。
+    public var actorFile: String?
+    /// 「相手」の話者を、内容から推定するか（`actorFile` があるときだけ効く）。
+    public var guessSpeakers = true
 
     public init() {}
 
-    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription")
+    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", guessSpeakers: "capture.guessSpeakers")
 
     public static func load(_ defaults: UserDefaults = .standard) -> CapturePreferences {
         var result = CapturePreferences()
@@ -38,6 +42,9 @@ public struct CapturePreferences: Sendable, Equatable {
         if let id = defaults.string(forKey: keys.presetID), !id.isEmpty { result.presetID = id }
         // 知らないモデルの ID（消えたモデル・壊れた値）は、Mac 標準に戻す。
         if let id = defaults.string(forKey: keys.transcription), let choice = TranscriptionChoice(id: id) { result.transcription = choice }
+        // 絶対パスだけ（壊れた値は、その項目だけ、無しに戻す）。
+        if let path = defaults.string(forKey: keys.actorFile), path.hasPrefix("/") { result.actorFile = path }
+        if defaults.object(forKey: keys.guessSpeakers) != nil { result.guessSpeakers = defaults.bool(forKey: keys.guessSpeakers) }
         return result
     }
 
@@ -56,5 +63,7 @@ public struct CapturePreferences: Sendable, Equatable {
         defaults.set(batchMode.rawValue, forKey: Self.keys.batchMode)
         defaults.set(presetID, forKey: Self.keys.presetID)
         defaults.set(transcription.id, forKey: Self.keys.transcription)
+        if let actorFile { defaults.set(actorFile, forKey: Self.keys.actorFile) } else { defaults.removeObject(forKey: Self.keys.actorFile) }
+        defaults.set(guessSpeakers, forKey: Self.keys.guessSpeakers)
     }
 }

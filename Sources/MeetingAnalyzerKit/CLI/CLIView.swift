@@ -24,11 +24,12 @@ enum CLIView {
         lines.append("")
         lines += style.section("調べる・試す", style.table([
             ("presets", ["選べる分析のプリセット（解説・提案・サマリーの出し方）を一覧にする。自分のプリセットは、フォルダに置く"]),
+            ("actors check <ACTOR.md>", ["ACTOR.md（会話に出てくる人の一覧）の書式を検査して、読み取れた内容を出す"]),
             ("doctor [--locale L]", ["その言語のオンデバイス認識が、この Mac で使えるか調べる（既定 ja_JP）"]),
             ("transcribe <音声ファイル> [--locale L] [--model ID]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）。--model で、ダウンロードしたモデルを使う"]),
             ("models [download <ID>|delete <ID>]", ["ダウンロードして使える文字起こしのモデルの、一覧・取得（続きから再開できる）・削除"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))
@@ -47,6 +48,23 @@ enum CLIView {
             "色は、端末のときだけ。NO_COLOR を設定すると、付けない。",
             "窓口は、<データの置き場所>/hub.sock（Unix ドメインソケット。MEETING_ANALYZER_SOCKET で変更）。",
         ])
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: アクター
+
+    /// `actors check` の、人が読む表示。
+    static func actors(_ list: ActorList, path: String, _ style: TerminalStyle) -> String {
+        var lines = [style.bold("ACTOR.md") + "  " + style.dim(path), ""]
+        for actor in list.actors {
+            lines.append(style.bold(actor.name) + (actor.isSelf ? style.dim("  本人（マイク）") : ""))
+            if let role = actor.role { lines.append("  役割: \(role)") }
+            if !actor.aliases.isEmpty { lines.append("  呼ばれ方: \(actor.aliases.joined(separator: "、"))") }
+            if !actor.topics.isEmpty { lines.append("  話題: \(actor.topics.joined(separator: "、"))") }
+        }
+        lines.append("")
+        lines.append("\(list.actors.count) 人" + (list.selfActor == nil ? "（「本人: はい」の人は、いません）" : ""))
+        for warning in list.warnings { lines.append(style.dim("注意: " + warning)) }
         return lines.joined(separator: "\n")
     }
 

@@ -31,23 +31,27 @@ public final class SessionPipeline: @unchecked Sendable {
 
     /// 選んだ分析のしかた。開始の出来事で、エージェントへ渡す。
     private let preset: PresetInfo?
+    /// 使う `ACTOR.md`（SPEC §3.13）。パスは開始の出来事で、名前の一覧は記録の見出しで、渡す。
+    private let actors: ActorSource?
 
-    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, checkpointInterval: TimeInterval? = nil) {
+    public init(sessionId: UUID = UUID(), title: String, startedAt: Date = Date(), sink: any EventSink, store: SessionStore?, policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, checkpointInterval: TimeInterval? = nil) {
         self.checkpointInterval = checkpointInterval
         self.preset = preset
+        self.actors = actors
         self.sessionId = sessionId
         self.title = title
         self.startedAt = startedAt
         self.sink = sink
         self.store = store
         self.batcher = Batcher(policy: policy)
+        self.transcript.actors = actors?.list
     }
 
     public var utteranceCount: Int { transcript.utteranceCount }
 
     /// セッションの開始を知らせる（取り込む流れ付き）。
     public func begin(sources: [Speaker]) {
-        sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset))
+        sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset, actorFile: actors?.file))
     }
 
     /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。**記録には、すべての画像を入れる**
@@ -67,7 +71,8 @@ public final class SessionPipeline: @unchecked Sendable {
     }
 
     /// 更新を 1 つ受ける。確定した発話の次の更新は、新しい発話として扱う。送る時になっていれば、送る。
-    public func ingest(_ update: TranscriptionUpdate, speaker: Speaker) {
+    /// `actor`：この発話に付ける `ACTOR.md` のアクター（無ければ「本人」「相手」のまま）。
+    public func ingest(_ update: TranscriptionUpdate, speaker: Speaker, actor: ActorLabel? = nil) {
         guard !finished else { return }
         // 前の更新からこの更新までに、静けさが十分あったなら、前の発話は、この更新を混ぜずに送る。
         tick(at: update.end)
@@ -78,7 +83,7 @@ public final class SessionPipeline: @unchecked Sendable {
         stream.version += 1
         stream.lastWasFinal = update.isFinal
         streams[speaker] = stream
-        let utterance = Utterance(id: stream.currentId, speaker: speaker, text: text, isFinal: update.isFinal, startedAt: update.start, version: stream.version)
+        let utterance = Utterance(id: stream.currentId, speaker: speaker, text: text, isFinal: update.isFinal, startedAt: update.start, version: stream.version, actor: actor)
         transcript.record(utterance)
         dirty = true
         batcher.observe(utterance, at: update.end)

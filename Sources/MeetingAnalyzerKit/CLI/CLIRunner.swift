@@ -87,6 +87,7 @@ public struct CLIRunner {
             case .version: out("\(AppInfo.name) \(AppInfo.version)")
             case .doctor(let locale): try await doctor(locale)
             case .presets: listPresets()
+            case .actorsCheck(let file): try actorsCheck(file)
             case .transcribe(let file, let locale, let model): try await transcribe(file, locale, model)
             case .models(let action): try await models(action)
             case .replay(let options): try await replay(options)
@@ -217,8 +218,25 @@ public struct CLIRunner {
             : "\(agent.command) を起動できません（errno \(code)）")
     }
 
+    /// `ACTOR.md` を読んで、書式を検査し、読み取れた内容を出す（SPEC §3.13）。読めなければ、理由と一緒に、入力の誤りとして断る。
+    private func actorsCheck(_ path: String) throws {
+        let absolute = URL(fileURLWithPath: path).path
+        switch ActorFile.load(path: absolute) {
+        case .failure(let error): throw CLIError.input(error.message)
+        case .success(let list):
+            if outIsTerminal { out(CLIView.actors(list, path: absolute, outStyle)); return }
+            let actors: [[String: Any]] = list.actors.map { actor in
+                var item: [String: Any] = ["name": actor.name, "aliases": actor.aliases, "topics": actor.topics, "self": actor.isSelf]
+                if let role = actor.role { item["role"] = role }
+                return item
+            }
+            out(Self.json(["ok": true, "path": absolute, "actors": actors, "warnings": list.warnings]))
+        }
+    }
+
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
+    /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、Mac 標準の言語モデルで推定する）。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
         var preset: PresetInfo?
@@ -228,6 +246,22 @@ public struct CLIRunner {
         } else {
             preset = presetStore.resolve(id: nil)?.info
         }
+        var actorSource: ActorSource?
+        var labeler: SpeakerLabeler?
+        if let path = options.actors {
+            let absolute = URL(fileURLWithPath: path).path
+            switch ActorFile.load(path: absolute) {
+            case .failure(let error): throw CLIError.input(error.message)
+            case .success(let list):
+                var guesser: SpeakerGuesser?
+                if options.speaker == .others, !list.others.isEmpty {
+                    if case .unavailable(let reason) = AppleSpeakerJudge.availability(locale: Locale(identifier: options.locale)) { throw CLIError.input("話者を推定できません: \(reason)") }
+                    guesser = SpeakerGuesser(list: list, judge: AppleSpeakerJudge())
+                }
+                actorSource = ActorSource(list: list, file: absolute)
+                labeler = SpeakerLabeler(list: list, guesser: guesser)
+            }
+        }
         let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         do { try hub.start() } catch let error as HubError { throw error.cliError }
         defer { hub.stop() }
@@ -235,12 +269,16 @@ public struct CLIRunner {
         let deadline = Date().addingTimeInterval(options.wait)
         while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
 
-        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset)
+        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
-                pipeline.ingest(update, speaker: options.speaker)
+                var actor: ActorLabel?
+                if let labeler, options.speaker == .you || update.isFinal {
+                    do { actor = try await labeler.label(options.speaker, update.text) } catch { throw CLIError.input("話者の推定に失敗しました") }
+                }
+                pipeline.ingest(update, speaker: options.speaker, actor: actor)
                 lastEnd = max(lastEnd, update.end)
             }
         } catch let error as TranscriptionError { throw error.cliError }

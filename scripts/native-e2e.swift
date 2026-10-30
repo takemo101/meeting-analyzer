@@ -111,6 +111,22 @@ do {
     check(bad.status == 2 && lastLine(bad.err).contains("プリセットが見つかりません"), "無い ID の扱いが想定と違う: \(bad.status) \(bad.err)")
     conclude("Z4", pass: "presets が、同梱 6 件と自分のプリセットを、既定を先頭に一覧にする。無い ID の replay は、入力の失敗（終了コード 2）")
 }
+/// ACTOR.md（SPEC §3.13）。検証用の自作の一覧（架空の人物）。
+let actorFile = work + "/ACTOR.md"
+try Data("# アクター\n\n## 山田 太郎\n- 役割: プロダクトマネージャー\n- 呼ばれ方: 山田さん, PM\n- 話題: スケジュール、リリース\n- 本人: はい\n\n## 高橋 健\n- 役割: QA\n- 呼ばれ方: 高橋さん\n- 話題: テスト環境、不具合\n- 好きな色: 青\n".utf8).write(to: URL(fileURLWithPath: actorFile))
+do {
+    let r = run(exe, ["actors", "check", actorFile], env: env, timeout: 10)
+    check(r.status == 0, "終了コード \(r.status): \(r.err)")
+    let d = json(lastLine(r.out))
+    let actors = d?["actors"] as? [[String: Any]] ?? []
+    check(actors.compactMap { $0["name"] as? String } == ["山田 太郎", "高橋 健"], "名前が想定と違う: \(actors)")
+    check(actors.first?["self"] as? Bool == true && actors.last?["self"] as? Bool == false, "本人の印が想定と違う")
+    check((d?["warnings"] as? [String])?.count == 1, "知らない項目の警告が 1 件でない: \(String(describing: d?["warnings"]))")
+    let missing = run(exe, ["actors", "check", work + "/none.md"], env: env, timeout: 10)
+    check(missing.status == 2 && json(lastLine(missing.err))?["code"] as? String == "input", "読めないファイルの扱いが想定と違う: \(missing.status) \(missing.err)")
+    check(run(exe, ["actors", "list"], env: env, timeout: 10).status == 1, "知らない操作を、使い方の誤り（1）にしていない")
+    conclude("Z5", pass: "actors check が、一覧・本人・警告を JSON で出す。読めないファイルは、入力の失敗（終了コード 2）")
+}
 
 // ---------- 音声認識の前提 ----------
 var asrReady = false
@@ -341,6 +357,20 @@ func replayCase(_ id: String, speaker: String, expectedName: String, channel: Bo
 replayCase("R1", speaker: "others", expectedName: "相手")
 replayCase("R2", speaker: "you", expectedName: "本人", preset: "minutes", expectedPreset: ("minutes", "議事録"))
 replayCase("R3", speaker: "others", expectedName: "相手", channel: true, preset: "e2e-custom", expectedPreset: ("e2e-custom", "E2Eカスタム"))
+// R6: 「本人」を、ACTOR.md の本人の名前へ対応づける（モデルを使わない。推定ではない）。記録の行と見出しに、名前が入る。
+do {
+    let id = "R6"
+    if asrReady, sampleReady {
+        let r = run(exe, ["replay", sample, "--speaker", "you", "--title", "e2e-\(id)", "--actors", actorFile], env: env, timeout: 90)
+        check(r.status == 0, "replay の終了コード \(r.status): \(r.err)")
+        let path = json(lastLine(r.out))?["transcriptPath"] as? String ?? ""
+        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        check(text.contains("本人（山田 太郎）:"), "記録の行に、本人の名前がない: \(text)")
+        check(text.contains("アクター（ACTOR.md）: 山田 太郎（本人）、高橋 健"), "記録の見出しに、アクターの一覧がない")
+        check(!text.contains("本人（推定"), "本人に、推定の印が付いている")
+        conclude(id, pass: "replay --actors：「本人」の発言に、ACTOR.md の本人の名前が付き、記録の見出しに一覧が入る")
+    } else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason) }
+}
 
 // ---------- R4: 窓口が使用中 / R5: アプリが無いときの MCP ----------
 do {
