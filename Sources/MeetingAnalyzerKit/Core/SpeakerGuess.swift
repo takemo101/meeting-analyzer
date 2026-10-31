@@ -36,10 +36,13 @@ public struct SpeakerGate: Sendable, Equatable {
     public var minimumConfidence: Double
     /// 「内容を持たない発言」の確率が、これ未満のときだけ付ける。
     public var maximumFiller: Double
+    /// 確信が足りない文を、前の話者に付けるとき：**前の話者とは別の人が、これ以上の確率で、最も確からしい**なら、付けない（話者が替わった直後の文を、前の話者にしない）。
+    public var rivalConfidence: Double
 
-    public init(minimumConfidence: Double = 0.9, maximumFiller: Double = 0.5) {
+    public init(minimumConfidence: Double = 0.9, maximumFiller: Double = 0.5, rivalConfidence: Double = 0.4) {
         self.minimumConfidence = minimumConfidence
         self.maximumFiller = maximumFiller
+        self.rivalConfidence = rivalConfidence
     }
 }
 
@@ -91,6 +94,19 @@ public struct SpeakerGuesser: Sendable {
         /// 判断モデルへ問うた候補と、その答え（問わなかったときは、空・`nil`）。
         public let candidates: [Actor]
         public let answer: SpeakerJudgement?
+
+        /// 判断モデルが、最も確からしいとした人と、その確率（問わなかったとき・答えが壊れているときは `nil`）。
+        public var best: (actor: Actor, probability: Double)? {
+            guard let answer, answer.probabilities.count == candidates.count,
+                  let top = answer.probabilities.indices.max(by: { answer.probabilities[$0] < answer.probabilities[$1] }) else { return nil }
+            return (candidates[top], answer.probabilities[top])
+        }
+
+        /// `actor` の確率（候補にいない・答えが壊れているときは 0）。
+        public func probability(of actor: Actor) -> Double {
+            guard let answer, answer.probabilities.count == candidates.count, let index = candidates.firstIndex(of: actor) else { return 0 }
+            return answer.probabilities[index]
+        }
     }
 
     public func decide(_ text: String) async throws -> Decision {
@@ -131,21 +147,37 @@ public struct SpeakerGuesser: Sendable {
     /// 1 つの発話（無音で区切られた単位）を、**話者ごとの区間に分ける**（SPEC §3.13）。
     /// 文（`SentenceSplitter`）ごとに、`guess` と同じ規則・確信度で、話者を判断し、**確信をもって判断された、隣り合う文の話者が、別の人のところで区切る**。
     /// 判断されなかった文（相づち・短い文・確信度が足りない文）は、前の区間に付ける（先頭なら、最初に判断された区間に付ける）。
+    /// **ただし、確信度が足りない文で、別の人が、`SpeakerGate.rivalConfidence` 以上の確率で最も確からしいときは、その人でない話者の区間に付けず、名前の無い別の区間にする**（前の区間の話者とは別の人が、前の話者より確からしいとき。先頭の文は、最初に判断された区間の話者とは別の人が、最も確からしいとき。話者が替わった前後の文を、となりの話者にしない。名前の無い区間は、続く確信の足りない文を受け、次に確信した文の話者に、さかのぼって付けない）。
     /// 区切りが無く、どの文も判断されなかったときは、本文全体で、もう一度判断する。文が 1 つなら、これまでどおり、その本文を判断する。
     /// 区間の本文をつなぐと、元の本文に戻る（文の間の空白は、区切りで落ちる）。
     public func segments(_ text: String) async throws -> [Segment] {
         let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let sentences = unit == .utterance ? [whole] : SentenceSplitter.split(whole)
         guard sentences.count > 1 else { return [Segment(text: whole, actor: try await guess(whole))] }
-        var groups: [(sentences: [String], actor: Actor?)] = []
+        /// `unnamed`：別の人が有力で、わざと名前を付けなかった区間（先頭の、まだ判断されていない区間と、区別する）。`lean`：先頭の、まだ判断されていない区間で、確信が足りないまま有力だった人。
+        var groups: [(sentences: [String], actor: Actor?, unnamed: Bool, lean: Actor?)] = []
+        func lean(_ decision: Decision) -> Actor? {
+            guard decision.outcome == .lowConfidence, let best = decision.best, best.probability >= gate.rivalConfidence else { return nil }
+            return best.actor
+        }
         for sentence in sentences {
-            let found = try await guess(sentence)
-            guard var last = groups.popLast() else { groups.append(([sentence], found)); continue }
-            if let found, last.actor == nil {
-                last.actor = found; last.sentences.append(sentence); groups.append(last)
-            } else if let found, found != last.actor {
-                groups.append(last); groups.append(([sentence], found))
+            let decision = try await decide(sentence)
+            guard var last = groups.popLast() else { groups.append(([sentence], decision.actor, false, lean(decision))); continue }
+            if let found = decision.actor {
+                if last.actor == nil, !last.unnamed, let leaning = last.lean, leaning != found {
+                    last.unnamed = true; groups.append(last); groups.append(([sentence], found, false, nil))
+                } else if last.actor == nil, !last.unnamed {
+                    last.actor = found; last.sentences.append(sentence); groups.append(last)
+                } else if found != last.actor {
+                    groups.append(last); groups.append(([sentence], found, false, nil))
+                } else {
+                    last.sentences.append(sentence); groups.append(last)
+                }
+            } else if decision.outcome == .lowConfidence, let previous = last.actor, let best = decision.best, best.actor != previous,
+                      best.probability >= gate.rivalConfidence, best.probability > decision.probability(of: previous) {
+                groups.append(last); groups.append(([sentence], nil, true, nil))
             } else {
+                if last.actor == nil, !last.unnamed, let leaning = lean(decision) { last.lean = leaning }
                 last.sentences.append(sentence); groups.append(last)
             }
         }
