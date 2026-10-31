@@ -135,7 +135,7 @@ struct HubTests {
     func fanOutAndClientCount() async throws {
         let (server, directory) = try makeServer()
         defer { server.stop(); try? FileManager.default.removeItem(atPath: directory) }
-        let counts = CountLog()
+        let counts = Collected<Int>()
         server.setClientCountHandler { counts.add($0) }
 
         let first = Inbox(HubClient(socketPath: server.socketPath, retryInterval: 0.05))
@@ -231,11 +231,4 @@ struct HubTests {
         #expect(await waitUntil { inbox.messages.contains(.hello(hubId: second.hubId)) })
         #expect(first.hubId != second.hubId)
     }
-}
-
-final class CountLog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [Int] = []
-    func add(_ value: Int) { lock.withLock { storage.append(value) } }
-    var values: [Int] { lock.withLock { storage } }
 }

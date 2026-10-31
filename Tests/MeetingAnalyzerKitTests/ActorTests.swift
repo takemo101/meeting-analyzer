@@ -239,7 +239,7 @@ private struct Rig {
     let fake = FakeInputs()
     let sink = RecordingSink()
     let clock = TestClock()
-    let notices = Notices()
+    let notices = Collected<LiveSessionNotice>()
     let store = SessionStore(root: tempURL("actors"))
 
     func session(labeler: SpeakerLabeler?, actors: ActorSource? = nil) -> LiveSession {
@@ -259,7 +259,7 @@ struct ActorFlowTests {
     func labelsReachRecordAndEvents() async throws {
         let rig = Rig()
         let actors = try source()
-        let seen = Seen()
+        let seen = Collected<String>()
         let labeler = SpeakerLabeler { speaker, text in
             seen.add("\(speaker.rawValue):\(text)")
             return [LabeledSegment(text: text, actor: speaker == .you ? ActorLabel(name: "山田 太郎", guessed: false) : ActorLabel(name: "佐藤 花子", guessed: true))]
@@ -317,7 +317,7 @@ struct ActorFlowTests {
         rig.clock.advance(65)
         let outcome = try await session.end(reason: .user)
 
-        #expect(rig.notices.all.filter { $0 == .speakerGuessFailed }.count == 1)
+        #expect(rig.notices.values.filter { $0 == .speakerGuessFailed }.count == 1)
         #expect(outcome.utterances == 2)
         #expect(rig.sink.batches.flatMap(\.updates).allSatisfy { $0.actor == nil })
     }
@@ -334,13 +334,6 @@ struct ActorFlowTests {
 }
 
 private enum SpeakerTestError: Error { case modelFailed }
-
-private final class Seen: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [String] = []
-    func add(_ value: String) { lock.withLock { storage.append(value) } }
-    var values: [String] { lock.withLock { storage } }
-}
 
 @Suite("ACTOR.md のファイル：大きさ・文字コード・書式を、読むときに一度だけ検査する")
 struct ActorFileTests {
@@ -427,10 +420,10 @@ struct ActorCommandTests {
 
         let actors = tempURL("attendees-actors", ext: "md")
         try Data(sample.utf8).write(to: actors)
-        let err = Output()
+        let err = Collected<String>()
         let run = ReplayOptions(file: actors.path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0, actors: actors.path, attendees: ["高橋 健", "山田 太郎"])
         let code = await CLIRunner(environment: ["MEETING_ANALYZER_DATA_DIR": tempURL("attendees-data").path], out: { _ in }, err: { err.add($0) }).run(.replay(run))
-        #expect(code == 2 && (err.lines.first ?? "").contains("高橋 健") && (err.lines.first ?? "").contains("山田 太郎"), "\(err.lines)")
+        #expect(code == 2 && (err.values.first ?? "").contains("高橋 健") && (err.values.first ?? "").contains("山田 太郎"), "\(err.values)")
     }
 }
 

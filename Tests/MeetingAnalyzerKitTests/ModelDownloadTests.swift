@@ -81,7 +81,7 @@ struct ModelDownloadTests {
         let store = makeStore(), item = artifact(for: data)
         defer { try? FileManager.default.removeItem(at: store.root) }
         StubProtocol.register(item, honestServer(data))
-        let reports = ProgressLog()
+        let reports = Collected<Int64>()
         try await ModelDownloader(store: store, configuration: makeConfiguration()).download(item) { received, _ in reports.add(received) }
         #expect(store.isInstalled(item))
         #expect(try Data(contentsOf: store.fileURL(item)) == data)
@@ -215,11 +215,4 @@ struct ModelStoreTests {
         #expect(Set(LocalModelCatalog.all.map(\.id)).count == LocalModelCatalog.all.count)
         #expect(TranscriptionChoice(id: "apple") == .apple && TranscriptionChoice(id: "qwen3-asr-0.6b") == .local("qwen3-asr-0.6b") && TranscriptionChoice(id: "nope") == nil)
     }
-}
-
-final class ProgressLog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var items: [Int64] = []
-    func add(_ value: Int64) { lock.lock(); items.append(value); lock.unlock() }
-    var values: [Int64] { lock.lock(); defer { lock.unlock() }; return items }
 }
