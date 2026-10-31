@@ -747,3 +747,7 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 
 - **MIK-026（CLI の JSON 出力を `Encodable` の型に）**：単体 257 件（期待値の変更なし）・E2E 16/16 pass。**変更前後の出力を、文字列で比べた**：デバッグビルドの CLI を、隔離したデータの置き場所で、変更前（main）と変更後に同じ入力で動かし、`doctor`・`models`（一覧・取得の失敗・削除〔文字起こし・判断モデル〕・未知の ID）・`presets`（読めないファイルの `skipped` を含む）・`actors check`（`role` の有る人・無い人。失敗）・`transcribe`・`replay`（`sessionId` を伏せて）・使い方・入力・未知のコマンドの失敗、の標準出力・標準エラー・終了コードを `diff -r`。**`transcribe` の `start`・`end` の小数の書式だけが違った**（変更前 `"end":4.0649375000000001`、変更後 `"end":4.0649375`。`JSONSerialization` が 17 桁で出していたものを、`JSONEncoder` は最短の往復表現で出す。両方とも、同じ倍精度の値に読まれることを確認した）。それ以外は、1 バイトも違わなかった。
 - **未確認**：`models download` の成功の JSON（ネットワークを使うため、実行していない。`Downloaded` の型は、`{ok, id, path}` で、変更前のキーと同じ）。
+
+### 2026-10-31 — リファクタリング（MIK-027）の確認
+
+- **MIK-027（試験の集め役・一時ディレクトリの helper を 1 つに）**：試験だけの変更（プロダクションのコードは変えていない）。`Output`・`Seen`・`Calls`・`Notices`・`CountLog`・`ProgressLog`（同じ形の 6 つ）を、`TestSupport.swift` の `Collected<Element>` 1 つに置き換え、`RecordingSink` も、それを使う形にした。`tempDirectory()`（PresetTests）を `tempURL("presets")` に統一した。単体 257 件（前と同数）・全件 pass。E2E は、プロダクションのコードが同じなので、実行していない。

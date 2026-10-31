@@ -65,11 +65,11 @@ struct CLIViewTests {
     @Test("失敗は、端末では人が読む形（JSON でない）、パイプでは 1 行の JSON")
     func failureFollowsTerminal() async {
         for (terminal, expectJSON) in [(true, false), (false, true)] {
-            let out = Output(), err = Output()
+            let out = Collected<String>(), err = Collected<String>()
             let runner = CLIRunner(environment: [:], out: { out.add($0) }, err: { err.add($0) }, errIsTerminal: terminal)
             let code = await runner.run(.transcribe(file: "/no/such/file.wav", locale: "ja_JP", model: .apple))
             #expect(code == 2)
-            let line = err.lines.first ?? ""
+            let line = err.values.first ?? ""
             let isJSON = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) != nil
             #expect(isJSON == expectJSON, "terminal=\(terminal): \(line)")
             #expect(line.contains("/no/such/file.wav"))
@@ -85,10 +85,10 @@ struct CLIViewTests {
             AsyncThrowingStream { $0.yield(TranscriptionUpdate(text: "こんにちは", isFinal: true, start: 1, end: 2.5)); $0.finish() }
         }
         for terminal in [true, false] {
-            let out = Output()
+            let out = Collected<String>()
             let code = await CLIRunner(environment: ["NO_COLOR": "1"], out: { out.add($0) }, err: { _ in }, updates: updates, outIsTerminal: terminal).run(.transcribe(file: file.path, locale: "ja_JP", model: .apple))
             #expect(code == 0)
-            let line = try #require(out.lines.first)
+            let line = try #require(out.values.first)
             if terminal { #expect(line == "00:01.0 → 00:02.5  こんにちは") } else { #expect((try? JSONSerialization.jsonObject(with: Data(line.utf8))) != nil) }
         }
     }

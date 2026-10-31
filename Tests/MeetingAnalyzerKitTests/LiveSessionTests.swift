@@ -46,13 +46,6 @@ final class TestClock: @unchecked Sendable {
     func advance(_ seconds: TimeInterval) { lock.withLock { current = current.addingTimeInterval(seconds) } }
 }
 
-final class Notices: @unchecked Sendable {
-    private let lock = NSLock()
-    private var items: [LiveSessionNotice] = []
-    var all: [LiveSessionNotice] { lock.withLock { items } }
-    func add(_ notice: LiveSessionNotice) { lock.withLock { items.append(notice) } }
-}
-
 private func root() -> URL { tempURL("live") }
 
 private func eventually(timeout: Double = 3, _ condition: () -> Bool) async -> Bool {
@@ -68,7 +61,7 @@ private struct Rig {
     let fake = FakeInputs()
     let sink = RecordingSink()
     let clock = TestClock()
-    let notices = Notices()
+    let notices = Collected<LiveSessionNotice>()
     let store = SessionStore(root: root())
 
     func session(speakers: [Speaker] = [.you, .others], policy: BatchingPolicy = .standard, tick: Duration = .seconds(60)) -> LiveSession {
@@ -223,7 +216,7 @@ struct LiveSessionTests {
         let session = rig.session()
         try await session.start()
         rig.fake.fail(.others, TranscriptionError.failed("モデル"))
-        #expect(await eventually { rig.notices.all.contains { if case .transcriptionFailed(.others, _) = $0 { return true } else { return false } } })
+        #expect(await eventually { rig.notices.values.contains { if case .transcriptionFailed(.others, _) = $0 { return true } else { return false } } })
         rig.fake.emit(.you, "続けます", final: true, 0, 1)
         let outcome = try await session.end(reason: .user)
         #expect(outcome.utterances == 1)
@@ -238,9 +231,9 @@ struct LiveSessionTests {
         rig.fake.emit(.others, "来週のリリースの件ですがテスト環境はいつ使えますか", 0, 3)
         rig.fake.emit(.you, "来週のリリースの件ですがテスト環境はいつ使えますか", 0.2, 3.2)
         rig.fake.emit(.you, "来週のリリースの件ですがテスト環境はいつ使えますか。", 0.2, 3.5)
-        #expect(await eventually { rig.notices.all.contains(.possibleEcho) })
+        #expect(await eventually { rig.notices.values.contains(.possibleEcho) })
         let outcome = try await session.end(reason: .user)
-        #expect(rig.notices.all.filter { $0 == .possibleEcho }.count == 1)
+        #expect(rig.notices.values.filter { $0 == .possibleEcho }.count == 1)
         #expect(outcome.utterances == 2, "疑っても、発話は消さない")
     }
 
@@ -252,7 +245,7 @@ struct LiveSessionTests {
         rig.fake.emit(.others, "来週のリリースの件ですがテスト環境はいつ使えますか", 0, 3)
         rig.fake.emit(.you, "金曜までに見積もりを出しておきます", 3.5, 6)
         _ = try await session.end(reason: .user)
-        #expect(rig.notices.all.isEmpty)
+        #expect(rig.notices.values.isEmpty)
     }
 
     @Test("取り込みが勝手に止まったら知らせる。利用者が止めたときは知らせない")
@@ -261,9 +254,9 @@ struct LiveSessionTests {
         let session = rig.session()
         try await session.start()
         rig.fake.finish(.others)
-        #expect(await eventually { rig.notices.all.contains(.captureStopped(.others)) })
+        #expect(await eventually { rig.notices.values.contains(.captureStopped(.others)) })
         _ = try await session.end(reason: .user)
-        #expect(rig.notices.all == [.captureStopped(.others)])
+        #expect(rig.notices.values == [.captureStopped(.others)])
     }
 
     @Test("更新が来なくても、時間が進めば（tick）、静かになった発話が送られる")

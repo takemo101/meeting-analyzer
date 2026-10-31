@@ -2,10 +2,6 @@ import Foundation
 import Testing
 @testable import MeetingAnalyzerKit
 
-private func tempDirectory() -> URL {
-    tempURL("presets")
-}
-
 private func write(_ text: String, _ name: String, in directory: URL) throws {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try Data(text.utf8).write(to: directory.appendingPathComponent(name))
@@ -45,7 +41,7 @@ struct AnalysisPresetTests {
     @Test("同梱のプリセット（リポジトリの presets/）は、すべて読め、既定の standard を含む")
     func shippedPresetsParse() throws {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("presets", isDirectory: true)
-        let store = PresetStore(builtinDirectory: directory, userDirectory: tempDirectory())
+        let store = PresetStore(builtinDirectory: directory, userDirectory: tempURL("presets"))
         let loaded = store.load()
         #expect(loaded.skipped.isEmpty, "\(loaded.skipped)")
         #expect(loaded.presets.first?.id == AnalysisPreset.defaultID, "既定が先頭")
@@ -58,7 +54,7 @@ struct AnalysisPresetTests {
 struct PresetStoreTests {
     @Test("同梱と自分のものが並ぶ。同じ名前（ファイル名）は、自分のものが優先。既定が先頭")
     func mergesAndOverrides() throws {
-        let builtin = tempDirectory(), user = tempDirectory()
+        let builtin = tempURL("presets"), user = tempURL("presets")
         defer { try? FileManager.default.removeItem(at: builtin); try? FileManager.default.removeItem(at: user) }
         try write(preset("標準", "同梱の標準"), "standard.md", in: builtin)
         try write(preset("あ同梱"), "a.md", in: builtin)
@@ -72,7 +68,7 @@ struct PresetStoreTests {
 
     @Test("`_`・`.` で始まるファイルと、.md 以外は、読まない。読めないファイルは、理由つきで除く（ほかは読む）")
     func skipsAndReports() throws {
-        let user = tempDirectory()
+        let user = tempURL("presets")
         defer { try? FileManager.default.removeItem(at: user) }
         try write(preset("良い"), "good.md", in: user)
         try write(preset("テンプレート"), "_template.md", in: user)
@@ -88,7 +84,7 @@ struct PresetStoreTests {
 
     @Test("resolve：指定の ID があればそれ、無ければ既定、既定も無ければ nil（プリセットなしで始める）")
     func resolve() throws {
-        let user = tempDirectory()
+        let user = tempURL("presets")
         defer { try? FileManager.default.removeItem(at: user) }
         let empty = PresetStore(builtinDirectory: nil, userDirectory: user)
         #expect(empty.resolve(id: "any") == nil)
@@ -102,7 +98,7 @@ struct PresetStoreTests {
 
     @Test("自分のフォルダを用意：0700 で作り、テンプレート（0600）を置く。テンプレートはプリセットに出ず、2 回目は上書きしない")
     func prepareUserDirectory() throws {
-        let user = tempDirectory().appendingPathComponent("presets", isDirectory: true)
+        let user = tempURL("presets").appendingPathComponent("presets", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: user.deletingLastPathComponent()) }
         let store = PresetStore(builtinDirectory: nil, userDirectory: user)
         #expect(store.prepareUserDirectory() == user)
@@ -166,38 +162,38 @@ struct PresetCLITests {
 
     @Test("presets は、パイプでは 1 行 1 件の JSON（読めなかったファイルは skipped つき）、端末では、名前と説明の表")
     func listing() async throws {
-        let user = tempDirectory()
+        let user = tempURL("presets")
         defer { try? FileManager.default.removeItem(at: user) }
         try write(preset("標準"), "standard.md", in: user)
         try write(preset("自分のレビュー"), "mine.md", in: user)
         try write("---\ndescription: x\n---\n本文", "broken.md", in: user)
         let store = PresetStore(builtinDirectory: nil, userDirectory: user)
 
-        let pipe = Output()
+        let pipe = Collected<String>()
         #expect(await CLIRunner(environment: [:], out: { pipe.add($0) }, err: { _ in }, presetStore: store).run(.presets) == 0)
-        let lines = try pipe.lines.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+        let lines = try pipe.values.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
         #expect(lines.compactMap { $0["id"] as? String } == ["standard", "mine"])
         #expect(lines.first { $0["id"] as? String == "mine" }?["source"] as? String == "user")
         #expect(lines.last?["skipped"] as? String == "broken.md")
 
-        let terminal = Output()
+        let terminal = Collected<String>()
         _ = await CLIRunner(environment: ["NO_COLOR": "1"], out: { terminal.add($0) }, err: { _ in }, presetStore: store, outIsTerminal: true).run(.presets)
-        let text = terminal.lines.joined(separator: "\n")
+        let text = terminal.values.joined(separator: "\n")
         #expect(text.contains("分析のプリセット") && text.contains("自分のレビュー（自分）") && text.contains("既定") && text.contains("broken.md"))
     }
 
     @Test("replay --preset：無い ID は、入力の誤り（終了コード 2）で、窓口も開かない")
     func unknownPreset() async {
-        let user = tempDirectory()
+        let user = tempURL("presets")
         defer { try? FileManager.default.removeItem(at: user) }
-        let err = Output()
+        let err = Collected<String>()
         let audio = tempURL("preset", ext: "aiff")
         try? Data([0]).write(to: audio)
         defer { try? FileManager.default.removeItem(at: audio) }
         let options = ReplayOptions(file: audio.path, speaker: .others, title: "t", locale: "ja_JP", hold: 0, wait: 0, preset: "nope")
         let store = PresetStore(builtinDirectory: nil, userDirectory: user)
         let code = await CLIRunner(environment: [:], out: { _ in }, err: { err.add($0) }, presetStore: store).run(.replay(options))
-        #expect(code == 2 && (err.lines.first ?? "").contains("プリセットが見つかりません: nope"), "\(err.lines)")
+        #expect(code == 2 && (err.values.first ?? "").contains("プリセットが見つかりません: nope"), "\(err.values)")
     }
 }
 

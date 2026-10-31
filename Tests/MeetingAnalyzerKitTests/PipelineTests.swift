@@ -4,12 +4,11 @@ import Testing
 
 /// 出来事を記録するだけの受け口。
 final class RecordingSink: EventSink, @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [TranscriptEvent] = []
+    private let received = Collected<TranscriptEvent>()
 
-    func publish(_ event: TranscriptEvent) { lock.withLock { storage.append(event) } }
+    func publish(_ event: TranscriptEvent) { received.add(event) }
 
-    var events: [TranscriptEvent] { lock.withLock { storage } }
+    var events: [TranscriptEvent] { received.values }
     var kinds: [String] { events.map(\.kind) }
     /// 字幕のバッチ（順序どおり）。
     var batches: [(sequence: Int, updates: [CaptionUpdate])] {

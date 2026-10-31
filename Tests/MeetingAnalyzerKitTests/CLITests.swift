@@ -91,33 +91,18 @@ struct CommandParserTests {
     }
 }
 
-/// 出力を溜めるだけ。
-final class Output: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [String] = []
-    func add(_ line: String) { lock.lock(); storage.append(line); lock.unlock() }
-    var lines: [String] { lock.lock(); defer { lock.unlock() }; return storage }
-}
-
 /// `models` と `--model` の実行（通信・モデルは、差し替える）。
 @Suite("CLIRunner: models と --model")
 struct CLIModelsTests {
-    private final class Calls: @unchecked Sendable {
-        private let lock = NSLock()
-        private var items: [String] = []
-        func add(_ value: String) { lock.lock(); items.append(value); lock.unlock() }
-        var values: [String] { lock.lock(); defer { lock.unlock() }; return items }
-    }
-
     private func environment(_ data: URL) -> [String: String] { ["MEETING_ANALYZER_DATA_DIR": data.path] }
 
     @Test("models：パイプでは、モデルごとに 1 行の JSON（未取得。文字起こし → 話者の推定の順。kind つき）。置き場所は、データの置き場所の models/")
     func list() async {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let data = tempURL("models-cli")
         let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { err.add($0) }).run(.models(.list))
         #expect(code == 0)
-        let rows = out.lines.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        let rows = out.values.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
         #expect(rows.map { $0["id"] as? String } == LocalModelCatalog.all.map(\.id) + DecisionModelCatalog.all.map(\.id))
         #expect(rows.map { $0["kind"] as? String } == LocalModelCatalog.all.map { _ in "transcription" } + DecisionModelCatalog.all.map { _ in "decision" })
         #expect(rows.allSatisfy { $0["installed"] as? Bool == false && $0["downloadedBytes"] as? Int == 0 })
@@ -125,7 +110,7 @@ struct CLIModelsTests {
 
     @Test("models download：音声区間の検出のモデルと、選んだモデルを、この順に取得する。成功は ok。通信の失敗は、終了コード 4（続きから再開できると伝える）")
     func download() async {
-        let calls = Calls(), out = Output(), err = Output()
+        let calls = Collected<String>(), out = Collected<String>(), err = Collected<String>()
         let data = tempURL("models-cli-dl")
         let download: CLIRunner.ModelDownload = { artifact, store, progress in
             calls.add(artifact.filename + "@" + store.directory.path)
@@ -134,18 +119,18 @@ struct CLIModelsTests {
         let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { err.add($0) }, modelDownload: download).run(.models(.download(id: "qwen3-asr-0.6b")))
         #expect(code == 0)
         #expect(calls.values == ["silero-vad-v6.2-F32.gguf@\(data.path)/models", "Qwen3-ASR-0.6B-Q8_0.gguf@\(data.path)/models"])
-        #expect((try? JSONSerialization.jsonObject(with: Data((out.lines.last ?? "").utf8)) as? [String: Any])?["ok"] as? Bool == true)
+        #expect((try? JSONSerialization.jsonObject(with: Data((out.values.last ?? "").utf8)) as? [String: Any])?["ok"] as? Bool == true)
 
-        let failingErr = Output()
+        let failingErr = Collected<String>()
         let failing: CLIRunner.ModelDownload = { _, _, _ in throw ModelDownloadError.network("offline") }
         let failedCode = await CLIRunner(environment: environment(data), out: { _ in }, err: { failingErr.add($0) }, modelDownload: failing).run(.models(.download(id: "qwen3-asr-0.6b")))
-        #expect(failedCode == 4 && errorCode(failingErr.lines.last) == "transcription")
-        #expect(failingErr.lines.last?.contains("続きから") == true && failingErr.lines.last?.contains("offline") == true)
+        #expect(failedCode == 4 && errorCode(failingErr.values.last) == "transcription")
+        #expect(failingErr.values.last?.contains("続きから") == true && failingErr.values.last?.contains("offline") == true)
     }
 
     @Test("transcribe --model：選んだモデルと、データの置き場所のモデルの保管場所を、文字起こしの部品へ渡す")
     func transcribeWithModel() async throws {
-        let seen = Calls(), out = Output()
+        let seen = Collected<String>(), out = Collected<String>()
         let data = tempURL("models-cli-tr")
         let provider: CLIRunner.UpdatesProvider = { _, _, choice, store in
             seen.add("\(choice.id)@\(store.directory.path)")
@@ -153,16 +138,16 @@ struct CLIModelsTests {
         }
         let code = await CLIRunner(environment: environment(data), out: { out.add($0) }, err: { _ in }, updates: provider).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .local("whisper-large-v3-turbo")))
         #expect(code == 0 && seen.values == ["whisper-large-v3-turbo@\(data.path)/models"])
-        #expect(out.lines.count == 1)
+        #expect(out.values.count == 1)
     }
 
     @Test("選んだモデルが取得されていなければ、終了コード 4 で、取得の方法を示す（Mac 標準へ、黙って切り替えない）")
     func missingModel() async throws {
-        let err = Output()
+        let err = Collected<String>()
         let data = tempURL("models-cli-missing")
         let code = await CLIRunner(environment: environment(data), out: { _ in }, err: { err.add($0) }).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .local("qwen3-asr-0.6b")))
-        #expect(code == 4 && errorCode(err.lines.last) == "transcription")
-        #expect(err.lines.last?.contains("models download") == true)
+        #expect(code == 4 && errorCode(err.values.last) == "transcription")
+        #expect(err.values.last?.contains("models download") == true)
     }
 }
 
@@ -196,13 +181,13 @@ struct CLIRunnerTests {
         TranscriptionUpdate(text: "来週のリリースの件です", isFinal: true, start: 0, end: 2.5),
     ]
 
-    private func runner(out: Output, err: Output, environment: [String: String] = [:], updates: @escaping CLIRunner.UpdatesProvider) -> CLIRunner {
+    private func runner(out: Collected<String>, err: Collected<String>, environment: [String: String] = [:], updates: @escaping CLIRunner.UpdatesProvider) -> CLIRunner {
         CLIRunner(environment: environment, out: { out.add($0) }, err: { err.add($0) }, updates: updates)
     }
 
     @Test("replay は、窓口を開けて、開始・バッチ・終了の出来事を、つながった受け手へ出し、結果を 1 行の JSON で出す")
     func replayDeliversThroughHub() async throws {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let data = tempURL("data")
         defer { try? FileManager.default.removeItem(at: data) }
         let socket = shortSocketPath()
@@ -222,12 +207,12 @@ struct CLIRunnerTests {
         }
         let code = await run.value
 
-        #expect(code == 0, "\(err.lines)")
+        #expect(code == 0, "\(err.values)")
         #expect(kinds.first == "started" && kinds.last == "ended" && kinds.dropFirst().dropLast().allSatisfy { $0 == "captions" } && kinds.count >= 3)
         let info = try #require(ended.flatMap { envelope -> SessionEnd? in if case .ended(let end) = envelope.event { return end } else { return nil } })
         #expect(info.utterances == 1)
         #expect(info.durationSeconds == 3, "再生の長さは、音声の長さ（2.5 秒）。処理時間ではない")
-        let last = try #require(out.lines.last)
+        let last = try #require(out.values.last)
         let summary = try #require(JSONSerialization.jsonObject(with: Data(last.utf8)) as? [String: Any])
         #expect(summary["ok"] as? Bool == true && summary["utterances"] as? Int == 1)
         let path = try #require(summary["transcriptPath"] as? String)
@@ -241,17 +226,17 @@ struct CLIRunnerTests {
         let other = HubServer(socketPath: socket)
         try other.start()
         defer { other.stop() }
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
         let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_SOCKET": socket], updates: fakeUpdates(sample)).run(.replay(options))
         #expect(code == 3)
-        #expect(errorCode(err.lines.last) == "hub_unavailable")
-        #expect(out.lines.isEmpty)
+        #expect(errorCode(err.values.last) == "hub_unavailable")
+        #expect(out.values.isEmpty)
     }
 
     @Test("読めない音声ファイルは、入力の失敗（終了コード 2）")
     func unreadableAudio() async throws {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let options = ReplayOptions(file: "/nonexistent/x.aiff", speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
         #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.replay(options)) == 2)
         #expect(await runner(out: out, err: err, updates: fakeUpdates([])).run(.transcribe(file: "/nonexistent/x.aiff", locale: "ja_JP", model: .apple)) == 2)
@@ -259,20 +244,20 @@ struct CLIRunnerTests {
 
     @Test("文字起こしの失敗は、終了コード 4。記録を書かず、終了の出来事も出さない")
     func transcriptionFailure() async throws {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let data = tempURL("data")
         defer { try? FileManager.default.removeItem(at: data) }
         let options = ReplayOptions(file: try audioFile().path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0)
         let code = await runner(out: out, err: err, environment: ["MEETING_ANALYZER_DATA_DIR": data.path, "MEETING_ANALYZER_SOCKET": shortSocketPath()], updates: fakeUpdates(sample, failure: .unsupportedLocale("xx_XX"))).run(.replay(options))
         #expect(code == 4)
-        #expect(out.lines.isEmpty, "失敗した再生を、正常な終了として知らせない")
+        #expect(out.values.isEmpty, "失敗した再生を、正常な終了として知らせない")
         #expect(!FileManager.default.fileExists(atPath: data.appendingPathComponent("sessions").path))
     }
 
     @Test("claude は、アプリの窓口を確かめ、MCP の設定（チャンネル）と利用者の引数を付けて、claude に置き換わる")
     func claudeLaunch() async {
-        let out = Output(), err = Output()
-        let calls = Output()
+        let out = Collected<String>(), err = Collected<String>()
+        let calls = Collected<String>()
         let runner = CLIRunner(
             environment: ["MEETING_ANALYZER_SOCKET": "/tmp/ma-none.sock"], out: { out.add($0) }, err: { err.add($0) },
             updates: fakeUpdates([]),
@@ -280,12 +265,12 @@ struct CLIRunnerTests {
             executablePath: { "/Apps/MeetingAnalyzer.app/Contents/MacOS/MeetingAnalyzer" }
         )
         let code = await runner.run(.launch(agent: .claude, arguments: ["会議を始めます", "--resume"]))
-        let call = calls.lines.first?.components(separatedBy: "\u{1F}") ?? []
+        let call = calls.values.first?.components(separatedBy: "\u{1F}") ?? []
         #expect(call.first == "claude")
         #expect(Array(call.dropFirst().prefix(2)) == ["会議を始めます", "--resume"], "利用者の引数が先")
         #expect(call.suffix(2) == ["--dangerously-load-development-channels", "server:meeting-analyzer-channel"], "チャンネルの指定は、最後")
         #expect(code == 5, "replaceProcess が戻った（置き換えに失敗した）なら、エージェントを起動できない失敗")
-        #expect(errorCode(err.lines.last) == "agent_unavailable")
+        #expect(errorCode(err.values.last) == "agent_unavailable")
     }
 
     @Test("MCP の設定は、このアプリの実行ファイルを --channel で呼ぶ。窓口を変えているときは、同じ値を mcp にも渡す")
@@ -301,37 +286,37 @@ struct CLIRunnerTests {
 
     @Test("アプリを起動するのは、窓口を既定の場所にしているときだけ。動いていれば、何もしない")
     func ensureApp() throws {
-        let launched = Output()
+        let launched = Collected<String>()
         let unreachable = shortSocketPath()
         // 場所を変えている（検証・隔離）：実際のアプリは起動しない。
         #expect(!AgentLauncher.ensureAppRunning(environment: ["MEETING_ANALYZER_SOCKET": unreachable], wait: 0.2, launch: { launched.add("x"); return true }))
-        #expect(launched.lines.isEmpty)
+        #expect(launched.values.isEmpty)
         // 動いている：起動しない。
         let hub = HubServer(socketPath: unreachable)
         try hub.start()
         defer { hub.stop() }
         #expect(AgentLauncher.ensureAppRunning(environment: ["MEETING_ANALYZER_SOCKET": unreachable], wait: 0.2, launch: { launched.add("y"); return true }))
-        #expect(launched.lines.isEmpty)
+        #expect(launched.values.isEmpty)
     }
 
     @Test("transcribe は、確定した結果だけを 1 行ずつ出す")
     func transcribeOutputsFinals() async throws {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let code = await runner(out: out, err: err, updates: fakeUpdates(sample)).run(.transcribe(file: try audioFile().path, locale: "ja_JP", model: .apple))
         #expect(code == 0)
-        #expect(out.lines.count == 1)
-        let line = try #require(JSONSerialization.jsonObject(with: Data(out.lines[0].utf8)) as? [String: Any])
+        #expect(out.values.count == 1)
+        let line = try #require(JSONSerialization.jsonObject(with: Data(out.values[0].utf8)) as? [String: Any])
         #expect(line["text"] as? String == "来週のリリースの件です")
         #expect(line["isFinal"] as? Bool == true)
     }
 
     @Test("help と version は、そのまま出す")
     func helpAndVersion() async {
-        let out = Output(), err = Output()
+        let out = Collected<String>(), err = Collected<String>()
         let r = runner(out: out, err: err, updates: fakeUpdates([]))
         #expect(await r.run(.version) == 0)
-        #expect(out.lines.last == "meeting-analyzer \(AppInfo.version)")
+        #expect(out.values.last == "meeting-analyzer \(AppInfo.version)")
         #expect(await r.run(.help) == 0)
-        #expect(out.lines.last?.contains("replay") == true)
+        #expect(out.values.last?.contains("replay") == true)
     }
 }
