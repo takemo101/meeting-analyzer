@@ -27,8 +27,9 @@ struct ActorListTests {
         #expect(ActorList.parse("# だけ\n説明") == .failure(.empty))
         #expect(ActorList.parse("## 山田\n## 山田\n") == .failure(.duplicate("山田")))
         #expect(ActorList.parse("## 山田\n- 本人: はい\n## 佐藤\n- 本人: yes\n") == .failure(.multipleSelf(["山田", "佐藤"])))
-        let many = (1...13).map { "## 人\($0)\n" }.joined()
-        #expect(ActorList.parse(many) == .failure(.tooMany(max: ActorList.maxActors)))
+        func people(_ count: Int) -> String { (1...count).map { "## 人\($0)\n" }.joined() }
+        #expect(ActorList.parse(people(ActorList.maxActors + 1)) == .failure(.tooMany(max: ActorList.maxActors)))
+        #expect((try? ActorList.parse(people(ActorList.maxActors)).get().actors.count) == ActorList.maxActors, "上限ちょうどは、読める")
     }
 }
 
