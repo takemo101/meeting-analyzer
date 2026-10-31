@@ -241,51 +241,77 @@ public struct CLIRunner {
 
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
-    /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、Mac 標準の言語モデルで推定する）。
+    /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、`--judge` の判断モデルで推定する）。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
-        var preset: PresetInfo?
-        if let id = options.preset {
-            guard let found = presetStore.all().first(where: { $0.id == id }) else { throw CLIError.input("プリセットが見つかりません: \(id)（meeting-analyzer presets で一覧を見られます）") }
-            preset = found.info
-        } else {
-            preset = presetStore.resolve(id: nil)?.info
-        }
-        var actorSource: ActorSource?
-        var labeler: SpeakerLabeler?
-        if let path = options.actors {
-            let absolute = URL(fileURLWithPath: path).path
-            switch ActorFile.load(path: absolute) {
-            case .failure(let error): throw CLIError.input(error.message)
-            case .success(let list):
-                // 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。
-                let attendance = Attendance()
-                if let names = options.attendees {
-                    let known = Set(list.others.map(\.name))
-                    let unknown = names.filter { !known.contains($0) }
-                    guard unknown.isEmpty else { throw CLIError.input("--attendees に、ACTOR.md の相手の側に無い名前があります: \(unknown.joined(separator: "・"))（\(list.others.map(\.name).joined(separator: "・"))）") }
-                    attendance.replace(excluded: known.subtracting(names))
-                }
-                // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。「相手」を再生するときだけ。
-                let model = options.speaker == .others ? options.judge.flatMap(DecisionModelCatalog.model(id:)) : nil
-                if let model, !list.others.isEmpty, !modelStore.isInstalled(model) {
-                    throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
-                }
-                do {
-                    labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance)
-                } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
-                actorSource = ActorSource(list: list, file: absolute)
-            }
-        }
-        let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
-        do { try hub.start() } catch let error as HubError { throw error.cliError }
+        let preset = try resolvePreset(options.preset)
+        let (actorSource, labeler) = try prepareActors(options)
+        let hub = try startHub()
         defer { hub.stop() }
-        // エージェントがつながるのを待つ（つながったら、すぐ始める。上限を過ぎたら、待たずに始める）。
-        let deadline = Date().addingTimeInterval(options.wait)
-        while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+        await waitForAgent(on: hub, upTo: options.wait)
 
         let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
+        let lastEnd = try await play(file, options, labeler: labeler, into: pipeline)
+        // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
+        let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
+        printReplaySummary(end)
+        if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }
+    }
+
+    /// 開始の出来事で渡すプリセット。指定があれば、その ID（無ければ、断る）。無指定なら、既定。
+    private func resolvePreset(_ id: String?) throws -> PresetInfo? {
+        guard let id else { return presetStore.resolve(id: nil)?.info }
+        guard let found = presetStore.all().first(where: { $0.id == id }) else { throw CLIError.input("プリセットが見つかりません: \(id)（meeting-analyzer presets で一覧を見られます）") }
+        return found.info
+    }
+
+    /// `--actors` の `ACTOR.md` と、発話へ名前を付ける部品（指定が無ければ、どちらも無し）。読めない・出席者の名前が無い・判断モデルが無い・読み込めないときは、断る。
+    private func prepareActors(_ options: ReplayOptions) throws -> (ActorSource?, SpeakerLabeler?) {
+        guard let path = options.actors else { return (nil, nil) }
+        let absolute = URL(fileURLWithPath: path).path
+        let list: ActorList
+        switch ActorFile.load(path: absolute) {
+        case .failure(let error): throw CLIError.input(error.message)
+        case .success(let loaded): list = loaded
+        }
+        let attendance = try replayAttendance(options.attendees, in: list)
+        // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。「相手」を再生するときだけ。
+        let model = options.speaker == .others ? options.judge.flatMap(DecisionModelCatalog.model(id:)) : nil
+        if let model, !list.others.isEmpty, !modelStore.isInstalled(model) {
+            throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
+        }
+        do {
+            let labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance)
+            return (ActorSource(list: list, file: absolute), labeler)
+        } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
+    }
+
+    /// 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。
+    private func replayAttendance(_ names: [String]?, in list: ActorList) throws -> Attendance {
+        let attendance = Attendance()
+        guard let names else { return attendance }
+        let known = Set(list.others.map(\.name))
+        let unknown = names.filter { !known.contains($0) }
+        guard unknown.isEmpty else { throw CLIError.input("--attendees に、ACTOR.md の相手の側に無い名前があります: \(unknown.joined(separator: "・"))（\(list.others.map(\.name).joined(separator: "・"))）") }
+        attendance.replace(excluded: known.subtracting(names))
+        return attendance
+    }
+
+    private func startHub() throws -> HubServer {
+        let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
+        do { try hub.start() } catch let error as HubError { throw error.cliError }
+        return hub
+    }
+
+    /// エージェントがつながるのを待つ（つながったら、すぐ始める。上限を過ぎたら、待たずに始める）。
+    private func waitForAgent(on hub: HubServer, upTo seconds: Double) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+
+    /// 音声ファイルの認識結果を、（名前を付けて）パイプラインへ入れる。返すのは、最後の更新の終わりの秒。
+    private func play(_ file: URL, _ options: ReplayOptions, labeler: SpeakerLabeler?, into pipeline: SessionPipeline) async throws -> TimeInterval {
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
@@ -297,8 +323,10 @@ public struct CLIRunner {
                 lastEnd = max(lastEnd, update.end)
             }
         } catch let error as TranscriptionError { throw error.cliError }
-        // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
-        let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
+        return lastEnd
+    }
+
+    private func printReplaySummary(_ end: SessionEnd) {
         if outIsTerminal {
             out(CLIView.replaySummary(sessionId: end.sessionId, utterances: end.utterances, batches: end.batches, duration: TimeInterval(end.durationSeconds), path: end.transcriptPath, outStyle))
         } else {
@@ -306,6 +334,5 @@ public struct CLIRunner {
             if let path = end.transcriptPath { summary["transcriptPath"] = path }
             out(Self.json(summary))
         }
-        if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }
     }
 }
