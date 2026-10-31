@@ -70,7 +70,7 @@ enum CLIView {
 
     /// `actors try`（本文 1 つ）：区間ごとに、付けた名前（または、付けなかった理由）と、上位の候補の確率。
     static func actorsTry(_ result: CLIOutput.TryResult, unitTitle: String, _ style: TerminalStyle) -> String {
-        var lines = [style.bold(unitTitle)]
+        var lines = [style.bold(unitTitle) + style.dim("  " + result.gate.text)]
         for segment in result.segments {
             let who = segment.actor.map { style.success($0) } ?? style.warning("付けない（\(reason(segment.outcome))）")
             lines.append("  " + who + "  " + style.dim(segment.text))
@@ -97,7 +97,7 @@ enum CLIView {
         }
         var rows = [row("全体", report.total)]
         for (tag, score) in report.byTag.sorted(by: { $0.key < $1.key }) { rows.append(row(tag, score)) }
-        let head = style.bold(unitTitle) + style.dim("  発話 \(report.cases) 件・1 件あたり \(report.secondsPerCase) 秒")
+        let head = style.bold(unitTitle) + style.dim("  発話 \(report.cases) 件・1 件あたり \(report.secondsPerCase) 秒・" + report.gate.text)
         return ([head] + style.table(rows, label: style.cyan).map { "  " + $0 }).joined(separator: "\n")
     }
 

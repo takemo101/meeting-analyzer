@@ -255,10 +255,10 @@ public struct CLIRunner {
         if case .cases(let path) = options.input { cases = try evalCases(path, list: list) } else { cases = [] }
         do {
             for unit in options.units {
-                let guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance, unit: unit)
+                let guesser = SpeakerGuesser(list: list, judge: judge, gate: options.gate, attendance: attendance, unit: unit)
                 switch options.input {
-                case .text(let text): try await printTry(text, unit: unit, guesser: guesser)
-                case .cases: printEval(try await SpeakerEvaluation.run(cases: cases, guesser: guesser), unit: unit)
+                case .text(let text): try await printTry(text, unit: unit, guesser: guesser, gate: options.gate)
+                case .cases: printEval(try await SpeakerEvaluation.run(cases: cases, guesser: guesser), unit: unit, gate: options.gate)
                 }
             }
         } catch let error as DecisionModelError { throw CLIError.transcription("判断に失敗しました: " + error.message) }
@@ -279,19 +279,19 @@ public struct CLIRunner {
     }
 
     /// 本文 1 つの判断（区間ごとに、付けた名前・理由・上位の候補の確率）。
-    private func printTry(_ text: String, unit: JudgmentUnit, guesser: SpeakerGuesser) async throws {
+    private func printTry(_ text: String, unit: JudgmentUnit, guesser: SpeakerGuesser, gate: SpeakerGate) async throws {
         var segments: [CLIOutput.TrySegment] = []
         for segment in try await guesser.segments(text) {
             let decision = try await guesser.decide(segment.text)
             let top = zip(decision.candidates, decision.answer?.probabilities ?? []).sorted { $0.1 > $1.1 }.prefix(3).map { CLIOutput.TryCandidate(name: $0.0.name, probability: CLIOutput.rounded($0.1)) }
             segments.append(CLIOutput.TrySegment(text: segment.text, actor: segment.actor?.name, outcome: decision.outcome.rawValue, filler: decision.answer.map { CLIOutput.rounded($0.filler) }, top: Array(top)))
         }
-        let result = CLIOutput.TryResult(unit: unit.rawValue, segments: segments)
+        let result = CLIOutput.TryResult(unit: unit.rawValue, gate: CLIOutput.Gate(gate), segments: segments)
         out(outIsTerminal ? CLIView.actorsTry(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
     }
 
-    private func printEval(_ report: SpeakerEvalReport, unit: JudgmentUnit) {
-        let result = CLIOutput.EvalReport(report, unit: unit.rawValue)
+    private func printEval(_ report: SpeakerEvalReport, unit: JudgmentUnit, gate: SpeakerGate) {
+        let result = CLIOutput.EvalReport(report, unit: unit.rawValue, gate: gate)
         out(outIsTerminal ? CLIView.actorsEval(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
     }
 

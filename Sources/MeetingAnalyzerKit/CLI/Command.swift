@@ -75,6 +75,8 @@ public struct ActorsTryOptions: Equatable {
     /// 試す判断の単位（`both` なら、両方を、同じ入力で比べる）。
     public var units: [JudgmentUnit]
     public var attendees: [String]?
+    /// 名前を付けてよいかの条件（`--min-confidence`・`--max-filler`・`--rival`。無指定は、会議と同じ既定）。
+    public var gate: SpeakerGate = SpeakerGate()
     public var input: Input
 }
 
@@ -114,8 +116,9 @@ public enum CommandParser {
         static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
         static let unit = "--unit", cases = "--cases"
+        static let minConfidence = "--min-confidence", maxFiller = "--max-filler", rival = "--rival"
         static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees, unit]
-        static let actorsTry: Set = [judge, attendees, unit, cases]
+        static let actorsTry: Set = [judge, attendees, unit, cases, minConfidence, maxFiller, rival]
     }
 
     /// 引数を一度だけ検査して、型にする。知らないコマンド・オプション、足りない値、重複は、使い方の誤りとして断る。
@@ -129,7 +132,7 @@ public enum CommandParser {
             return options(rest, allowed: [], positional: 0).map { _ in .presets }
         case "actors":
             if rest.first == "try" { return actorsTryOptions(Array(rest.dropFirst())).map { .actorsTry($0) } }
-            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md> | actors try <ACTOR.md> --judge <ID> [--unit sentence|utterance|both] [--attendees 名前,名前] (<本文> | --cases <ファイル>)")) }
+            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md> | actors try <ACTOR.md> --judge <ID> [--unit sentence|utterance|both] [--attendees 名前,名前] [--min-confidence 0〜1] [--max-filler 0〜1] [--rival 0〜1] (<本文> | --cases <ファイル>)")) }
             return .success(.actorsCheck(file: rest[1]))
         case "doctor":
             return options(rest, allowed: [Option.locale], positional: 0).map { .doctor(locale: $0.values[Option.locale] ?? defaultLocale) }
@@ -191,13 +194,26 @@ public enum CommandParser {
             let values = parsed.values
             guard let judge = values[Option.judge] else { return .failure(.usage("--judge が必要です（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
             guard DecisionModelCatalog.model(id: judge) != nil else { return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
-            return units(values[Option.unit], allowBoth: true).map { units in
-                ActorsTryOptions(
-                    file: parsed.positional[0], judge: judge, units: units, attendees: values[Option.attendees].map(names),
-                    input: values[Option.cases].map { .cases($0) } ?? .text(parsed.positional[1])
-                )
+            return units(values[Option.unit], allowBoth: true).flatMap { units in
+                gate(values).map { gate in
+                    ActorsTryOptions(
+                        file: parsed.positional[0], judge: judge, units: units, attendees: values[Option.attendees].map(names), gate: gate,
+                        input: values[Option.cases].map { .cases($0) } ?? .text(parsed.positional[1])
+                    )
+                }
             }
         }
+    }
+
+    /// 名前を付けてよいかの条件（0〜1。無指定は、`SpeakerGate` の既定）。
+    private static func gate(_ values: [String: String]) -> Result<SpeakerGate, CLIError> {
+        var gate = SpeakerGate()
+        for (name, keyPath) in [(Option.minConfidence, \SpeakerGate.minimumConfidence), (Option.maxFiller, \SpeakerGate.maximumFiller), (Option.rival, \SpeakerGate.rivalConfidence)] {
+            guard let text = values[name] else { continue }
+            guard let value = Double(text), value >= 0, value <= 1 else { return .failure(.usage("\(name) は 0〜1 の確率です")) }
+            gate[keyPath: keyPath] = value
+        }
+        return .success(gate)
     }
 
     /// `--unit` の値（`sentence`・`utterance`。`allowBoth` なら `both`＝両方）。無指定は、既定（文ごと）。

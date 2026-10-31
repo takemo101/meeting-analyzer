@@ -135,6 +135,10 @@ struct ActorsTryCommandTests {
 
         guard case .success(.actorsTry(let utterance)) = CommandParser.parse(["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--unit", "utterance", "本文です、確認"]) else { Issue.record("parse failed"); return }
         #expect(utterance.units == [.utterance])
+        #expect(one.gate == SpeakerGate(), "無指定は、会議と同じ既定")
+
+        guard case .success(.actorsTry(let gated)) = CommandParser.parse(["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--min-confidence", "0.7", "--rival", "0", "--max-filler", "1", "本文です、確認"]) else { Issue.record("parse failed"); return }
+        #expect(gated.gate == SpeakerGate(minimumConfidence: 0.7, maximumFiller: 1, rivalConfidence: 0), "0 と 1（端）も使える。指定しないものは、既定のまま")
     }
 
     @Test("actors try：--judge が無い・知らない判断モデル・知らない単位・本文も --cases も無い・--cases と本文の両方は、使い方の誤り")
@@ -145,6 +149,9 @@ struct ActorsTryCommandTests {
             ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--unit", "word", "本文です"],
             ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b"],
             ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--cases", "c.jsonl", "本文です"],
+            ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--min-confidence", "1.5", "本文です"],
+            ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--rival", "-0.1", "本文です"],
+            ["actors", "try", "A.md", "--judge", "tiny-jev-0.6b", "--max-filler", "high", "本文です"],
         ]
         for arguments in bad {
             guard case .failure(.usage) = CommandParser.parse(arguments) else { Issue.record("\(arguments) を断らない"); return }
