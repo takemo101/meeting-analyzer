@@ -94,13 +94,13 @@ struct ModelSelectionTests {
         try Data(repeating: 2, count: 500).write(to: store.partURL(other.artifact))
         let c = controller(root, defaults)
         #expect(store.downloadedBytes(model.artifact) == 1000)
-        c.discardPartialDownload(model)
+        c.downloads.discardPartial(model)
         #expect(store.downloadedBytes(model.artifact) == 0 && !FileManager.default.fileExists(atPath: store.partURL(model.artifact).path))
         #expect(store.downloadedBytes(other.artifact) == 500, "別のモデルの途中のファイルは、そのまま")
 
         // 取得済みなら、何もしない（取得済みのファイルは消えない）
         try install(model, in: root)
-        c.discardPartialDownload(model)
+        c.downloads.discardPartial(model)
         #expect(c.isInstalled(model))
     }
 }
