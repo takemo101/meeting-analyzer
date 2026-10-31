@@ -36,39 +36,26 @@ public enum CLIError: Error, Equatable {
     }
 }
 
+/// `replay` のオプション（読み取りの境界 `CommandParser` で、検査して作る）。初期化は、メンバーワイズ（宣言の順）。
 public struct ReplayOptions: Equatable {
     public var file: String
     public var speaker: Speaker
     public var title: String
     public var locale: String
     /// 再生が終わってから、窓口を開けておく秒数（エージェントが読めるように）。
-    public var hold: Double
+    public var hold: Double = 0
     /// 再生を始める前に、エージェントがつながるのを待つ秒数の上限（つながったら、すぐ始める）。
-    public var wait: Double
+    public var wait: Double = 0
     /// 開始の出来事で渡す、分析のプリセットの ID（SPEC §3.11）。無指定なら、既定。
     public var preset: String?
     /// 使う文字起こし（SPEC §3.12）。無指定なら、Mac 標準。
-    public var model: TranscriptionChoice
+    public var model: TranscriptionChoice = .apple
     /// 使う `ACTOR.md` のパス（SPEC §3.13）。無指定なら、アクターを使わない。
     public var actors: String?
     /// 話者の推定に使う判断モデルの ID（`DecisionModelCatalog`。SPEC §3.13）。無指定なら、推定しない（「相手」のまま）。
     public var judge: String?
     /// 出席者の名前（相手の側の人。SPEC §3.13）。無指定なら、ACTOR.md の全員。
     public var attendees: [String]?
-
-    public init(file: String, speaker: Speaker, title: String, locale: String, hold: Double, wait: Double, preset: String? = nil, model: TranscriptionChoice = .apple, actors: String? = nil, judge: String? = nil, attendees: [String]? = nil) {
-        self.actors = actors
-        self.judge = judge
-        self.attendees = attendees
-        self.model = model
-        self.file = file
-        self.speaker = speaker
-        self.title = title
-        self.locale = locale
-        self.hold = hold
-        self.wait = wait
-        self.preset = preset
-    }
 }
 
 /// `models` の操作。ID は、一覧（`LocalModelCatalog`・`DecisionModelCatalog`）にあるものだけ（読み取りの境界で検査済み）。
@@ -100,6 +87,13 @@ public enum Command: Equatable {
 public enum CommandParser {
     public static let defaultLocale = "ja_JP"
 
+    /// オプションの名前（検査する場所・許す一覧で、同じ文字列を重ねて書かない）。
+    private enum Option {
+        static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
+        static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees]
+    }
+
     /// 引数を一度だけ検査して、型にする。知らないコマンド・オプション、足りない値、重複は、使い方の誤りとして断る。
     public static func parse(_ arguments: [String]) -> Result<Command, CLIError> {
         guard let first = arguments.first else { return .success(.gui) }
@@ -113,10 +107,10 @@ public enum CommandParser {
             guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md>")) }
             return .success(.actorsCheck(file: rest[1]))
         case "doctor":
-            return options(rest, allowed: ["--locale"], positional: 0).map { .doctor(locale: $0.values["--locale"] ?? defaultLocale) }
+            return options(rest, allowed: [Option.locale], positional: 0).map { .doctor(locale: $0.values[Option.locale] ?? defaultLocale) }
         case "transcribe":
-            return options(rest, allowed: ["--locale", "--model"], positional: 1).flatMap { parsed in
-                model(parsed.values["--model"]).map { .transcribe(file: parsed.positional[0], locale: parsed.values["--locale"] ?? defaultLocale, model: $0) }
+            return options(rest, allowed: [Option.locale, Option.model], positional: 1).flatMap { parsed in
+                model(parsed.values[Option.model]).map { .transcribe(file: parsed.positional[0], locale: parsed.values[Option.locale] ?? defaultLocale, model: $0) }
             }
         case "models":
             switch rest.count {
@@ -127,43 +121,49 @@ public enum CommandParser {
             default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
             }
         case "replay":
-            return options(rest, allowed: ["--speaker", "--title", "--locale", "--hold", "--wait", "--preset", "--model", "--actors", "--judge", "--attendees"], positional: 1).flatMap { parsed in
-                let speakerText = parsed.values["--speaker"] ?? "others"
-                guard let speaker = Speaker(rawValue: speakerText) else { return .failure(.usage("--speaker は you か others です")) }
-                let chosen: TranscriptionChoice
-                switch model(parsed.values["--model"]) {
-                case .success(let value): chosen = value
-                case .failure(let error): return .failure(error)
-                }
-                if let judge = parsed.values["--judge"], DecisionModelCatalog.model(id: judge) == nil {
-                    return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
-                }
-                if parsed.values["--attendees"] != nil, parsed.values["--actors"] == nil {
-                    return .failure(.usage("--attendees は、--actors と一緒に使います"))
-                }
-                var seconds: [String: Double] = ["--hold": 0, "--wait": 0]
-                for name in ["--hold", "--wait"] {
-                    if let text = parsed.values[name] {
-                        guard let value = Double(text), value >= 0, value <= 3600 else { return .failure(.usage("\(name) は 0〜3600 の秒数です")) }
-                        seconds[name] = value
-                    }
-                }
-                return .success(.replay(ReplayOptions(
-                    file: parsed.positional[0], speaker: speaker,
-                    title: parsed.values["--title"] ?? "replay-" + URL(fileURLWithPath: parsed.positional[0]).deletingPathExtension().lastPathComponent,
-                    locale: parsed.values["--locale"] ?? defaultLocale, hold: seconds["--hold"] ?? 0, wait: seconds["--wait"] ?? 0, preset: parsed.values["--preset"], model: chosen, actors: parsed.values["--actors"], judge: parsed.values["--judge"],
-                    attendees: parsed.values["--attendees"].map { $0.split(whereSeparator: { $0 == "," || $0 == "、" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-                )))
-            }
-        case _ where LaunchableAgent(rawValue: first) != nil:
-            return .success(.launch(agent: LaunchableAgent(rawValue: first)!, arguments: rest))
+            return options(rest, allowed: Option.replay, positional: 1).flatMap(replayOptions).map { .replay($0) }
         case "mcp":
             if rest.isEmpty { return .success(.mcp(channel: false)) }
             if rest == ["--channel"] { return .success(.mcp(channel: true)) }
             return .failure(.usage("mcp に渡せるのは --channel だけです"))
         default:
+            if let agent = LaunchableAgent(rawValue: first) { return .success(.launch(agent: agent, arguments: rest)) }
             return .failure(.usage("知らないコマンドです: \(first)"))
         }
+    }
+
+    /// `replay` の値を、一度だけ検査して、型にする（検査の順：話者 → モデル → 判断モデル → 出席者 → 秒数）。
+    private static func replayOptions(_ parsed: Parsed) -> Result<ReplayOptions, CLIError> {
+        let values = parsed.values
+        guard let speaker = Speaker(rawValue: values[Option.speaker] ?? "others") else { return .failure(.usage("--speaker は you か others です")) }
+        return model(values[Option.model]).flatMap { chosen in
+            if let judge = values[Option.judge], DecisionModelCatalog.model(id: judge) == nil {
+                return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
+            }
+            if values[Option.attendees] != nil, values[Option.actors] == nil { return .failure(.usage("--attendees は、--actors と一緒に使います")) }
+            return seconds(Option.hold, values).flatMap { hold in
+                seconds(Option.wait, values).map { wait in
+                    let file = parsed.positional[0]
+                    return ReplayOptions(
+                        file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
+                        locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
+                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names)
+                    )
+                }
+            }
+        }
+    }
+
+    /// 秒数のオプション（0〜3600）。無指定は 0。
+    private static func seconds(_ name: String, _ values: [String: String]) -> Result<Double, CLIError> {
+        guard let text = values[name] else { return .success(0) }
+        guard let value = Double(text), value >= 0, value <= 3600 else { return .failure(.usage("\(name) は 0〜3600 の秒数です")) }
+        return .success(value)
+    }
+
+    /// 「、」または「,」で区切った名前（前後の空白を除き、空は捨てる）。
+    private static func names(_ text: String) -> [String] {
+        text.split(whereSeparator: { $0 == "," || $0 == "、" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
     /// `--model` の値を、一度だけ検査して、選択にする。無指定は、Mac 標準。
