@@ -79,13 +79,8 @@ public actor LiveSession {
     private var segmentActive = false
     private var stopping = false
     private var ticker: Task<Void, Never>?
-    private let screen: ScreenFeed?
-    private let screenshots: ScreenshotStore?
-    private let screenInterval: Duration
-    private var screenGate: ScreenshotGate
-    private var screenStability = ScreenStability()
-    private var screenTicker: Task<Void, Never>?
-    private var screenFailureReported = false
+    /// 画面の取り込み（`screen` と `screenshots` を、両方選んでいるときだけ）。
+    private let screenRecorder: ScreenRecorder?
     private var echo = EchoDetector()
     private var echoReported = false
     private let labeler: SpeakerLabeler?
@@ -116,10 +111,11 @@ public actor LiveSession {
         self.finalizeTimeout = finalizeTimeout
         self.notify = notify
         self.labeler = labeler
-        self.screen = screen
-        self.screenshots = screenshots
-        self.screenInterval = screenInterval
-        self.screenGate = ScreenshotGate(minGap: screenMinGap)
+        self.screenRecorder = screen.flatMap { feed in
+            screenshots.map { store in
+                ScreenRecorder(feed: feed, store: store, sessionId: sessionId, interval: screenInterval, minGap: screenMinGap, elapsed: { clock().timeIntervalSince(startedAt) }, notify: notify)
+            }
+        }
         self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset, actors: actors, checkpointInterval: 10)
     }
 
@@ -132,19 +128,19 @@ public actor LiveSession {
         guard lifecycle.phase == .idle else { throw LiveSessionError.invalidState(lifecycle.phase) }
         guard !speakers.isEmpty else { throw LiveSessionError.failed("取り込む音声が選ばれていません") }
         // 画面を選んでいるときは、最初の 1 枚を、ここで撮る（権限の確認は、開始の操作の中で出す。撮れなければ、何も始めない）。
-        try await captureScreen(throwing: true)
-        do { try await beginSegment() } catch { discardScreenshots(); throw error }
+        if let first = try await screenRecorder?.captureFirst() { attach(first) }
+        do { try await beginSegment() } catch { await screenRecorder?.discard(); throw error }
         try? lifecycle.start()
         pipeline.begin(sources: speakers)
         startTicker()
-        startScreenTicker()
+        await startScreenRecording()
     }
 
     /// 一時停止する。取り込みを止め、認識の残りを確定して取り込み、未送信の発話を出し切る。
     public func pause() async throws {
         guard lifecycle.phase == .running else { throw LiveSessionError.invalidState(lifecycle.phase) }
         stopTicker()
-        stopScreenTicker()
+        await screenRecorder?.stopPeriodic()
         await endSegment()
         try? lifecycle.pause()
         pipeline.flushPending(at: elapsed())
@@ -156,14 +152,14 @@ public actor LiveSession {
         try await beginSegment()
         try? lifecycle.resume()
         startTicker()
-        startScreenTicker()
+        await startScreenRecording()
     }
 
     /// 終了する。取り込みを止める → 認識の残りを取り込む → 未送信を出し切る → 記録を書く → 最後に終了の出来事を 1 回出す（SPEC §3.8）。
     public func end(reason: EndReason) async throws -> LiveSessionOutcome {
         guard lifecycle.phase == .running || lifecycle.phase == .paused else { throw LiveSessionError.invalidState(lifecycle.phase) }
         stopTicker()
-        stopScreenTicker()
+        await screenRecorder?.stopPeriodic()
         await endSegment()
         try? lifecycle.end(reason)
         let now = clock()
@@ -268,70 +264,13 @@ public actor LiveSession {
 
     // MARK: 画面
 
-    private func startScreenTicker() {
-        guard screen != nil else { return }
-        screenTicker = Task { [screenInterval] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: screenInterval)
-                if Task.isCancelled { break }
-                try? await self.captureScreen(throwing: false)
-            }
-        }
+    /// 実行中の定期の撮影を始める。保存した画像は、この actor の中で、次のバッチへ添える（パイプラインを、直列に使うため）。
+    private func startScreenRecording() async {
+        await screenRecorder?.startPeriodic { [self] shot in await self.attach(shot) }
     }
 
-    private func stopScreenTicker() {
-        screenTicker?.cancel()
-        screenTicker = nil
-    }
-
-    /// 会議が始まらなかったとき（開始に失敗）の画像を、消す。
-    private func discardScreenshots() {
-        screenshots?.deleteAll(sessionId: sessionId)
-    }
-
-    /// 画面を 1 枚撮り、前に保存した画面から変化があれば（かつ、前の保存から `screenMinGap` 秒たっていれば）、縮小した JPEG にして保存し、次のバッチへ添える。
-    /// `throwing`：開始のときだけ true。権限の失敗は、開始の失敗として返す。それ以外の失敗は、実行中と同じく、1 回だけ知らせて、続ける（字幕の転送を止めない）。
-    private func captureScreen(throwing: Bool) async throws {
-        guard let screen, let screenshots else { return }
-        let snapshot: CGImage
-        do {
-            snapshot = try await screen.snapshot()
-        } catch {
-            // 開始のときに止めるのは、権限の失敗だけ（許可の確認を、開始の操作の中で出すため）。ウィンドウが見えていない・撮れないときは、
-            // 会議を始めて、知らせを 1 回出し、撮れるようになるのを待つ（字幕の転送を止めない）。
-            if throwing, case let mapped = Self.map(error), case .capture(.permissionDenied) = mapped { throw mapped }
-            if !screenFailureReported && !Task.isCancelled {
-                screenFailureReported = true
-                notify(.screenshotFailed(Self.screenFailureText(error)))
-            }
-            return
-        }
-        guard throwing || lifecycle.phase == .running else { return }
-        let now = elapsed()
-        // フルスクリーンの動画などで、枠が、見えている内容より大きいとき、片側（上と右など）に空白が残る。その帯を、切り落とす。
-        let image = ImageTools.trimmingUnrenderedBands(snapshot)
-        guard screenGate.isOpen(at: now) else { return }
-        // ウィンドウが伸び縮みしている最中の画像は、保存しない（次の確認まで待つ）。
-        guard screenStability.isSettled(width: snapshot.width, height: snapshot.height) else { return }
-        guard let signature = ImageTools.signature(of: image), screenGate.hasChanged(signature),
-              let jpeg = ImageTools.jpegData(of: image) else { return }
-        let index = screenGate.nextIndex
-        switch screenshots.save(jpeg, sessionId: sessionId, index: index) {
-        case .success(let url):
-            screenGate.didSave(signature, at: now)
-            pipeline.attachScreenshot(path: url.path, relativePath: ScreenshotStore.relativePath(index: index), at: now)
-        case .failure:
-            if throwing { throw LiveSessionError.failed("画面の画像を保存できません") }
-            if !screenFailureReported { screenFailureReported = true; notify(.screenshotFailed("画像を保存できません")) }
-        }
-    }
-
-    private static func screenFailureText(_ error: Error) -> String {
-        switch error {
-        case CaptureError.permissionDenied: return "画面を撮れません（画面収録の許可を確認してください）"
-        case CaptureError.targetNotFound(let reason), CaptureError.failed(let reason): return reason
-        default: return "画面を撮れません"
-        }
+    private func attach(_ shot: ScreenRecorder.Shot) {
+        pipeline.attachScreenshot(path: shot.path, relativePath: shot.relativePath, at: shot.at)
     }
 
     private func tick() {
