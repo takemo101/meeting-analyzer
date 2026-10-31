@@ -12,6 +12,7 @@ meeting-analyzer の補助文書の入口。製品要件・受け入れ条件・
 | [開発手順](development.md) | ビルド・テスト・E2E・mikan・GitButler・PR を、どう進めるか | 追加の実施権限・Issue 状態の複製 |
 | [構成説明](architecture.md) | Module の責務・状態の所有・時間と並行・失敗はどう関係するか | 確定 API・実装順序・動作の保証 |
 | [参考にした設計原則](references.md) | どの設計原則を選び、何を選ばなかったか。コードのどこに現れるか | 製品要件・原則の全文の複製 |
+| [リファクタリングの観点](refactoring.md) | 動作を変えずに見直すときの、観点（責務・抽象・失敗・名前・論理・古い経路・コメント・テスト）と進め方 | 製品要件・実施権限・スコア化 |
 | [検証手順と記録](verification.md) | SPEC の条件をどう観測し、何をいつ確認したか、何が人間の確認待ちか | 新しい合格条件・未実施の成功・実施権限 |
 | [macOS 共通検証スキル](../.agents/skills/verifying-macos-apps/SKILL.md) | アプリを問わず、実操作・期待値・証拠をどう検証し、何を主張してよいか | 製品仕様・成功履歴・追加の操作権限 |
 | [固有レシピ](../.agents/skills/verifying-meeting-analyzer/SKILL.md) | 共通手順を、現存するケース・コマンドへどう対応付けるか | 仕様や Issue 状態の複製 |
@@ -60,6 +61,7 @@ docs/
   development.md       ビルド・テスト・E2E・mikan・GitButler・PR
   architecture.md      構成・状態・時間と並行・失敗
   references.md        参考にした設計原則（選択と不採用）
+  refactoring.md       リファクタリングの観点と進め方
   verification.md      検証手順・記録・人間の確認待ち
 ```
 
