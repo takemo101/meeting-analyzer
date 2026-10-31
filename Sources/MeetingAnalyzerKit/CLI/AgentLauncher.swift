@@ -81,20 +81,13 @@ public enum AgentLauncher {
         return nil
     }
 
-    /// アプリに同梱したファイル（`Contents/Resources/<名前>`）。実行ファイルは `Contents/MacOS/` にある（シンボリックリンク経由でも、実パスで探す）。無ければ nil。
-    static func bundledResource(_ name: String, executable: String) -> String? {
-        let resources = URL(fileURLWithPath: executable).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources")
-        let file = resources.appendingPathComponent(name).path
-        return FileManager.default.isReadableFile(atPath: file) ? file : nil
-    }
-
-    static func bundledSkillPath(executable: String) -> String? { bundledResource("SKILL.md", executable: executable) }
+    static func bundledSkillPath(executable: String) -> String? { BundledResources.path("SKILL.md", executable: executable) }
 
     /// pi・omp に、字幕を押し込む拡張（`Contents/Resources/meeting-analyzer-pi.js`）。
-    static func bundledExtensionPath(executable: String) -> String? { bundledResource("meeting-analyzer-pi.js", executable: executable) }
+    static func bundledExtensionPath(executable: String) -> String? { BundledResources.path("meeting-analyzer-pi.js", executable: executable) }
 
     /// opencode に、字幕を押し込むプラグイン（`Contents/Resources/meeting-analyzer-opencode/`。ディレクトリ）。
-    static func bundledOpencodePluginPath(executable: String) -> String? { bundledResource("meeting-analyzer-opencode", executable: executable) }
+    static func bundledOpencodePluginPath(executable: String) -> String? { BundledResources.path("meeting-analyzer-opencode", executable: executable) }
 
     /// 窓口の場所を、環境変数で変えているときは、検証・隔離のための起動とみなす（実際のアプリは、起動しない）。
     static func usesDefaultHub(environment: [String: String]) -> Bool {

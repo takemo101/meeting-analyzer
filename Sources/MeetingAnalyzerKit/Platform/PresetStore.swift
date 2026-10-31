@@ -18,8 +18,7 @@ public struct PresetStore: Sendable {
 
     /// 実際の置き場所。同梱のものは、実行ファイル（`Contents/MacOS/`）から見た `Contents/Resources/presets`。
     public static func standard(environment: [String: String] = ProcessInfo.processInfo.environment) -> PresetStore {
-        let executable = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
-        let builtin = AgentLauncher.bundledResource("presets", executable: executable).map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let builtin = BundledResources.path("presets", executable: BundledResources.currentExecutablePath()).map { URL(fileURLWithPath: $0, isDirectory: true) }
         return PresetStore(builtinDirectory: builtin, userDirectory: RuntimePaths.dataDirectory(environment: environment).appendingPathComponent("presets", isDirectory: true))
     }
 
