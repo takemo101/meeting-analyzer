@@ -88,6 +88,7 @@ public struct CLIRunner {
             case .doctor(let locale): try await doctor(locale)
             case .presets: listPresets()
             case .actorsCheck(let file): try actorsCheck(file)
+            case .actorsTry(let options): try await actorsTry(options)
             case .transcribe(let file, let locale, let model): try await transcribe(file, locale, model)
             case .models(let action): try await models(action)
             case .replay(let options): try await replay(options)
@@ -229,6 +230,71 @@ public struct CLIRunner {
         }
     }
 
+    /// `ACTOR.md` と判断モデルで、本文 1 つ、または、評価の件（`--cases`）を、判断して見せる（診断。SPEC §3.13）。会議と同じ規則・同じ判断モデル・同じ道（`SpeakerGuesser.segments`）を通す。
+    /// 結果は、判断の単位（`--unit`）ごとに出す（`both` なら、同じ入力で、両方を比べられる）。
+    private func actorsTry(_ options: ActorsTryOptions) async throws {
+        let absolute = URL(fileURLWithPath: options.file).path
+        let list: ActorList
+        switch ActorFile.load(path: absolute) {
+        case .failure(let error): throw CLIError.input(error.message)
+        case .success(let loaded): list = loaded
+        }
+        guard !list.others.isEmpty else { throw CLIError.input("ACTOR.md に、相手の側の人がいません（本人だけでは、判断しません）") }
+        let attendance = try replayAttendance(options.attendees, in: list)
+        guard let model = DecisionModelCatalog.model(id: options.judge) else { throw CLIError.usage("知らない判断モデルです: \(options.judge)") }
+        guard modelStore.isInstalled(model) else {
+            throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
+        }
+        let judge: SystemOneJudge
+        do {
+            judge = try SystemOneJudge(model: model, store: modelStore, candidates: list.others)
+            try judge.prepare()
+        } catch { throw CLIError.transcription("判断モデルを読み込めません: " + ((error as? DecisionModelError)?.message ?? "\(error)")) }
+
+        let cases: [SpeakerEvalCase]
+        if case .cases(let path) = options.input { cases = try evalCases(path, list: list) } else { cases = [] }
+        do {
+            for unit in options.units {
+                let guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance, unit: unit)
+                switch options.input {
+                case .text(let text): try await printTry(text, unit: unit, guesser: guesser)
+                case .cases: printEval(try await SpeakerEvaluation.run(cases: cases, guesser: guesser), unit: unit)
+                }
+            }
+        } catch let error as DecisionModelError { throw CLIError.transcription("判断に失敗しました: " + error.message) }
+    }
+
+    /// 評価の件のファイルを読む（読めない・ACTOR.md の相手の側に無い正解の名前は、断る）。
+    private func evalCases(_ path: String, list: ActorList) throws -> [SpeakerEvalCase] {
+        let url = try readableFile(path)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { throw CLIError.input("ファイルを読めません（UTF-8 の JSON Lines）: \(path)") }
+        let cases: [SpeakerEvalCase]
+        switch SpeakerEvalCase.parse(jsonLines: text) {
+        case .failure(let error): throw CLIError.input(error.message)
+        case .success(let parsed): cases = parsed
+        }
+        let known = Set(list.others.map(\.name))
+        if let unknown = cases.flatMap(\.sentences).compactMap(\.actor).first(where: { !known.contains($0) }) { throw CLIError.input(SpeakerEvalError.unknownActor(unknown).message) }
+        return cases
+    }
+
+    /// 本文 1 つの判断（区間ごとに、付けた名前・理由・上位の候補の確率）。
+    private func printTry(_ text: String, unit: JudgmentUnit, guesser: SpeakerGuesser) async throws {
+        var segments: [CLIOutput.TrySegment] = []
+        for segment in try await guesser.segments(text) {
+            let decision = try await guesser.decide(segment.text)
+            let top = zip(decision.candidates, decision.answer?.probabilities ?? []).sorted { $0.1 > $1.1 }.prefix(3).map { CLIOutput.TryCandidate(name: $0.0.name, probability: CLIOutput.rounded($0.1)) }
+            segments.append(CLIOutput.TrySegment(text: segment.text, actor: segment.actor?.name, outcome: decision.outcome.rawValue, filler: decision.answer.map { CLIOutput.rounded($0.filler) }, top: Array(top)))
+        }
+        let result = CLIOutput.TryResult(unit: unit.rawValue, segments: segments)
+        out(outIsTerminal ? CLIView.actorsTry(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
+    }
+
+    private func printEval(_ report: SpeakerEvalReport, unit: JudgmentUnit) {
+        let result = CLIOutput.EvalReport(report, unit: unit.rawValue)
+        out(outIsTerminal ? CLIView.actorsEval(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
+    }
+
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
     /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、`--judge` の判断モデルで推定する）。
@@ -272,7 +338,7 @@ public struct CLIRunner {
             throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
         }
         do {
-            let labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance)
+            let labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance, unit: options.unit)
             return (ActorSource(list: list, file: absolute), labeler)
         } catch { throw CLIError.transcription("判断モデルを読み込めません: " + ((error as? DecisionModelError)?.message ?? "\(error)")) }
     }

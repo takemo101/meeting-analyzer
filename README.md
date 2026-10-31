@@ -165,6 +165,8 @@ $EXE doctor                               # この Mac で、その言語のオ�
 $EXE transcribe sample.aiff               # 確定した結果を出す（パイプなら 1 行 1 件の JSON）
 $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイルをセッションとして再生し、窓口を開ける
 $EXE actors check ACTOR.md                # ACTOR.md の書式を検査して、読み取れた内容を出す
+$EXE actors try ACTOR.md --judge tiny-jev-0.6b "この画面の表示が遅いです"   # 診断：この ACTOR.md と判断モデルで、誰に付くか・確率・付けない理由を見る
+$EXE actors try ACTOR.md --judge tiny-jev-0.6b --unit both --cases eval/cases.jsonl   # 評価：合成の件で、判断の単位ごとの正解・間違いを数える（eval/README.md）
 $EXE --help
 ```
 
