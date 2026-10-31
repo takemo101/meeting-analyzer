@@ -768,3 +768,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 
 - **MIK-029（コメントと文書のずれ）**：コメントと文書だけの変更（コードの動作は変えていない）。単体 257 件・全件 pass。`SessionPipeline` の `checkpointInterval`・`lastCheckpoint`・`dirty` の説明を、フィールドごとに 1 つずつにした。`MeetingController`・`CLIView` の先頭のコメントを、現在の責務（`ModelDownloads`・`ActorSelection`・`OperationGate`・`CLIOutput`）に合わせた。`docs/architecture.md` の表は、MIK-016〜030 で、その都度、更新済み。
 - **確かめた**：`docs/`・`README.md`・`SPEC.md`・`AGENTS.md`・`skills/*/SKILL.md` の、`.md` へのリンク（すべて存在する）。`docs/architecture.md` の、バッククォートで囲んだ型名（存在しないものは、ディレクトリ名・ファイル名の `NativeSpeech`〔`Transcription/NativeSpeech.swift`〕などの、型でないもののみ）。`Sources` の `TODO`・`FIXME`（0 件）。消した名前（`EndedInfo`・`withNote`・`Self.json`・`downloadFailure`・`cancelDownload`・`discardPartialDownload`・`actorSetup`）の、`docs/`・`README.md`・`SPEC.md`・`AGENTS.md`・`skills/` からの参照（過去の検証記録〔この文書〕を除いて 0 件）。
+
+### 2026-10-31 — v0.1.12 のリリース（MIK-031）
+
+- **内容**：リファクタリング（MIK-016〜030。挙動は同じ。`transcribe` の `start`・`end` の小数の書式だけが、最短の表現になった〔MIK-026〕）。
+- **操作**：PR #38（版を 0.1.12 へ。Info.plist・`AppInfo.version`・native-e2e・README）を、CI の 3 つの確認が通ってから merge（1669a43）。main の同じ commit に `v0.1.12` を付けて push。release ワークフロー（単体テスト → DMG → 検査 → Release）が成功した。
+- **確認（公開物）**：https://github.com/takemo101/meeting-analyzer/releases/tag/v0.1.12 （draft・prerelease ではない）。`MeetingAnalyzer-0.1.12.dmg` と `.sha256` が付く。ダウンロードして、SHA-256 `1bd4b122…0914c` が `.sha256` と一致。`hdiutil verify` OK。読み取り専用で開いた DMG の中のアプリは、版 0.1.12・ad-hoc 署名・`--version` が `meeting-analyzer 0.1.12`。
+- **確認前のローカル**：単体 257 件・E2E 16/16 pass。
+- **未確認**：リリースの DMG を、実機へ入れて起動すること（利用者の `just install` など）。この版で、実際の会議（マイク・システム音声）を取り込むこと。
