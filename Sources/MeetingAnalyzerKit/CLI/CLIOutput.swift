@@ -106,9 +106,24 @@ enum CLIOutput {
         let probability: Double
     }
 
+    /// 判断の条件（`SpeakerGate`）。結果が、どの条件のものかが分かるように、結果に添える。
+    struct Gate: Encodable {
+        let minConfidence: Double
+        let maxFiller: Double
+        let rival: Double
+
+        init(_ gate: SpeakerGate) {
+            minConfidence = gate.minimumConfidence; maxFiller = gate.maximumFiller; rival = gate.rivalConfidence
+        }
+
+        /// 人が読む形（`確信度 ≥0.9・内容なし <0.5・別の人 ≥0.4`）。
+        var text: String { "確信度 ≥\(minConfidence)・内容なし <\(maxFiller)・別の人 ≥\(rival)" }
+    }
+
     /// `actors try`（本文 1 つ）の結果：判断の単位ごと。
     struct TryResult: Encodable {
         let unit: String
+        let gate: Gate
         let segments: [TrySegment]
     }
 
@@ -135,13 +150,15 @@ enum CLIOutput {
     /// `actors try --cases` の結果：判断の単位ごと。
     struct EvalReport: Encodable {
         let unit: String
+        let gate: Gate
         let cases: Int
         let secondsPerCase: Double
         let total: EvalScore
         let byTag: [String: EvalScore]
 
-        init(_ report: SpeakerEvalReport, unit: String) {
+        init(_ report: SpeakerEvalReport, unit: String, gate: SpeakerGate) {
             self.unit = unit
+            self.gate = Gate(gate)
             cases = report.cases
             secondsPerCase = CLIOutput.rounded(report.cases == 0 ? 0 : report.seconds / Double(report.cases))
             total = EvalScore(report.total)

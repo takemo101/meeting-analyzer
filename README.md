@@ -167,6 +167,7 @@ $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイル�
 $EXE actors check ACTOR.md                # ACTOR.md の書式を検査して、読み取れた内容を出す
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b "この画面の表示が遅いです"   # 診断：この ACTOR.md と判断モデルで、誰に付くか・確率・付けない理由を見る
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b --unit both --cases eval/cases.jsonl   # 評価：合成の件で、判断の単位ごとの正解・間違いを数える（eval/README.md）
+$EXE actors try ACTOR.md --judge tiny-jev-0.6b --min-confidence 0.7 --cases eval/cases.jsonl   # 条件の比較：名前を付ける確率の下限などを変えて（--min-confidence・--max-filler・--rival）、同じ件を採点する
 $EXE --help
 ```
 
