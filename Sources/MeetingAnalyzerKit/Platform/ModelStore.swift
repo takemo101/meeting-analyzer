@@ -14,7 +14,7 @@ public struct ModelStore: Sendable {
     public var directory: URL { root.appendingPathComponent("models", isDirectory: true) }
 
     public func fileURL(_ artifact: ModelArtifact) -> URL {
-        directory.appendingPathComponent("\(artifact.sha256.prefix(12))-\(artifact.filename)")
+        directory.appendingPathComponent(artifact.storedAs ?? "\(artifact.sha256.prefix(12))-\(artifact.filename)")
     }
 
     /// ダウンロード途中のファイル（続きから再開できる）。
@@ -84,6 +84,19 @@ public struct ModelStore: Sendable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
     }
 
+    /// ファイルの置き場所（`storedAs` の途中のディレクトリ）を、0700 で用意する。
+    func prepareParent(of artifact: ModelArtifact) throws {
+        try prepareDirectory()
+        let parent = fileURL(artifact).deletingLastPathComponent()
+        guard parent.standardizedFileURL != directory.standardizedFileURL else { return }
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var current = parent
+        while current.standardizedFileURL != directory.standardizedFileURL, current.path.count > directory.path.count {
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: current.path)
+            current.deleteLastPathComponent()
+        }
+    }
+
     /// 途中のファイル（`.part`）だけを、消す。取得済みのファイルには、触れない。
     public func discardPartial(_ artifact: ModelArtifact) {
         try? FileManager.default.removeItem(at: partURL(artifact))
@@ -112,5 +125,31 @@ extension ModelStore {
             other.id != model.id && other.tokenizer.sha256 == model.tokenizer.sha256 && isInstalled(other.weights)
         }
         if !shared { delete(model.tokenizer) }
+    }
+}
+
+/// 声の分離のモデル（複数のファイル。`VoiceModel`）。すべてのファイルが、そろってはじめて「取得済み」。
+extension ModelStore {
+    public func isInstalled(_ model: VoiceModel) -> Bool { model.artifacts.allSatisfy(isInstalled) }
+
+    /// 取得済みのバイト数（途中を含む）。
+    public func downloadedBytes(_ model: VoiceModel) -> Int64 { model.artifacts.reduce(0) { $0 + downloadedBytes($1) } }
+
+    /// 途中のファイルだけを消す（取得済みのファイルには、触れない）。
+    public func discardPartial(_ model: VoiceModel) { model.artifacts.forEach(discardPartial) }
+
+    /// FluidAudio へ渡す、モデルの置き場所（この下に、`<リポジトリの名前>/` がある）。
+    public func folder(_ model: VoiceModel) -> URL { directory.appendingPathComponent(model.storageFolder, isDirectory: true) }
+
+    /// 使う前の確認（すべてのファイルで、検証済みの印・SHA-256 を確かめる）。1 つでも合わなければ、そのファイルを消して `false`。
+    public func ensureVerified(_ model: VoiceModel) -> Bool {
+        var ok = true
+        for artifact in model.artifacts where !ensureVerified(artifact) { ok = false }
+        return ok
+    }
+
+    /// このモデルの置き場所を、まるごと消す（途中のファイル・印を含む）。
+    public func delete(_ model: VoiceModel) {
+        try? FileManager.default.removeItem(at: folder(model))
     }
 }

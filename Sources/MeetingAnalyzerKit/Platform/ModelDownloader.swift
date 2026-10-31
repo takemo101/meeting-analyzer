@@ -64,7 +64,7 @@ public final class ModelDownloader: NSObject, URLSessionDataDelegate, @unchecked
     /// 取得して、検証する。`progress`：（取得済みのバイト数、全体のバイト数）。すでに検証済みなら、何もしない。
     public func download(_ artifact: ModelArtifact, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         if store.isInstalled(artifact) { progress(artifact.bytes, artifact.bytes); return }
-        try store.prepareDirectory()
+        try store.prepareParent(of: artifact)
         let part = store.partURL(artifact)
         var resumeFrom = (try? FileManager.default.attributesOfItem(atPath: part.path)[.size] as? NSNumber)?.int64Value ?? 0
         if resumeFrom > artifact.bytes { try? FileManager.default.removeItem(at: part); resumeFrom = 0 }

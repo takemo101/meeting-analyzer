@@ -156,7 +156,7 @@ enum CLIView {
         return lines.joined(separator: "\n")
     }
 
-    static func models(_ models: [LocalModel], decision: [DecisionModel], store: ModelStore, directory: String, _ style: TerminalStyle) -> String {
+    static func models(_ models: [LocalModel], decision: [DecisionModel], voice: [VoiceModel], store: ModelStore, directory: String, _ style: TerminalStyle) -> String {
         let rows: [(name: String, text: [String])] = models.map { model in
             let state = store.isInstalled(model.artifact) ? style.success("取得済み") : (store.downloadedBytes(model.artifact) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
             return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.artifact.bytes)) + "  " + state, style.dim(model.summary)])
@@ -169,6 +169,13 @@ enum CLIView {
         lines.append("")
         lines.append(style.bold("話者の推定のモデル（System One 型。選ばない・取得していないときは、推定しない）"))
         lines += style.table(decisionRows, label: style.cyan).map { "  " + $0 }
+        let voiceRows: [(name: String, text: [String])] = voice.map { model in
+            let state = store.isInstalled(model) ? style.success("取得済み") : (store.downloadedBytes(model) > 0 ? style.warning("途中（続きから取得できる）") : style.dim("未取得"))
+            return (model.id, [style.bold(model.name) + "  " + style.dim(megabytes(model.bytes)) + "  " + state, style.dim(model.summary)])
+        }
+        lines.append("")
+        lines.append(style.bold("話者の分離のモデル（声の違いで、相手の話者を分ける。SPEC §3.14）"))
+        lines += style.table(voiceRows, label: style.cyan).map { "  " + $0 }
         lines.append("")
         lines.append(style.dim("取得：\(AppInfo.name) models download <ID>（Hugging Face から。続きから再開できる）  削除：models delete <ID>"))
         lines.append(style.dim("使う：transcribe・replay に --model <ID>（文字起こし）、replay に --judge <ID>（話者の推定）、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))

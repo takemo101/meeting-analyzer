@@ -120,12 +120,15 @@ public struct CLIRunner {
         let store = modelStore
         switch action {
         case .list:
-            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, decision: DecisionModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
+            if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, decision: DecisionModelCatalog.all, voice: VoiceModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
             for model in LocalModelCatalog.all {
                 out(CLIOutput.json(CLIOutput.ModelLine(kind: "transcription", id: model.id, name: model.name, bytes: Int64(model.artifact.bytes), installed: store.isInstalled(model.artifact), downloadedBytes: store.downloadedBytes(model.artifact))))
             }
             for model in DecisionModelCatalog.all {
                 out(CLIOutput.json(CLIOutput.ModelLine(kind: "decision", id: model.id, name: model.name, bytes: Int64(model.bytes), installed: store.isInstalled(model), downloadedBytes: store.downloadedBytes(model))))
+            }
+            for model in VoiceModelCatalog.all {
+                out(CLIOutput.json(CLIOutput.ModelLine(kind: "voice", id: model.id, name: model.name, bytes: model.bytes, installed: store.isInstalled(model), downloadedBytes: store.downloadedBytes(model))))
             }
         case .download(let id):
             let name: String, path: String, plan: ModelInstallPlan
@@ -133,6 +136,8 @@ public struct CLIRunner {
                 name = model.name; path = store.fileURL(model.artifact).path; plan = ModelInstallPlan(model)
             } else if let model = DecisionModelCatalog.model(id: id) {
                 name = model.name; path = store.fileURL(model.weights).path; plan = ModelInstallPlan(model)
+            } else if let model = VoiceModelCatalog.model(id: id) {
+                name = model.name; path = store.folder(model).path; plan = ModelInstallPlan(model)
             } else {
                 throw CLIError.usage("知らないモデルです: \(id)")
             }
@@ -152,6 +157,9 @@ public struct CLIRunner {
                 store.delete(model.artifact)
                 out(outIsTerminal ? "\(model.name) を削除しました" : CLIOutput.json(CLIOutput.Deleted(id: model.id)))
             } else if let model = DecisionModelCatalog.model(id: id) {
+                store.delete(model)
+                out(outIsTerminal ? "\(model.name) を削除しました" : CLIOutput.json(CLIOutput.Deleted(id: model.id)))
+            } else if let model = VoiceModelCatalog.model(id: id) {
                 store.delete(model)
                 out(outIsTerminal ? "\(model.name) を削除しました" : CLIOutput.json(CLIOutput.Deleted(id: model.id)))
             } else {

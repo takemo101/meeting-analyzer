@@ -144,7 +144,7 @@ public enum CommandParser {
             switch rest.count {
             case 0: return .success(.models(.list))
             case 2 where rest[0] == "download" || rest[0] == "delete":
-                guard LocalModelCatalog.model(id: rest[1]) != nil || DecisionModelCatalog.model(id: rest[1]) != nil else { return .failure(.usage(unknownModel(rest[1], includingApple: false, includingDecision: true))) }
+                guard LocalModelCatalog.model(id: rest[1]) != nil || DecisionModelCatalog.model(id: rest[1]) != nil || VoiceModelCatalog.model(id: rest[1]) != nil else { return .failure(.usage(unknownModel(rest[1], includingApple: false, includingDecision: true))) }
                 return .success(.models(rest[0] == "download" ? .download(id: rest[1]) : .delete(id: rest[1])))
             default: return .failure(.usage("models の使い方: models | models download <ID> | models delete <ID>"))
             }
@@ -244,7 +244,7 @@ public enum CommandParser {
     }
 
     private static func unknownModel(_ value: String, includingApple: Bool, includingDecision: Bool) -> String {
-        let ids = (includingApple ? ["apple"] : []) + LocalModelCatalog.all.map(\.id) + (includingDecision ? DecisionModelCatalog.all.map(\.id) : [])
+        let ids = (includingApple ? ["apple"] : []) + LocalModelCatalog.all.map(\.id) + (includingDecision ? DecisionModelCatalog.all.map(\.id) + VoiceModelCatalog.all.map(\.id) : [])
         return "知らないモデルです: \(value)（\(ids.joined(separator: "・"))）"
     }
 
