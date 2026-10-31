@@ -224,7 +224,7 @@ struct CLIRunnerTests {
 
         #expect(code == 0, "\(err.lines)")
         #expect(kinds.first == "started" && kinds.last == "ended" && kinds.dropFirst().dropLast().allSatisfy { $0 == "captions" } && kinds.count >= 3)
-        let info = try #require(ended.flatMap { EndedInfo($0.event) })
+        let info = try #require(ended.flatMap { envelope -> SessionEnd? in if case .ended(let end) = envelope.event { return end } else { return nil } })
         #expect(info.utterances == 1)
         #expect(info.durationSeconds == 3, "再生の長さは、音声の長さ（2.5 秒）。処理時間ではない")
         let last = try #require(out.lines.last)

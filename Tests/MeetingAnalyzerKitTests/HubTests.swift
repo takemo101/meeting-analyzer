@@ -5,12 +5,12 @@ import Testing
 /// ソケットのパスは 103 バイトまで。一時ディレクトリの深い場所は使えないので、短い場所に作る。
 func shortSocketDirectory() -> String { "/tmp/ma-" + UUID().uuidString.prefix(8).lowercased() }
 
-private func started(_ id: String = "s1") -> TranscriptEvent { .started(sessionId: id, title: "t", startedAt: "2026-10-22T00:00:00Z", sources: ["you"]) }
+private func started(_ id: String = "s1") -> TranscriptEvent { .started(SessionStart(sessionId: id, title: "t", startedAt: "2026-10-22T00:00:00Z", sources: ["you"])) }
 private func captions(_ sequence: Int, session id: String = "s1", _ text: String = "こんにちは") -> TranscriptEvent {
     .captions(sessionId: id, sequence: sequence, updates: [CaptionUpdate(id: "you-1", version: 1, speaker: "本人", source: "you", text: text, timestamp: 1_800_000_000_000, isFinal: true)])
 }
 private func ended(_ id: String = "s1") -> TranscriptEvent {
-    .ended(sessionId: id, title: "t", reason: "user", startedAt: "2026-10-22T00:00:00Z", endedAt: "2026-10-22T00:01:00Z", durationSeconds: 60, batches: 1, utterances: 1, transcriptPath: "/x/transcript.md")
+    .ended(SessionEnd(sessionId: id, title: "t", reason: "user", startedAt: "2026-10-22T00:00:00Z", endedAt: "2026-10-22T00:01:00Z", durationSeconds: 60, batches: 1, utterances: 1, transcriptPath: "/x/transcript.md"))
 }
 
 /// 受け手として流れを読み、溜める。
@@ -62,7 +62,7 @@ struct TranscriptEventTests {
         let json = try object(ended())
         #expect(json["kind"] as? String == "ended" && json["reason"] as? String == "user" && json["durationSeconds"] as? Int == 60)
         #expect(json["transcriptPath"] as? String == "/x/transcript.md")
-        let none = try object(.ended(sessionId: "s", title: "t", reason: "appQuit", startedAt: "a", endedAt: "b", durationSeconds: 0, batches: 0, utterances: 0, transcriptPath: nil))
+        let none = try object(.ended(SessionEnd(sessionId: "s", title: "t", reason: "appQuit", startedAt: "a", endedAt: "b", durationSeconds: 0, batches: 0, utterances: 0, transcriptPath: nil)))
         #expect(none["transcriptPath"] == nil)
     }
 

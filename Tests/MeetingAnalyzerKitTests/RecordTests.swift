@@ -41,8 +41,7 @@ struct RecordCheckpointTests {
         let end = pipeline.finish(reason: .user, endedAt: Date(timeIntervalSince1970: 1_800_000_020), at: 20)
         let final = try #require(read())
         #expect(!final.contains("会議の途中") && final.contains("- 長さ: 00:20") && final.contains("![画面 00:13](screens/shot-0001.jpg)"))
-        guard case .ended(_, _, _, _, _, _, _, _, let path) = end else { Issue.record("ended ではない"); return }
-        #expect(path == file.path)
+        #expect(end.transcriptPath == file.path)
     }
 
     @Test("一時停止（出し切り）では、間隔を待たずに書く。何も話されなければ、書かない")

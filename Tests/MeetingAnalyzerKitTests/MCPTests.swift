@@ -18,8 +18,8 @@ private func envelope(_ id: Int, _ event: TranscriptEvent) -> HubClientEvent { .
 private func caption(_ sequence: Int, _ text: String = "来週のリリース") -> TranscriptEvent {
     .captions(sessionId: "s1", sequence: sequence, updates: [CaptionUpdate(id: "others-1", version: sequence, speaker: "相手", source: "others", text: text, timestamp: 1, isFinal: false)])
 }
-private let startedEvent = TranscriptEvent.started(sessionId: "s1", title: "t", startedAt: "2026-10-22T00:00:00Z", sources: ["others"])
-private let endedEvent = TranscriptEvent.ended(sessionId: "s1", title: "t", reason: "user", startedAt: "a", endedAt: "b", durationSeconds: 1, batches: 1, utterances: 1, transcriptPath: "/x/t.md")
+private let startedEvent = TranscriptEvent.started(SessionStart(sessionId: "s1", title: "t", startedAt: "2026-10-22T00:00:00Z", sources: ["others"]))
+private let endedEvent = TranscriptEvent.ended(SessionEnd(sessionId: "s1", title: "t", reason: "user", startedAt: "a", endedAt: "b", durationSeconds: 1, batches: 1, utterances: 1, transcriptPath: "/x/t.md"))
 
 private func rpc(_ id: Int?, _ method: String, _ params: [String: Any] = [:]) -> Data {
     var object: [String: Any] = ["jsonrpc": "2.0", "method": method, "params": params]

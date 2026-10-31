@@ -51,7 +51,7 @@ public final class SessionPipeline: @unchecked Sendable {
 
     /// セッションの開始を知らせる（取り込む流れ付き）。
     public func begin(sources: [Speaker]) {
-        sink.publish(.started(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset, actorFile: actors?.file))
+        sink.publish(.started(SessionStart(sessionId: sessionId, title: title, startedAt: startedAt, sources: sources, preset: preset, actorFile: actors?.file)))
     }
 
     /// 画面の画像を、次のバッチへ添える（渡すまでに、新しい画像が来たら、新しいほうだけ）。**記録には、すべての画像を入れる**
@@ -107,9 +107,9 @@ public final class SessionPipeline: @unchecked Sendable {
         _ = store.writeTranscript(transcript.markdown(title: title, startedAt: startedAt, endedAt: nil), sessionId: sessionId)
     }
 
-    /// セッションを終える。未送信の発話を出し切り、記録を書き、最後に終了の出来事を 1 回だけ出す。
+    /// セッションを終える。未送信の発話を出し切り、記録を書き、最後に終了の出来事を 1 回だけ出す。出した内容を返す。
     @discardableResult
-    public func finish(reason: EndReason, endedAt: Date = Date(), at now: TimeInterval) -> TranscriptEvent {
+    public func finish(reason: EndReason, endedAt: Date = Date(), at now: TimeInterval) -> SessionEnd {
         precondition(!finished, "finish は 1 回だけ")
         while batcher.hasPending { deliver(batcher.flush(at: now)) }
         finished = true
@@ -118,11 +118,11 @@ public final class SessionPipeline: @unchecked Sendable {
             let markdown = transcript.markdown(title: title, startedAt: startedAt, endedAt: endedAt)
             if case .success(let url) = store.writeTranscript(markdown, sessionId: sessionId) { transcriptPath = url.path }
         }
-        let end = TranscriptEvent.ended(
+        let end = SessionEnd(
             sessionId: sessionId, title: title, reason: reason, startedAt: startedAt, endedAt: endedAt,
             batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath
         )
-        sink.publish(end)
+        sink.publish(.ended(end))
         return end
     }
 
