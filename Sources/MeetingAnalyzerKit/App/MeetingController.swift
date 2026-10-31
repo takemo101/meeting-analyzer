@@ -528,24 +528,19 @@ final class MeetingController {
             return (nil, nil, "ACTOR.md を使えません: \(error.message)")
         case .success(let list):
             activeActors = list
-            var guesser: SpeakerGuesser?
+            // 判断モデルは、相手の音声を取り込むときだけ使う。読み込み（初回は数秒）は、画面を止めないよう、別のスレッドで。
+            let model = selection.system == .off ? nil : decisionModel
+            let store = modelStore, attendance = attendance
             var problem: String?
-            if let model = decisionModel, selection.system != .off, !list.others.isEmpty {
-                let store = modelStore
-                do {
-                    let judge = try await Task.detached(priority: .userInitiated) { () throws -> SystemOneJudge in
-                        let judge = try SystemOneJudge(model: model, store: store)
-                        try judge.prepare()
-                        return judge
-                    }.value
-                    guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance)
-                } catch let error as DecisionModelError {
-                    problem = "相手の話者を推定できません: \(error.message)"
-                } catch {
-                    problem = "相手の話者を推定できません"
-                }
+            let labeler: SpeakerLabeler
+            do {
+                labeler = try await Task.detached(priority: .userInitiated) { try SpeakerLabeler.make(list: list, model: model, store: store, attendance: attendance) }.value
+            } catch {
+                // 読み込めなくても、会議は始める（「本人」の対応づけだけ。理由を知らせる）。
+                labeler = SpeakerLabeler(list: list, guesser: nil)
+                problem = "相手の話者を推定できません" + ((error as? DecisionModelError).map { ": \($0.message)" } ?? "")
             }
-            return (ActorSource(list: list, file: path), SpeakerLabeler(list: list, guesser: guesser), problem)
+            return (ActorSource(list: list, file: path), labeler, problem)
         }
     }
 
