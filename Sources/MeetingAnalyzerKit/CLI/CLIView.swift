@@ -1,6 +1,6 @@
 import Foundation
 
-/// CLI の、人が読む表示。機械が読む表示（JSON）は `CLIRunner.json` で、標準出力・標準エラーが端末でないときに使う（SPEC §3.9）。
+/// CLI の、人が読む表示。機械が読む表示（JSON）は `CLIOutput` の型で、標準出力・標準エラーが端末でないときに使う（SPEC §3.9）。
 enum CLIView {
     // MARK: ヘルプ
 

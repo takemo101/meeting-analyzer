@@ -763,3 +763,8 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **MIK-030（MCP の JSON の往復をなくす・`JSONText` を `CLI/` へ）**：単体 257 件（`notes` の試験は、呼び出す関数が `withNote` → `notedJSON` に変わっただけで、期待値は同じ）・E2E 16/16 pass。**変更の前後で、MCP の出力を、そのまま比べた**（一時の試験で、`--channel` のサーバーに、開始〔preset つき・なし〕・字幕〔`<`・`&`・`/`・`"`・`\`・制御文字・`0.1+0.2` の時刻・`actor`・`screenshot` つき〕・空の字幕・終了を流し、`initialize` の応答・押し込みの通知 5 件・`get_events` の結果 2 件〔`after` 0 と 3〕を、1 バイトずつ `cmp`）：**完全に一致**（8,681 バイト）。比較用の試験は、コミットしていない。
 - 出来事の JSON は、`NotedEvent`（出来事＋`note`）・`GetEventsResult` を、1 度だけエンコードする形にした（辞書へ読み戻して書き戻す往復が、3 → 0）。`MCPServer` に残る `JSONSerialization.jsonObject` は、エージェントから来た JSON-RPC の入力を読む 1 か所だけ（1 行を、2 度でなく 1 度だけ読む）。
 - **未確認**：実際のエージェント（Claude Code の Channels など）での受信。
+
+### 2026-10-31 — リファクタリング（MIK-029）の確認
+
+- **MIK-029（コメントと文書のずれ）**：コメントと文書だけの変更（コードの動作は変えていない）。単体 257 件・全件 pass。`SessionPipeline` の `checkpointInterval`・`lastCheckpoint`・`dirty` の説明を、フィールドごとに 1 つずつにした。`MeetingController`・`CLIView` の先頭のコメントを、現在の責務（`ModelDownloads`・`ActorSelection`・`OperationGate`・`CLIOutput`）に合わせた。`docs/architecture.md` の表は、MIK-016〜030 で、その都度、更新済み。
+- **確かめた**：`docs/`・`README.md`・`SPEC.md`・`AGENTS.md`・`skills/*/SKILL.md` の、`.md` へのリンク（すべて存在する）。`docs/architecture.md` の、バッククォートで囲んだ型名（存在しないものは、ディレクトリ名・ファイル名の `NativeSpeech`〔`Transcription/NativeSpeech.swift`〕などの、型でないもののみ）。`Sources` の `TODO`・`FIXME`（0 件）。消した名前（`EndedInfo`・`withNote`・`Self.json`・`downloadFailure`・`cancelDownload`・`discardPartialDownload`・`actorSetup`）の、`docs/`・`README.md`・`SPEC.md`・`AGENTS.md`・`skills/` からの参照（過去の検証記録〔この文書〕を除いて 0 件）。

@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// メニューの操作を、会議（`LiveSession`）へ結ぶ。会議の状態の所有者は `LiveSession` で、ここは、表示のための状態（操作中か・知らせ・選んだアプリ）だけを持つ。
+/// メニュー・設定ウィンドウの操作を、会議（`LiveSession`）へ結ぶ。会議の状態の所有者は `LiveSession`。ここが持つのは、表示のための状態（操作中か・知らせ・取り込みの設定〔`CapturePreferences` 1 つ〕）と、選択の規則。モデルのダウンロードは `ModelDownloads`、ACTOR.md の選択・出席者は `ActorSelection`、一時停止・再開・終了の直列化は `OperationGate` が持つ。
 @MainActor
 final class MeetingController {
     enum State: Equatable {

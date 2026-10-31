@@ -18,9 +18,10 @@ public final class SessionPipeline: @unchecked Sendable {
     /// 次のバッチへ添える画面の画像（まだ渡していない最新の 1 枚）。
     private var pendingScreenshot: String?
     /// 会議の途中の書き足し（SPEC §3.8）：書き直す間隔（秒）。`nil` は、書き足さない（ファイルの再生は、失敗したら記録を残さないため、終了のときだけ書く）。
-    /// 前に書いた時刻（会議の開始からの秒）と、その後に変わったか。
     private let checkpointInterval: TimeInterval?
+    /// 前に書いた時刻（会議の開始からの秒）。
     private var lastCheckpoint: TimeInterval?
+    /// 前に書いたあとに、記録が変わったか。
     private var dirty = false
 
     private struct Stream {
