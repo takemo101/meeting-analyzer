@@ -167,10 +167,9 @@ public actor LiveSession {
         await endSegment()
         try? lifecycle.end(reason)
         let now = clock()
-        let event = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
+        let end = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
         // 画像は、記録（`transcript.md`）と同じフォルダに残る（同じ寿命で、アプリが消す。SPEC §3.8）。
-        guard case .ended(_, _, _, _, _, _, _, let utterances, let path) = event else { return LiveSessionOutcome(utterances: pipeline.utteranceCount, transcriptPath: nil) }
-        return LiveSessionOutcome(utterances: utterances, transcriptPath: path)
+        return LiveSessionOutcome(utterances: end.utterances, transcriptPath: end.transcriptPath)
     }
 
     // MARK: 取り込みの流れ

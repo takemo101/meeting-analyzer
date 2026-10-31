@@ -19,18 +19,79 @@ public struct CaptionUpdate: Codable, Equatable, Sendable {
     public var actorGuessed: Bool? = nil
 }
 
+/// セッションの開始の内容。`preset` は、本人が選んだ、この会話の分析のしかた（SPEC §3.11）。`actorFile` は、本人が選んだ `ACTOR.md` の絶対パス（SPEC §3.13）。
+public struct SessionStart: Codable, Equatable, Sendable {
+    public let sessionId: String
+    public let title: String
+    public let startedAt: String
+    public let sources: [String]
+    public let preset: PresetInfo?
+    public let actorFile: String?
+
+    public init(sessionId: String, title: String, startedAt: String, sources: [String], preset: PresetInfo? = nil, actorFile: String? = nil) {
+        self.sessionId = sessionId
+        self.title = title
+        self.startedAt = startedAt
+        self.sources = sources
+        self.preset = preset
+        self.actorFile = actorFile
+    }
+
+    /// セッションの値（UUID・日時・発言者）から、JSON の形（小文字の UUID・ISO 8601）にして作る。
+    public init(sessionId: UUID, title: String, startedAt: Date, sources: [Speaker], preset: PresetInfo? = nil, actorFile: String? = nil) {
+        self.init(sessionId: sessionId.uuidString.lowercased(), title: title, startedAt: ISO8601DateFormatter().string(from: startedAt), sources: sources.map(\.rawValue), preset: preset, actorFile: actorFile)
+    }
+}
+
+/// セッションの終了の内容。エージェントは、これを受けて、サマリーを出す（SPEC §3.8）。
+public struct SessionEnd: Codable, Equatable, Sendable {
+    public let sessionId: String
+    public let title: String
+    public let reason: String
+    public let startedAt: String
+    public let endedAt: String
+    public let durationSeconds: Int
+    public let batches: Int
+    public let utterances: Int
+    /// 記録（Markdown）の絶対パス。書けなかったときは無し。
+    public let transcriptPath: String?
+
+    public init(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?) {
+        self.sessionId = sessionId
+        self.title = title
+        self.reason = reason
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.durationSeconds = durationSeconds
+        self.batches = batches
+        self.utterances = utterances
+        self.transcriptPath = transcriptPath
+    }
+
+    /// セッションの値（UUID・日時・終了の理由）から、JSON の形にして作る。`durationSeconds` は、開始から終了までの秒（負にならない）。
+    public init(sessionId: UUID, title: String, reason: EndReason, startedAt: Date, endedAt: Date, batches: Int, utterances: Int, transcriptPath: String?) {
+        let iso = ISO8601DateFormatter()
+        self.init(
+            sessionId: sessionId.uuidString.lowercased(), title: title, reason: reason.rawValue,
+            startedAt: iso.string(from: startedAt), endedAt: iso.string(from: endedAt),
+            durationSeconds: max(0, Int(endedAt.timeIntervalSince(startedAt).rounded())),
+            batches: batches, utterances: utterances, transcriptPath: transcriptPath
+        )
+    }
+}
+
 /// 文字起こしの流れの出来事。エージェントへ渡す JSON の形（SPEC §3.7）。
 public enum TranscriptEvent: Equatable, Sendable {
-    /// セッションの開始。`preset` は、本人が選んだ、この会話の分析のしかた（SPEC §3.11）。`actorFile` は、本人が選んだ `ACTOR.md` の絶対パス（SPEC §3.13）。
-    case started(sessionId: String, title: String, startedAt: String, sources: [String], preset: PresetInfo? = nil, actorFile: String? = nil)
+    case started(SessionStart)
     /// 字幕のバッチ。`sequence` は 1 から連続する。`screenshot` は、前の送信から画面が変わったときの、画面の JPEG の絶対パス。
     case captions(sessionId: String, sequence: Int, updates: [CaptionUpdate], screenshot: String? = nil)
-    /// セッションの終了。エージェントは、これを受けて、サマリーを出す（SPEC §3.8）。
-    case ended(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?)
+    case ended(SessionEnd)
 
     public var sessionId: String {
         switch self {
-        case .started(let id, _, _, _, _, _), .captions(let id, _, _, _), .ended(let id, _, _, _, _, _, _, _, _): return id
+        case .started(let start): return start.sessionId
+        case .captions(let id, _, _, _): return id
+        case .ended(let end): return end.sessionId
         }
     }
 
@@ -52,45 +113,21 @@ public enum TranscriptEvent: Equatable, Sendable {
         }
         return .captions(sessionId: sessionId.uuidString.lowercased(), sequence: sequence, updates: updates, screenshot: screenshot)
     }
-
-    public static func started(sessionId: UUID, title: String, startedAt: Date, sources: [Speaker], preset: PresetInfo? = nil, actorFile: String? = nil) -> TranscriptEvent {
-        .started(sessionId: sessionId.uuidString.lowercased(), title: title, startedAt: ISO8601DateFormatter().string(from: startedAt), sources: sources.map(\.rawValue), preset: preset, actorFile: actorFile)
-    }
-
-    public static func ended(
-        sessionId: UUID, title: String, reason: EndReason, startedAt: Date, endedAt: Date,
-        batches: Int, utterances: Int, transcriptPath: String?
-    ) -> TranscriptEvent {
-        let iso = ISO8601DateFormatter()
-        return .ended(
-            sessionId: sessionId.uuidString.lowercased(), title: title, reason: reason.rawValue,
-            startedAt: iso.string(from: startedAt), endedAt: iso.string(from: endedAt),
-            durationSeconds: max(0, Int(endedAt.timeIntervalSince(startedAt).rounded())),
-            batches: batches, utterances: utterances, transcriptPath: transcriptPath
-        )
-    }
 }
 
+/// JSON は、`kind` と、その種類の項目を、同じ階層に並べる（`started`・`ended` は、内容の型が、自分の項目を読み書きする）。
 extension TranscriptEvent: Codable {
     private enum Key: String, CodingKey {
-        case kind, sessionId, title, startedAt, sources, sequence, updates, screenshot, reason, endedAt, durationSeconds, batches, utterances, transcriptPath, preset, actorFile
+        case kind, sessionId, sequence, updates, screenshot
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
-        let sessionId = try c.decode(String.self, forKey: .sessionId)
         switch try c.decode(String.self, forKey: .kind) {
-        case "started":
-            self = .started(sessionId: sessionId, title: try c.decode(String.self, forKey: .title), startedAt: try c.decode(String.self, forKey: .startedAt), sources: try c.decode([String].self, forKey: .sources), preset: try c.decodeIfPresent(PresetInfo.self, forKey: .preset), actorFile: try c.decodeIfPresent(String.self, forKey: .actorFile))
+        case "started": self = .started(try SessionStart(from: decoder))
         case "captions":
-            self = .captions(sessionId: sessionId, sequence: try c.decode(Int.self, forKey: .sequence), updates: try c.decode([CaptionUpdate].self, forKey: .updates), screenshot: try c.decodeIfPresent(String.self, forKey: .screenshot))
-        case "ended":
-            self = .ended(
-                sessionId: sessionId, title: try c.decode(String.self, forKey: .title), reason: try c.decode(String.self, forKey: .reason),
-                startedAt: try c.decode(String.self, forKey: .startedAt), endedAt: try c.decode(String.self, forKey: .endedAt),
-                durationSeconds: try c.decode(Int.self, forKey: .durationSeconds), batches: try c.decode(Int.self, forKey: .batches),
-                utterances: try c.decode(Int.self, forKey: .utterances), transcriptPath: try c.decodeIfPresent(String.self, forKey: .transcriptPath)
-            )
+            self = .captions(sessionId: try c.decode(String.self, forKey: .sessionId), sequence: try c.decode(Int.self, forKey: .sequence), updates: try c.decode([CaptionUpdate].self, forKey: .updates), screenshot: try c.decodeIfPresent(String.self, forKey: .screenshot))
+        case "ended": self = .ended(try SessionEnd(from: decoder))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "知らない kind: \(other)")
         }
@@ -99,17 +136,12 @@ extension TranscriptEvent: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         try c.encode(kind, forKey: .kind)
-        try c.encode(sessionId, forKey: .sessionId)
         switch self {
-        case .started(_, let title, let startedAt, let sources, let preset, let actorFile):
-            try c.encode(title, forKey: .title); try c.encode(startedAt, forKey: .startedAt); try c.encode(sources, forKey: .sources); try c.encodeIfPresent(preset, forKey: .preset); try c.encodeIfPresent(actorFile, forKey: .actorFile)
-        case .captions(_, let sequence, let updates, let screenshot):
+        case .started(let start): try start.encode(to: encoder)
+        case .captions(let id, let sequence, let updates, let screenshot):
+            try c.encode(id, forKey: .sessionId)
             try c.encode(sequence, forKey: .sequence); try c.encode(updates, forKey: .updates); try c.encodeIfPresent(screenshot, forKey: .screenshot)
-        case .ended(_, let title, let reason, let startedAt, let endedAt, let duration, let batches, let utterances, let path):
-            try c.encode(title, forKey: .title); try c.encode(reason, forKey: .reason)
-            try c.encode(startedAt, forKey: .startedAt); try c.encode(endedAt, forKey: .endedAt)
-            try c.encode(duration, forKey: .durationSeconds); try c.encode(batches, forKey: .batches); try c.encode(utterances, forKey: .utterances)
-            try c.encodeIfPresent(path, forKey: .transcriptPath)
+        case .ended(let end): try end.encode(to: encoder)
         }
     }
 }

@@ -273,8 +273,8 @@ struct ActorFlowTests {
         let outcome = try await session.end(reason: .user)
 
         #expect(!seen.values.contains("others:APIの仕様を"), "暫定の文は、推定しない")
-        guard case .started(_, _, _, _, _, let file)? = rig.sink.events.first else { Issue.record("no started"); return }
-        #expect(file == "/work/ACTOR.md")
+        guard case .started(let start)? = rig.sink.events.first else { Issue.record("no started"); return }
+        #expect(start.actorFile == "/work/ACTOR.md")
         let updates = rig.sink.batches.flatMap(\.updates)
         let others = try #require(updates.last { $0.source == "others" })
         #expect(others.speaker == "相手" && others.actor == "佐藤 花子" && others.actorGuessed == true)

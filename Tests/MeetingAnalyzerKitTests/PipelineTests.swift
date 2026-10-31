@@ -15,16 +15,7 @@ final class RecordingSink: EventSink, @unchecked Sendable {
     var batches: [(sequence: Int, updates: [CaptionUpdate])] {
         events.compactMap { if case .captions(_, let sequence, let updates, _) = $0 { return (sequence, updates) } else { return nil } }
     }
-    var ends: [TranscriptEvent] { events.filter { $0.kind == "ended" } }
-}
-
-struct EndedInfo {
-    let reason: String, batches: Int, utterances: Int, durationSeconds: Int, transcriptPath: String?
-
-    init?(_ event: TranscriptEvent) {
-        guard case .ended(_, _, let reason, _, _, let duration, let batches, let utterances, let path) = event else { return nil }
-        self.reason = reason; self.batches = batches; self.utterances = utterances; self.durationSeconds = duration; self.transcriptPath = path
-    }
+    var ends: [SessionEnd] { events.compactMap { if case .ended(let end) = $0 { return end } else { return nil } } }
 }
 
 private func update(_ text: String, final: Bool = false, _ start: Double, _ end: Double) -> TranscriptionUpdate {
@@ -112,8 +103,8 @@ struct SessionPipelineTests {
         pipeline.ingest(update("来週のリリース", final: true, 0, 1), speaker: .others)
         pipeline.finish(reason: .user, at: 1)
         #expect(sink.kinds == ["started", "captions", "ended"])
-        guard case .started(let id, let title, _, let sources, _, _) = sink.events[0] else { Issue.record("not started"); return }
-        #expect(id == pipeline.sessionId.uuidString.lowercased() && title == "定例" && sources == ["you", "others"])
+        guard case .started(let start) = sink.events[0] else { Issue.record("not started"); return }
+        #expect(start.sessionId == pipeline.sessionId.uuidString.lowercased() && start.title == "定例" && start.sources == ["you", "others"])
     }
 
     @Test("終了で、未送信を出し切り、記録を書いてから、最後に終了の出来事を出す")
@@ -125,7 +116,7 @@ struct SessionPipelineTests {
         let pipeline = SessionPipeline(title: "定例", startedAt: start, sink: sink, store: SessionStore(root: root))
         pipeline.ingest(update("来週のリリースの件です", final: true, 0, 2), speaker: .others)
         pipeline.ingest(update("確認します", final: true, 3, 4), speaker: .you)
-        let end = try #require(EndedInfo(pipeline.finish(reason: .user, endedAt: start.addingTimeInterval(65), at: 4)))
+        let end = pipeline.finish(reason: .user, endedAt: start.addingTimeInterval(65), at: 4)
 
         #expect(sink.kinds.last == "ended", "終了は、最後の 1 回だけ")
         #expect(sink.ends.count == 1)
@@ -148,7 +139,7 @@ struct SessionPipelineTests {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let pipeline = SessionPipeline(title: "m", sink: sink, store: SessionStore(root: root))
-        let end = try #require(EndedInfo(pipeline.finish(reason: .silence, at: 0)))
+        let end = pipeline.finish(reason: .silence, at: 0)
         #expect(sink.batches.isEmpty)
         #expect(sink.ends.count == 1)
         #expect(end.transcriptPath == nil)
@@ -160,7 +151,7 @@ struct SessionPipelineTests {
         let sink = RecordingSink()
         let pipeline = SessionPipeline(title: "m", sink: sink, store: SessionStore(root: URL(fileURLWithPath: "/dev/null/nope")))
         pipeline.ingest(update("来週のリリースの件です", final: true, 0, 2), speaker: .others)
-        let end = try #require(EndedInfo(pipeline.finish(reason: .user, at: 2)))
+        let end = pipeline.finish(reason: .user, at: 2)
         #expect(end.transcriptPath == nil)
         #expect(end.utterances == 1)
         #expect(sink.ends.count == 1)
@@ -171,7 +162,7 @@ struct SessionPipelineTests {
         let sink = RecordingSink()
         let pipeline = SessionPipeline(title: "m", sink: sink, store: nil)
         pipeline.ingest(update("  \n", 0, 5), speaker: .others)
-        let end = try #require(EndedInfo(pipeline.finish(reason: .user, at: 5)))
+        let end = pipeline.finish(reason: .user, at: 5)
         #expect(end.utterances == 0)
         #expect(sink.batches.isEmpty)
     }

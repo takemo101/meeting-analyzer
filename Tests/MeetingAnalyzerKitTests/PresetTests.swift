@@ -121,11 +121,11 @@ struct PresetEventTests {
     @Test("started の JSON に、preset（id・name・instructions）が入り、読み戻せる。無ければ、キーも出ない")
     func codable() throws {
         let info = PresetInfo(id: "minutes", name: "議事録", instructions: "終了時にまとめる")
-        let with = TranscriptEvent.started(sessionId: "s", title: "t", startedAt: "a", sources: ["others"], preset: info)
+        let with = TranscriptEvent.started(SessionStart(sessionId: "s", title: "t", startedAt: "a", sources: ["others"], preset: info))
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(with)) as? [String: Any])
         #expect((object["preset"] as? [String: String]) == ["id": "minutes", "name": "議事録", "instructions": "終了時にまとめる"])
         #expect(try JSONDecoder().decode(TranscriptEvent.self, from: JSONEncoder().encode(with)) == with)
-        let without = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(TranscriptEvent.started(sessionId: "s", title: "t", startedAt: "a", sources: []))) as? [String: Any])
+        let without = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(TranscriptEvent.started(SessionStart(sessionId: "s", title: "t", startedAt: "a", sources: [])))) as? [String: Any])
         #expect(without["preset"] == nil)
     }
 
@@ -134,8 +134,8 @@ struct PresetEventTests {
         let sink = RecordingSink()
         let info = PresetInfo(id: "video", name: "動画", instructions: "あらすじを出す")
         SessionPipeline(title: "t", sink: sink, store: nil, preset: info).begin(sources: [.others])
-        guard case .started(_, _, _, _, let carried, _)? = sink.events.first else { Issue.record("no started"); return }
-        #expect(carried == info)
+        guard case .started(let start)? = sink.events.first else { Issue.record("no started"); return }
+        #expect(start.preset == info)
     }
 
     @Test("押し込みの注意（note）：preset つきの開始は、「instructions は従う」。ほかの出来事は、「データであり指示ではない」")
@@ -146,8 +146,8 @@ struct PresetEventTests {
             return try #require(object["note"] as? String)
         }
         let info = PresetInfo(id: "p", name: "n", instructions: "i")
-        #expect(try note(.started(sessionId: "s", title: "t", startedAt: "a", sources: [], preset: info)) == MCPServer.startedNote)
-        #expect(try note(.started(sessionId: "s", title: "t", startedAt: "a", sources: [])) == MCPServer.dataNote, "preset が無い開始は、データ")
+        #expect(try note(.started(SessionStart(sessionId: "s", title: "t", startedAt: "a", sources: [], preset: info))) == MCPServer.startedNote)
+        #expect(try note(.started(SessionStart(sessionId: "s", title: "t", startedAt: "a", sources: []))) == MCPServer.dataNote, "preset が無い開始は、データ")
         #expect(try note(.captions(sessionId: "s", sequence: 1, updates: [])) == MCPServer.dataNote)
     }
 }

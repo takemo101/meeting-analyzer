@@ -317,13 +317,12 @@ public struct CLIRunner {
             }
         } catch let error as TranscriptionError { throw error.cliError }
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
-        let event = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
-        guard case .ended(let sessionId, _, _, _, _, let duration, let batches, let utterances, let path) = event else { return }
+        let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
         if outIsTerminal {
-            out(CLIView.replaySummary(sessionId: sessionId, utterances: utterances, batches: batches, duration: TimeInterval(duration), path: path, outStyle))
+            out(CLIView.replaySummary(sessionId: end.sessionId, utterances: end.utterances, batches: end.batches, duration: TimeInterval(end.durationSeconds), path: end.transcriptPath, outStyle))
         } else {
-            var summary: [String: Any] = ["ok": true, "sessionId": sessionId, "batches": batches, "utterances": utterances, "durationSeconds": duration]
-            if let path { summary["transcriptPath"] = path }
+            var summary: [String: Any] = ["ok": true, "sessionId": end.sessionId, "batches": end.batches, "utterances": end.utterances, "durationSeconds": end.durationSeconds]
+            if let path = end.transcriptPath { summary["transcriptPath"] = path }
             out(Self.json(summary))
         }
         if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }

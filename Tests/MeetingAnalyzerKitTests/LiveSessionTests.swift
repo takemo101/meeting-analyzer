@@ -98,7 +98,7 @@ struct LiveSessionTests {
         #expect(Set(rig.sink.events.map(\.sessionId)).count == 1, "すべての出来事が、同じセッション")
         let spoken = rig.sink.batches.flatMap(\.updates).map(\.speaker)
         #expect(spoken.contains("相手") && spoken.contains("本人"))
-        let ended = try #require(EndedInfo(rig.sink.ends[0]))
+        let ended = rig.sink.ends[0]
         #expect(ended.reason == "user" && ended.durationSeconds == 65)
         let path = try #require(outcome.transcriptPath)
         let text = try String(contentsOfFile: path, encoding: .utf8)
