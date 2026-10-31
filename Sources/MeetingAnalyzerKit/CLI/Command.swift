@@ -1,11 +1,5 @@
 import Foundation
 
-public enum AppInfo {
-    /// `Resources/Info.plist` の版と同じ（テストで一致を確認する）。
-    public static let version = "0.1.11"
-    public static let name = "meeting-analyzer"
-}
-
 /// CLI の失敗。終了コードは SPEC §3.9：1 = 使い方、2 = 入力、3 = 窓口（ハブ）、4 = 文字起こし、5 = エージェントを起動できない。
 public enum CLIError: Error, Equatable {
     case usage(String)

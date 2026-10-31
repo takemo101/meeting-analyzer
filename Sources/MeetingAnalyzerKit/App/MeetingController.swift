@@ -64,14 +64,17 @@ final class MeetingController {
 
     private var session: LiveSession?
     private let environment: [String: String]
+    /// このアプリのデータの置き場所（記録・画像・モデル・自分のプリセット）。起動のときに、1 度だけ求める。
+    private let dataDirectory: URL
     /// エージェントへ渡す窓口。待ち受けを始められなくても、記録は続けられる（出来事は、保持するだけ）。
     private let hub: HubServer
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment, defaults: UserDefaults = .standard) {
         self.environment = environment
         self.defaults = defaults
+        dataDirectory = RuntimePaths.dataDirectory(environment: environment)
         presetStore = PresetStore.standard(environment: environment)
-        modelStore = ModelStore(root: RuntimePaths.dataDirectory(environment: environment))
+        modelStore = ModelStore(root: dataDirectory)
         hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         let saved = CapturePreferences.load(defaults)
         selection = AudioSelection(microphone: saved.microphone, system: saved.system)
@@ -135,7 +138,7 @@ final class MeetingController {
     /// 期限（`retentionDays` 日）を過ぎた記録（文字起こしと画像）を、フォルダごと消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
     func cleanRecords() {
         guard let days = retentionDays else { return }
-        let root = RuntimePaths.dataDirectory(environment: environment)
+        let root = dataDirectory
         let active = session?.sessionId
         Task.detached(priority: .utility) { RecordRetention(root: root).deleteExpired(olderThanDays: days, except: active) }
     }
@@ -197,7 +200,7 @@ final class MeetingController {
 
     /// このアプリのデータの置き場所（記録 `sessions/`・画像・自分のプリセット `presets/`）を、Finder で開く（無ければ、作る）。
     func openDataFolder() {
-        let folder = RuntimePaths.dataDirectory(environment: environment)
+        let folder = dataDirectory
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
@@ -520,10 +523,10 @@ final class MeetingController {
             speakers: selection.speakers,
             inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale), transcription: transcription, models: modelStore),
             sink: hub,
-            store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)),
+            store: SessionStore(root: dataDirectory),
             policy: batchMode.policy,
             screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
-            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: RuntimePaths.dataDirectory(environment: environment)),
+            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: dataDirectory),
             preset: presetStore.resolve(id: presetID)?.info,
             actors: actors,
             labeler: labeler,

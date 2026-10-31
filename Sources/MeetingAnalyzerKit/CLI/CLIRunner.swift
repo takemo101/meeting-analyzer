@@ -57,7 +57,7 @@ public struct CLIRunner {
         },
         modelDownload: @escaping ModelDownload = { artifact, store, progress in try await ModelDownloader(store: store).download(artifact, progress: progress) },
         replaceProcess: @escaping @Sendable (String, [String]) -> Int32 = { AgentLauncher.replaceProcess(command: $0, arguments: $1) },
-        executablePath: @escaping @Sendable () -> String = { URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path },
+        executablePath: @escaping @Sendable () -> String = { BundledResources.currentExecutablePath() },
         setEnvironment: @escaping @Sendable ([String: String]) -> Void = { for (name, value) in $0 { setenv(name, value, 1) } },
         presetStore: PresetStore? = nil,
         outIsTerminal: Bool = false,
@@ -201,7 +201,8 @@ public struct CLIRunner {
         return url
     }
 
-    private var modelStore: ModelStore { ModelStore(root: RuntimePaths.dataDirectory(environment: environment)) }
+    private var dataDirectory: URL { RuntimePaths.dataDirectory(environment: environment) }
+    private var modelStore: ModelStore { ModelStore(root: dataDirectory) }
 
     private func transcribe(_ path: String, _ localeId: String, _ model: TranscriptionChoice) async throws {
         let file = try readableFile(path)
@@ -303,7 +304,7 @@ public struct CLIRunner {
         let deadline = Date().addingTimeInterval(options.wait)
         while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
 
-        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: RuntimePaths.dataDirectory(environment: environment)), preset: preset, actors: actorSource)
+        let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
         var lastEnd: TimeInterval = 0
         do {
