@@ -15,28 +15,28 @@ final class MeetingController {
     private(set) var state: State = .idle { didSet { changed() } }
     /// 失敗・知らせ（メニューの 1 行）。次の開始、または会議の終了で更新する。
     private(set) var notice: String? { didSet { changed() } }
-    /// 取り込む音声の選択。設定ウィンドウで選び、覚えておく（SPEC §5）。
-    private(set) var selection = AudioSelection()
-    /// エージェントへ渡す、まとめ方（SPEC §3.6）。設定ウィンドウで選び、覚えておく。
-    private(set) var batchMode = BatchMode.utterance
-    /// 画面の取り込み（SPEC §3.5）。設定ウィンドウで選び、覚えておく。
-    private(set) var screen = ScreenSelection.off
-    /// 分析のしかた（プリセット。SPEC §3.11）。設定ウィンドウで選び、覚えておく。
-    private(set) var presetID = AnalysisPreset.defaultID
-    /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。設定ウィンドウで選び、覚えておく。
-    private(set) var transcription = TranscriptionChoice.apple
-    /// 使う `ACTOR.md`（SPEC §3.13）。設定ウィンドウで選び、覚えておく。会議の開始のたびに、読み直す。
-    private(set) var actorFile: String?
+    /// 取り込みの設定（SPEC §5）：マイク・システム音声・画面・まとめ方・プリセット・使う文字起こし・ACTOR.md・判断モデルなど。設定ウィンドウ・メニューで選び、覚えておく。**ここが、1 つの持ち主**（読み出しは、下の計算プロパティ）。
+    private(set) var preferences = CapturePreferences()
+    /// 取り込む音声の選択。
+    var selection: AudioSelection { AudioSelection(microphone: preferences.microphone, system: preferences.system) }
+    /// エージェントへ渡す、まとめ方（SPEC §3.6）。
+    var batchMode: BatchMode { preferences.batchMode }
+    /// 画面の取り込み（SPEC §3.5）。
+    var screen: ScreenSelection { preferences.screen }
+    /// 分析のしかた（プリセット。SPEC §3.11）。
+    var presetID: String { preferences.presetID }
+    /// 使う文字起こし（Mac 標準か、ダウンロードしたモデル。SPEC §3.12）。
+    var transcription: TranscriptionChoice { preferences.transcription }
+    /// 使う `ACTOR.md`（SPEC §3.13）。会議の開始のたびに、読み直す。
+    var actorFile: String? { preferences.actorFile }
     /// 最近使った `ACTOR.md`（新しい順。メニューで切り替える）。
-    private(set) var actorFiles: [String] = []
+    var actorFiles: [String] { preferences.actorFiles }
     /// 今日の出席者（外した人）。会議の途中でも変えられ、判断のたびに、この状態を見る（SPEC §3.13）。
     let attendance = Attendance()
-    /// `ACTOR.md` ごとの、外した人の名前（覚えておく）。
-    private var absentActors: [String: [String]] = [:]
     /// 実行中の会議が、開始のときに読んだ一覧（会議の途中で、ファイルが書き換わっても、メニューは、会議が使っている一覧を見せる）。
     private var activeActors: ActorList?
     /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
-    private(set) var decisionModel: DecisionModel?
+    var decisionModel: DecisionModel? { preferences.decisionModel.flatMap(DecisionModelCatalog.model(id:)) }
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -76,37 +76,28 @@ final class MeetingController {
         presetStore = PresetStore.standard(environment: environment)
         modelStore = ModelStore(root: dataDirectory)
         hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
-        let saved = CapturePreferences.load(defaults)
-        selection = AudioSelection(microphone: saved.microphone, system: saved.system)
-        screen = saved.screen
-        batchMode = saved.batchMode
+        var saved = CapturePreferences.load(defaults)
         // 保存したプリセットが、もう無ければ（自分のフォルダから消した）、既定に戻す。
-        presetID = presetStore.resolve(id: saved.presetID) == nil ? AnalysisPreset.defaultID : saved.presetID
+        if presetStore.resolve(id: saved.presetID) == nil { saved.presetID = AnalysisPreset.defaultID }
+        // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準／「推定しない」に戻す（黙って別のものを使わないよう、設定を直す）。
+        if case .local(let id) = saved.transcription, !(LocalModelCatalog.model(id: id).map { modelStore.isInstalled($0.artifact) } ?? false) { saved.transcription = .apple }
+        if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
+        preferences = saved
         retentionDays = RecordRetentionSetting.load(defaults)
-        // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準に戻す（黙って別のものを使わないよう、設定を直す）。
-        if case .local(let id) = saved.transcription, let model = LocalModelCatalog.model(id: id), modelStore.isInstalled(model.artifact) { transcription = saved.transcription }
-        actorFile = saved.actorFile
-        actorFiles = saved.actorFiles
-        absentActors = saved.absentActors
         attendance.replace(excluded: Set(saved.actorFile.flatMap { saved.absentActors[$0] } ?? []))
-        // 保存した判断モデルが、取得されていなければ（削除した・別の Mac から移した）、無しに戻す（推定しない）。
-        if let id = saved.decisionModel, let model = DecisionModelCatalog.model(id: id), modelStore.isInstalled(model) { decisionModel = model }
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
     private func persist() {
-        var preferences = CapturePreferences()
-        preferences.microphone = selection.microphone
-        preferences.system = selection.system
-        preferences.screen = screen
-        preferences.batchMode = batchMode
-        preferences.presetID = presetID
-        preferences.transcription = transcription
-        preferences.actorFile = actorFile
-        preferences.actorFiles = actorFiles
-        preferences.absentActors = absentActors
-        preferences.decisionModel = decisionModel?.id
         preferences.save(defaults)
+    }
+
+    /// 「待機中だけ変えられる設定」を変える：待機中でなければ、何もしない。変えたら、保存して、通知する。
+    private func mutateWhenIdle(_ change: (inout CapturePreferences) -> Void) {
+        guard state == .idle else { return }
+        change(&preferences)
+        persist()
+        changed()
     }
 
     /// 窓口を開く。開けなければ、知らせを出す（セッションは、記録だけで始められる）。
@@ -166,17 +157,11 @@ final class MeetingController {
     }
 
     func setMicrophone(_ enabled: Bool) {
-        guard state == .idle else { return }
-        selection.microphone = enabled
-        persist()
-        changed()
+        mutateWhenIdle { $0.microphone = enabled }
     }
 
     func setScreen(_ selection: ScreenSelection) {
-        guard state == .idle else { return }
-        screen = selection
-        persist()
-        changed()
+        mutateWhenIdle { $0.screen = selection }
     }
 
     /// 選べるプリセット（同梱と、自分のフォルダのもの）。
@@ -186,10 +171,7 @@ final class MeetingController {
     var presetName: String { presetStore.resolve(id: presetID)?.name ?? "なし" }
 
     func setPreset(_ id: String) {
-        guard state == .idle else { return }
-        presetID = id
-        persist()
-        changed()
+        mutateWhenIdle { $0.presetID = id }
     }
 
     /// 自分のプリセットを置くフォルダを開く（無ければ、テンプレートつきで作る）。
@@ -227,13 +209,10 @@ final class MeetingController {
 
     /// 使う文字起こしを選ぶ。ダウンロードしたモデルは、取得済みのものだけ選べる。会議の実行中は、変えられない。
     func setTranscription(_ choice: TranscriptionChoice) {
-        guard state == .idle else { return }
         if case .local(let id) = choice {
             guard let model = LocalModelCatalog.model(id: id), isInstalled(model) else { return }
         }
-        transcription = choice
-        persist()
-        changed()
+        mutateWhenIdle { $0.transcription = choice }
     }
 
     /// モデルを、ダウンロードする（利用者が押したときだけ。音声区間の検出のモデルも、一緒に取得する）。途中のファイルがあれば、続きから。取得できたら、そのモデルを選ぶ。
@@ -290,7 +269,7 @@ final class MeetingController {
     func deleteModel(_ model: LocalModel) {
         if transcription == .local(model.id) {
             guard state == .idle else { return }
-            transcription = .apple
+            preferences.transcription = .apple
             persist()
         }
         modelStore.delete(model.artifact)
@@ -303,11 +282,8 @@ final class MeetingController {
 
     /// 話者の推定に使う判断モデルを選ぶ（`nil`＝推定しない）。取得済みのものだけ選べる。会議の実行中は、変えられない。
     func setDecisionModel(_ model: DecisionModel?) {
-        guard state == .idle else { return }
         if let model { guard isInstalled(model) else { return } }
-        decisionModel = model
-        persist()
-        changed()
+        mutateWhenIdle { $0.decisionModel = model?.id }
     }
 
     /// 判断モデルを、ダウンロードする（利用者が押したときだけ。トークナイザ → 重みの順。途中のファイルがあれば、続きから）。取得できたら、そのモデルを選ぶ。
@@ -329,7 +305,7 @@ final class MeetingController {
     func deleteDecisionModel(_ model: DecisionModel) {
         if decisionModel == model {
             guard state == .idle else { return }
-            decisionModel = nil
+            preferences.decisionModel = nil
             persist()
         }
         modelStore.delete(model)
@@ -379,7 +355,7 @@ final class MeetingController {
         guard let actorFile else { return }
         attendance.setPresent(name, present)
         let absent = attendance.excludedNames
-        absentActors[actorFile] = absent.isEmpty ? nil : absent.sorted()
+        preferences.absentActors[actorFile] = absent.isEmpty ? nil : absent.sorted()
         persist()
         changed()
     }
@@ -400,33 +376,20 @@ final class MeetingController {
     }
 
     func setActorFile(_ path: String?) {
-        guard state == .idle else { return }
-        actorFile = path
-        if let path {
-            var preferences = CapturePreferences()
-            preferences.actorFiles = actorFiles
-            preferences.remember(actorFile: path)
-            actorFiles = preferences.actorFiles
+        mutateWhenIdle { preferences in
+            preferences.actorFile = path
+            if let path { preferences.remember(actorFile: path) }
+            // 出席者は、選んだ ACTOR.md ごとに覚えている（別のファイルへ切り替えると、そのファイルで外した人に変わる）。
+            attendance.replace(excluded: Set(path.flatMap { preferences.absentActors[$0] } ?? []))
         }
-        // 出席者は、選んだ ACTOR.md ごとに覚えている（別のファイルへ切り替えると、そのファイルで外した人に変わる）。
-        attendance.replace(excluded: Set(path.flatMap { absentActors[$0] } ?? []))
-        persist()
-        changed()
     }
 
-
     func setBatchMode(_ mode: BatchMode) {
-        guard state == .idle else { return }
-        batchMode = mode
-        persist()
-        changed()
+        mutateWhenIdle { $0.batchMode = mode }
     }
 
     func setSystem(_ source: SystemSource) {
-        guard state == .idle else { return }
-        selection.system = source
-        persist()
-        changed()
+        mutateWhenIdle { $0.system = source }
     }
 
     // MARK: 操作
