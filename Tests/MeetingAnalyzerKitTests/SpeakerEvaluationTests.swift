@@ -160,3 +160,83 @@ struct ActorsTryCommandTests {
         guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav", "--unit", "both"]) else { Issue.record("both を断らない"); return }
     }
 }
+
+/// 文ごとに、決めた確率を返す判断モデル（`answers[文][名前]`。無い名前は 0。「内容を持たない」確率は 0）。
+private struct ScriptedJudge: SpeakerJudge {
+    let answers: [String: [String: Double]]
+
+    func judge(utterance: String, candidates: [Actor]) async throws -> SpeakerJudgement {
+        SpeakerJudgement(probabilities: candidates.map { answers[utterance]?[$0.name] ?? 0 }, filler: 0)
+    }
+}
+
+@Suite("確信が足りない文：別の人が有力なら、前の話者に付けない（SPEC §3.13）")
+struct RivalSentenceTests {
+    private let first = "この画面の表示が遅いのは、検索が重いからです。"        // 佐藤（確信）
+    private let weak = "来月の予算の消化が早いので、見直しましょう。"           // 確信が足りない文
+    private let more = "あわせて、支払いの承認の流れも確認します。"             // 確信が足りない文（続き）
+    private let last = "もう一つ、障害の連絡の手順を決めておきます。"           // 佐藤（確信）
+    private let sato = "佐藤 花子", tanaka = "田中 美咲"
+
+    private func segments(_ answers: [String: [String: Double]], _ sentences: [String], gate: SpeakerGate = SpeakerGate()) async throws -> [SpeakerGuesser.Segment] {
+        let guesser = SpeakerGuesser(list: try actorList(), judge: ScriptedJudge(answers: answers), gate: gate)
+        return try await guesser.segments(sentences.joined())
+    }
+
+    @Test("確信が足りない文で、前の話者とは別の人が、0.4 以上で、前の話者より有力なら、前の話者に付けず、名前の無い別の発話にする")
+    func rivalIsNotAttached() async throws {
+        let result = try await segments([first: [sato: 0.97, tanaka: 0.03], weak: [sato: 0.3, tanaka: 0.6]], [first, weak])
+        #expect(result.map { $0.actor?.name } == [sato, nil] && result.map(\.text) == [first, weak])
+    }
+
+    @Test("別の人が有力でなければ、これまでどおり、前の話者に付く：前の話者が最上位／別の人が 0.4 未満／前の話者と同点")
+    func otherwiseAttachesToThePrevious() async throws {
+        let leading = try await segments([first: [sato: 0.97, tanaka: 0.03], weak: [sato: 0.6, tanaka: 0.4]], [first, weak])
+        #expect(leading.count == 1 && leading[0].actor?.name == sato)
+        let faint = try await segments([first: [sato: 0.97, tanaka: 0.03], weak: [sato: 0.3, tanaka: 0.35]], [first, weak])
+        #expect(faint.count == 1 && faint[0].actor?.name == sato, "0.4 未満の別の人は、有力とみなさない")
+        let tie = try await segments([first: [sato: 0.97, tanaka: 0.03], weak: [sato: 0.5, tanaka: 0.5]], [first, weak])
+        #expect(tie.count == 1 && tie[0].actor?.name == sato, "同点は、前の話者のまま（どちらかに決める根拠が無い）")
+        let loose = try await segments([first: [sato: 0.97, tanaka: 0.03], weak: [sato: 0.3, tanaka: 0.6]], [first, weak], gate: SpeakerGate(rivalConfidence: 0.7))
+        #expect(loose.count == 1, "しきい値（`SpeakerGate.rivalConfidence`）を上げると、付かない文は減る")
+    }
+
+    @Test("名前の無い発話は、続く確信の足りない文を受け、次に確信した文の話者に、さかのぼって付けない。確信した文は、新しい発話になる")
+    func unnamedSegmentIsKept() async throws {
+        let answers = [
+            first: [sato: 0.97, tanaka: 0.03],
+            weak: [sato: 0.3, tanaka: 0.6],
+            more: [sato: 0.45, tanaka: 0.2],
+            last: [sato: 0.96, tanaka: 0.04],
+        ]
+        let result = try await segments(answers, [first, weak, more, last])
+        #expect(result.map { $0.actor?.name } == [sato, nil, sato], "続きの文（more）は、名前の無い発話に入り、last は新しい発話")
+        #expect(result.map(\.text) == [first, weak + more, last])
+    }
+
+    @Test("先頭の、確信が足りない文：最初に確信した話者とは別の人が有力なら、その話者に付けない。同じ人が有力（または有力な人がいない）なら、付ける")
+    func leadingSentence() async throws {
+        let apart = try await segments([weak: [sato: 0.3, tanaka: 0.6], first: [sato: 0.97, tanaka: 0.03]], [weak, first])
+        #expect(apart.map { $0.actor?.name } == [nil, sato] && apart.map(\.text) == [weak, first])
+        let same = try await segments([weak: [sato: 0.6, tanaka: 0.3], first: [sato: 0.97, tanaka: 0.03]], [weak, first])
+        #expect(same.count == 1 && same[0].actor?.name == sato)
+        let faint = try await segments([weak: [sato: 0.2, tanaka: 0.3], first: [sato: 0.97, tanaka: 0.03]], [weak, first])
+        #expect(faint.count == 1 && faint[0].actor?.name == sato, "有力な人（0.4 以上）がいなければ、これまでどおり、最初に判断された区間に付く")
+    }
+
+    @Test("相づち（内容を持たない）や、短い文は、別の人が有力に見えても、これまでどおり、前の話者に付く")
+    func fillersStillAttach() async throws {
+        let filler = ScriptedFillerJudge()
+        let guesser = SpeakerGuesser(list: try actorList(), judge: filler)
+        let result = try await guesser.segments("マイグレーションの手順をまとめました。そうですね、わかりました。")
+        #expect(result.count == 1 && result[0].actor?.name == sato)
+    }
+}
+
+/// 1 文目は佐藤に確信し、相づちには、「内容を持たない」確率を高く返す（確率は、田中に傾けても、相づちとして扱う）。
+private struct ScriptedFillerJudge: SpeakerJudge {
+    func judge(utterance: String, candidates: [Actor]) async throws -> SpeakerJudgement {
+        if utterance.hasPrefix("そうですね") { return SpeakerJudgement(probabilities: candidates.map { $0.name == "田中 美咲" ? 0.7 : 0.3 }, filler: 0.95) }
+        return SpeakerJudgement(probabilities: candidates.map { $0.name == "佐藤 花子" ? 0.97 : 0.03 }, filler: 0)
+    }
+}
