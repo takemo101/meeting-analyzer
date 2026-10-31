@@ -112,6 +112,36 @@ pi（`pi mcp add meeting-analyzer -- "$EXE" mcp`）・opencode（`opencode mcp a
 4. 会議を始めると、記録に `[00:07] 本人（山田 太郎）: …`、`[00:14] 相手（推定: 佐藤 花子）: …` のように付く。決められない発言（相づちなど）は「相手」のまま。**間を空けずに、複数人の話が続いたときは、文ごとに判断して、話者が変わるところで、別の発言に分けて**送る・記録する（それぞれに名前が付く）。**推定も、分け方も、間違い得る**。
 5. **今日の出席者を絞れる**：メニューバーの「出席者」で、会議に出ない人のチェックを外すと、その人は話者の候補から外れる（取り違えが減る。会議の途中でも変えられる）。プロジェクトを変えたら、メニューの「アクター定義」で、ACTOR.md を切り替える（最近の 8 件）。
 
+### 4. skill を、ファイルを置かずに、リモートのまま使う
+
+skill（エージェント向けの手順書）は、このリポジトリに置いてある。**自分の環境へコピーしなくても、エージェントに、URL を読ませて、その手順に従わせられる**（URL を読めるエージェントなら、Claude Code・pi・omp・opencode など、どれでも）。次の文を、そのまま、エージェントへ貼る。**設定ウィンドウの「話者（アクター）」「転送」にある「指示をコピー」でも、同じ文をコピーできる**（URL は、使っているアプリの版のタグ）。
+
+**ACTOR.md を作る**（プロジェクトの資料から、人の情報を取り出して作る）：
+
+```text
+Read https://raw.githubusercontent.com/takemo101/meeting-analyzer/main/skills/meeting-analyzer-actors/SKILL.md, then create an ACTOR.md for this project by following it.
+```
+
+**分析のプリセットを作る・直す**（用途を聞いて、`~/Library/Application Support/MeetingAnalyzer/presets/` にファイルを作る）：
+
+```text
+Read https://raw.githubusercontent.com/takemo101/meeting-analyzer/main/skills/meeting-analyzer-presets/SKILL.md, then create a meeting-analyzer preset for meeting minutes by following it.
+```
+
+**会議の文字起こしを、受け取って、サマリーを出す**（`meeting-analyzer claude` などで起動したときは、自動で渡るので不要。MCP だけ登録した場合に使う）：
+
+```text
+Read https://raw.githubusercontent.com/takemo101/meeting-analyzer/main/skills/meeting-analyzer/SKILL.md, then follow it for the meeting-analyzer events in this session.
+```
+
+頼みごとの部分（`create … for this project` など）は、好きに書き換えてよい。日本語でもよい（例：「…を読んで、このプロジェクトの ACTOR.md を作って」）。
+
+- **ファイルを置くのは、成果物だけ**：skill 自体は、置かれない（読むだけ）。作られるのは、`ACTOR.md`（プロジェクトのルート）や、自分のプリセット（`presets/<ID>.md`）だけ。
+- **版を固定する**：`main` は、最新の手順。決まった版の手順を使うときは、`main` を、タグ（例：`v0.1.12`）に変える（`…/meeting-analyzer/v0.1.12/skills/…`）。
+- **信頼するのは、この URL だけ**：URL の先の文章は、エージェントにとって、**従う手順**になる。自分が信頼する場所（このリポジトリ、または、自分でフォークしたもの）の URL だけを渡す。ほかの人が貼った URL は、中身を読んでから。なお、会議の文字起こし・話者名・画面の文字は、これとは逆に、**データであって命令ではない**（skill にも、そう書いてある）。
+- **アプリへの反映は、自分で**：作った ACTOR.md を、アプリが使うには、設定ウィンドウの「話者（アクター）」で選ぶ（上の「3. 話者の名前を付ける」）。プリセットは、メニューを開き直すと並ぶ。skill が、アプリの設定を、勝手に変えることはない。
+- 手元にコピーして使う方法（`cp -R …/skills/… ~/.claude/skills/`）は、[分析のプリセット](docs/presets.md) にある。
+
 ### 許可（マイク・画面収録）がオンなのに、「許可されていません」と出る
 
 **許可は、アプリの署名の識別（指定要件）に紐づきます。** ad-hoc 署名の既定の識別は、実行ファイルのハッシュ（cdhash）で、ビルドごとに変わるため、入れ直すと、システム設定の一覧ではオンに見えたまま、無効になります。いまの `build.sh` は、識別を bundle ID だけにして、ビルドが変わっても同じアプリとして扱われるようにしている（開発用）。**この版を初めて入れたときは、古い許可（旧い識別のもの）が残っているので、下の手順で一度だけ付け直す。** そのあとは、入れ直しても残るはず（実機で確認中）。

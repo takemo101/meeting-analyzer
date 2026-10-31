@@ -40,6 +40,8 @@ final class SettingsModel: ObservableObject {
     @Published var confirmingDelete: String?
     /// サイドバーで選んでいるページ（`@State` を使えないので、ここに持つ）。
     @Published var page: SettingsPage = .capture
+    /// 指示をコピーした直後の skill（ボタンに「コピーしました」を見せる。少しして戻す）。
+    @Published private(set) var copiedSkill: RemoteSkill?
     private var tokens: [NSObjectProtocol] = []
 
     init(controller: MeetingController) {
@@ -61,6 +63,17 @@ final class SettingsModel: ObservableObject {
     func refreshApps() {
         apps = controller.candidateApps()
         revision += 1
+    }
+
+    /// リモートの skill を使う指示を、クリップボードへ入れる（エージェントへ貼る）。`pasteboard` は、試験で差し替える。
+    func copy(_ skill: RemoteSkill, to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(skill.prompt(), forType: .string)
+        copiedSkill = skill
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            if self?.copiedSkill == skill { self?.copiedSkill = nil }
+        }
     }
 }
 
@@ -209,6 +222,13 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+
+        // 指示のコピーは、会議の実行中でも使える（設定を変えない）。
+        Section("エージェントに ACTOR.md を作ってもらう") {
+            RemoteSkillRow(settings: model, skill: .actors)
+            Text("貼ると、エージェントが、この URL の手順（skill）を読み、プロジェクトの資料から ACTOR.md を作ります。skill のファイルを、自分の環境へ置く必要はありません。作ってもらったファイルは、上の「選ぶ…」で選びます。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var forwardingSections: some View {
@@ -224,6 +244,13 @@ struct SettingsView: View {
             Button("プリセットのフォルダを開く（自分のものを足す）") { controller.openPresetFolder() }
         }
         .disabled(locked)
+
+        Section("エージェントに頼む（リモートの skill）") {
+            RemoteSkillRow(settings: model, skill: .presets)
+            RemoteSkillRow(settings: model, skill: .analysis)
+            Text("貼ると、エージェントが、この URL の手順（skill）を読んで従います。skill のファイルを、自分の環境へ置く必要はありません（URL は、このアプリの版のものです）。プリセットは、作ってもらったあと、メニューを開き直すと並びます。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var recordSections: some View {
@@ -433,5 +460,22 @@ private struct ModelRow: View {
 
     private static func size(_ bytes: Int64) -> String {
         bytes >= 1_000_000_000 ? String(format: "%.1f GB", Double(bytes) / 1e9) : "\(bytes / 1_000_000) MB"
+    }
+}
+
+/// リモートの skill を使う指示 1 件：名前・指示の文（選んで読める）・コピーのボタン。
+private struct RemoteSkillRow: View {
+    @ObservedObject var settings: SettingsModel
+    let skill: RemoteSkill
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(skill.title)
+                Spacer()
+                Button(settings.copiedSkill == skill ? "コピーしました" : "指示をコピー") { settings.copy(skill) }
+            }
+            Text(skill.prompt()).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+        }
     }
 }

@@ -35,6 +35,7 @@
 
 - **場所**：リポジトリの `skills/meeting-analyzer-presets/`、またはアプリの `Contents/Resources/skills/meeting-analyzer-presets/`。
 - **入れ方**：お使いのエージェントの skill のフォルダへ、コピーする。例（Claude Code）：`cp -R /Applications/MeetingAnalyzer.app/Contents/Resources/skills/meeting-analyzer-presets ~/.claude/skills/`。ほかのエージェントも、それぞれの skill の置き場所へ。
+- **ファイルを置かずに使う（リモート）**：skill を、コピーせず、エージェントに URL を読ませて使える。設定ウィンドウの「転送」の「**指示をコピー**」を、エージェントへ貼る（`Read <SKILL.md の URL>, then create a meeting-analyzer preset for meeting minutes by following it.`。URL は、このアプリの版のタグ）。README の「skill を、ファイルを置かずに、リモートのまま使う」も同じ。
 - この skill は、会議の分析用の skill（`meeting-analyzer`。起動コマンドが自動で渡す）とは別で、**プリセットのファイルを作るときだけ**使う。
 
 ### ファイルの形
