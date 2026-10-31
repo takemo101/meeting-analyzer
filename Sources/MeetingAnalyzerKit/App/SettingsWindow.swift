@@ -174,7 +174,7 @@ struct SettingsView: View {
                 }
                 Spacer()
                 if controller.actorFile != nil { Button("外す") { controller.setActorFile(nil) } }
-                Button("選ぶ…") { controller.chooseActorFile() }
+                Button("選ぶ…") { if let path = ActorFilePicker.choose() { controller.setActorFile(path) } }
             }
             actorStatusView
         }
