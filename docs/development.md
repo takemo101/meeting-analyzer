@@ -27,7 +27,7 @@ meeting-analyzer の調査・変更・Issue・PR を、一つの作業単位と�
 
 ## ビルドと実行
 
-macOS 26 以降、Apple silicon、Swift 6 以降（Xcode または Command Line Tools）。外部パッケージはない。
+macOS 26 以降、Apple silicon、Swift 6.2 以降（Xcode または Command Line Tools）。外部パッケージは、声による話者の分離の FluidAudio だけ（固定した版。`Package.swift`。初回のビルドで、SwiftPM が取得する）。
 
 `just` で入口を一覧できる（[justfile](../justfile)）。`just` が無い環境では、同じ処理を `scripts/` から直接実行する。
 

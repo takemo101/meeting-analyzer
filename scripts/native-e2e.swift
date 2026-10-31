@@ -380,6 +380,19 @@ do {
     } else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason) }
 }
 
+// R7: 声による話者の分離（SPEC §3.14）。モデルが未取得なら、終了コード 4 で、取得の方法を示す（黙って、分離をやめない）。本人（--speaker you）とは使えない（使い方の誤り＝終了コード 1）。
+// 実際の分離（モデルの取得が要る）は、E2E では行わない（検証記録の、実機の確認）。
+do {
+    let id = "R7"
+    if asrReady, sampleReady {
+        let missing = run(exe, ["replay", sample, "--speaker", "others", "--separate", "--title", "e2e-\(id)"], env: env, timeout: 30)
+        check(missing.status == 4 && lastLine(missing.err).contains("models download"), "未取得の分離モデルの扱いが想定と違う: \(missing.status) \(missing.err)")
+        let you = run(exe, ["replay", sample, "--speaker", "you", "--separate"], env: env, timeout: 30)
+        check(you.status == 1, "本人との --separate を断らない: \(you.status) \(you.err)")
+        conclude(id, pass: "replay --separate：未取得の分離モデルは終了コード 4（取得の方法つき）。本人との組み合わせは使い方の誤り")
+    } else { record(id, .blocked, asrReady ? "検証用の音声がない" : asrReason) }
+}
+
 // ---------- R4: 窓口が使用中 / R5: アプリが無いときの MCP ----------
 do {
     let id = "R4"

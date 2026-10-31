@@ -55,8 +55,10 @@ public struct SessionEnd: Codable, Equatable, Sendable {
     public let utterances: Int
     /// 記録（Markdown）の絶対パス。書けなかったときは無し。
     public let transcriptPath: String?
+    /// 声で分離した話者の数（SPEC §3.14）。分離したときだけ。
+    public let speakers: Int?
 
-    public init(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?) {
+    public init(sessionId: String, title: String, reason: String, startedAt: String, endedAt: String, durationSeconds: Int, batches: Int, utterances: Int, transcriptPath: String?, speakers: Int? = nil) {
         self.sessionId = sessionId
         self.title = title
         self.reason = reason
@@ -66,16 +68,17 @@ public struct SessionEnd: Codable, Equatable, Sendable {
         self.batches = batches
         self.utterances = utterances
         self.transcriptPath = transcriptPath
+        self.speakers = speakers
     }
 
     /// セッションの値（UUID・日時・終了の理由）から、JSON の形にして作る。`durationSeconds` は、開始から終了までの秒（負にならない）。
-    public init(sessionId: UUID, title: String, reason: EndReason, startedAt: Date, endedAt: Date, batches: Int, utterances: Int, transcriptPath: String?) {
+    public init(sessionId: UUID, title: String, reason: EndReason, startedAt: Date, endedAt: Date, batches: Int, utterances: Int, transcriptPath: String?, speakers: Int? = nil) {
         let iso = ISO8601DateFormatter()
         self.init(
             sessionId: sessionId.uuidString.lowercased(), title: title, reason: reason.rawValue,
             startedAt: iso.string(from: startedAt), endedAt: iso.string(from: endedAt),
             durationSeconds: max(0, Int(endedAt.timeIntervalSince(startedAt).rounded())),
-            batches: batches, utterances: utterances, transcriptPath: transcriptPath
+            batches: batches, utterances: utterances, transcriptPath: transcriptPath, speakers: speakers
         )
     }
 }

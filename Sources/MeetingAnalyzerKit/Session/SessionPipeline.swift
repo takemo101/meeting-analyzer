@@ -84,7 +84,7 @@ public final class SessionPipeline: @unchecked Sendable {
         stream.version += 1
         stream.lastWasFinal = update.isFinal
         streams[speaker] = stream
-        let utterance = Utterance(id: stream.currentId, speaker: speaker, text: text, isFinal: update.isFinal, startedAt: update.start, version: stream.version, actor: actor)
+        let utterance = Utterance(id: stream.currentId, speaker: speaker, text: text, isFinal: update.isFinal, startedAt: update.start, version: stream.version, actor: actor, endedAt: update.end)
         transcript.record(utterance)
         dirty = true
         batcher.observe(utterance, at: update.end)
@@ -96,6 +96,28 @@ public final class SessionPipeline: @unchecked Sendable {
         guard !finished else { return }
         while batcher.hasPending { deliver(batcher.flush(at: now)) }
         checkpoint(at: now, force: true)
+    }
+
+    /// 声の分離の結果（会議の時刻に直した区間。SPEC §3.14）を、確定した「相手」の発話へ当てて、話者 ID を付ける。付けた話者の数を返す。
+    /// 終了の手順の中（`finish` の前）で、1 回だけ呼ぶ。字幕（すでに送った出来事）は、変えない。記録（`transcript.md`）に反映される。
+    @discardableResult
+    public func applyVoices(_ segments: [VoiceSegment]) -> Int {
+        guard !finished else { return 0 }
+        let targets = transcript.ordered.filter { $0.speaker == .others && $0.isFinal && ($0.endedAt ?? $0.startedAt) > $0.startedAt }
+        let result = VoiceAssignment.assign(spans: targets.map { ($0.startedAt, $0.endedAt ?? $0.startedAt) }, segments: segments)
+        for (utterance, id) in zip(targets, result.ids) { transcript.assignVoice(id, forKey: utterance.key) }
+        transcript.voiceSpeakers = result.count
+        transcript.voiceFailure = nil
+        dirty = true
+        return result.count
+    }
+
+    /// 声の分離に失敗したことを、記録に書く（話者 ID は付かない）。
+    public func noteVoiceFailure(_ reason: String) {
+        guard !finished else { return }
+        transcript.voiceSpeakers = nil
+        transcript.voiceFailure = reason
+        dirty = true
     }
 
     /// 会議の途中の書き足し：変わっていれば、`checkpointInterval` 秒に 1 回まで、記録を書き直す（終了の記録と同じ場所。終了で、整えて書き直す）。
@@ -121,7 +143,7 @@ public final class SessionPipeline: @unchecked Sendable {
         }
         let end = SessionEnd(
             sessionId: sessionId, title: title, reason: reason, startedAt: startedAt, endedAt: endedAt,
-            batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath
+            batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath, speakers: transcript.voiceSpeakers
         )
         sink.publish(.ended(end))
         return end

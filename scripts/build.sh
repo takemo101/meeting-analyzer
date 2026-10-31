@@ -25,6 +25,12 @@ cp -R integrations/opencode "$APP/Contents/Resources/meeting-analyzer-opencode"
 mkdir -p "$APP/Contents/Resources/licenses"
 cp build/native/src/LICENSE "$APP/Contents/Resources/licenses/transcribe.cpp-LICENSE"
 cp build/native/src/THIRD-PARTY-LICENSES.md "$APP/Contents/Resources/licenses/transcribe.cpp-THIRD-PARTY-LICENSES.md"
+# 声による話者の分離（SPEC §3.14）：モデルの出典・CC-BY-4.0 の表示（このリポジトリの `Resources/licenses/`）と、FluidAudio（Apache-2.0）・その fastcluster・vbx のライセンス（SwiftPM が取り込んだもの）。
+cp Resources/licenses/voice-separation-NOTICE.md "$APP/Contents/Resources/licenses/voice-separation-NOTICE.md"
+FLUID=.build/checkouts/FluidAudio
+cp "$FLUID/LICENSE" "$APP/Contents/Resources/licenses/FluidAudio-LICENSE"
+cp "$FLUID/ThirdPartyLicenses/fastcluster-LICENSE.md" "$APP/Contents/Resources/licenses/FluidAudio-fastcluster-LICENSE.md"
+cp "$FLUID/ThirdPartyLicenses/vbx-LICENSE.md" "$APP/Contents/Resources/licenses/FluidAudio-vbx-LICENSE.md"
 # 分析のプリセット（解説・提案・サマリーの出し方。メニューで選ぶ。SPEC §3.11）。自分のプリセットは、データの置き場所の presets/ に置く。
 cp -R presets "$APP/Contents/Resources/presets"
 # プリセットを作る・直すための skill（エージェントの skill フォルダへ、コピーして使う。docs/presets.md）。

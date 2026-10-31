@@ -90,6 +90,8 @@ enum CLIOutput {
         let utterances: Int
         let durationSeconds: Int
         let transcriptPath: String?
+        /// 声で分離した話者の数（`--separate`。SPEC §3.14）。分離したときだけ。
+        let speakers: Int?
     }
 
     /// `actors try` の区間 1 つ：本文・付けた名前（無ければ `null`）・理由（`SpeakerGuesser.Decision.Outcome`）・「内容を持たない」確率・上位の候補の確率。
