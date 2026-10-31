@@ -111,7 +111,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     /// 出席者の選択（相手の側の人。チェックした人から、話者を判断する）。**会議の途中でも、押せる**（次の判断から効く）。
-    private func attendeesItem(_ choices: [MeetingController.ActorChoice]) -> NSMenuItem {
+    private func attendeesItem(_ choices: [ActorSelection.Choice]) -> NSMenuItem {
         let item = NSMenuItem(title: "出席者（\(choices.filter(\.present).count)/\(choices.count) 人）", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
@@ -193,7 +193,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func clearActorFile() { controller.setActorFile(nil) }
 
-    @objc private func chooseActorFile() { controller.chooseActorFile() }
+    @objc private func chooseActorFile() {
+        guard controller.state == .idle, let path = ActorFilePicker.choose() else { return }
+        controller.setActorFile(path)
+    }
 
     // MARK: 会議の操作
 

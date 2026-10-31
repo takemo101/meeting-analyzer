@@ -31,10 +31,10 @@ final class MeetingController {
     var actorFile: String? { preferences.actorFile }
     /// 最近使った `ACTOR.md`（新しい順。メニューで切り替える）。
     var actorFiles: [String] { preferences.actorFiles }
-    /// 今日の出席者（外した人）。会議の途中でも変えられ、判断のたびに、この状態を見る（SPEC §3.13）。
-    let attendance = Attendance()
-    /// 実行中の会議が、開始のときに読んだ一覧（会議の途中で、ファイルが書き換わっても、メニューは、会議が使っている一覧を見せる）。
-    private var activeActors: ActorList?
+    /// ACTOR.md の選択まわり：今日の出席者・会議が使っている一覧・設定ウィンドウに見せる状態・会議の開始のための labeler（SPEC §3.13）。
+    let actorSelection = ActorSelection()
+    /// 一時停止・再開・終了の、進行中の操作（同時に 1 つだけ）。
+    private let operations = OperationGate()
     /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
     var decisionModel: DecisionModel? { preferences.decisionModel.flatMap(DecisionModelCatalog.model(id:)) }
     let presetStore: PresetStore
@@ -77,7 +77,7 @@ final class MeetingController {
         if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
         preferences = saved
         retentionDays = RecordRetentionSetting.load(defaults)
-        attendance.replace(excluded: Set(saved.actorFile.flatMap { saved.absentActors[$0] } ?? []))
+        actorSelection.restore(from: saved)
         downloads.onChange = { [weak self] in self?.changed() }
     }
 
@@ -260,73 +260,21 @@ final class MeetingController {
     // MARK: アクター（ACTOR.md。SPEC §3.13）
 
     /// 設定ウィンドウに見せる、選んだ `ACTOR.md` の状態。
-    enum ActorStatus: Equatable {
-        case none
-        case loaded(count: Int, hasSelf: Bool, warnings: [String])
-        case failed(String)
-    }
+    var actorStatus: ActorSelection.Status { actorSelection.status(file: actorFile) }
 
-    /// 選んだファイルを、いま読んで検査した結果（読むのは、設定ウィンドウの表示のときだけ。小さいファイル）。
-    var actorStatus: ActorStatus {
-        guard let actorFile else { return .none }
-        switch ActorFile.load(path: actorFile) {
-        case .success(let list): return .loaded(count: list.actors.count, hasSelf: list.selfActor != nil, warnings: list.warnings)
-        case .failure(let error): return .failed(error.message)
-        }
-    }
+    /// 出席者の選択肢（相手の側の人）。
+    var actorChoices: [ActorSelection.Choice] { actorSelection.choices(file: actorFile, meetingRunning: state != .idle) }
 
-    /// 出席者の選択肢の 1 人分（相手の側の人。本人は、出さない）。
-    struct ActorChoice: Equatable {
-        let name: String
-        let role: String?
-        let present: Bool
-    }
-
-    /// 出席者の選択肢。会議の実行中は、開始のときに読んだ一覧。待機中は、選んだファイルを、いま読む（読めなければ、空）。
-    var actorChoices: [ActorChoice] {
-        let list: ActorList?
-        if state != .idle, let activeActors {
-            list = activeActors
-        } else if let actorFile, case .success(let loaded) = ActorFile.load(path: actorFile) {
-            list = loaded
-        } else {
-            list = nil
-        }
-        return (list?.others ?? []).map { ActorChoice(name: $0.name, role: $0.role, present: attendance.isPresent($0.name)) }
-    }
-
-    /// 出席者を、足す・外す。**会議の実行中でも、変えられる**（次の判断から効く。すでに付いた名前は、付け直さない）。選んだ ACTOR.md ごとに、覚える。
+    /// 出席者を、足す・外す。**会議の実行中でも、変えられる**（次の判断から効く）。選んだ ACTOR.md ごとに、覚える。
     func setPresent(_ name: String, _ present: Bool) {
-        guard let actorFile else { return }
-        attendance.setPresent(name, present)
-        let absent = attendance.excludedNames
-        preferences.absentActors[actorFile] = absent.isEmpty ? nil : absent.sorted()
+        guard actorSelection.setPresent(name, present, in: &preferences) else { return }
         persist()
         changed()
     }
 
-
-    /// `ACTOR.md` を選ぶ（ファイルを選ぶパネル）。選んだら、検査して、状態を更新する。
-    func chooseActorFile() {
-        guard state == .idle else { return }
-        let panel = NSOpenPanel()
-        panel.title = "アクター定義（ACTOR.md）を選ぶ"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.plainText, .init(filenameExtension: "md") ?? .plainText]
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        setActorFile(url.path)
-    }
-
+    /// `ACTOR.md` を選ぶ（待機中だけ。`nil`＝外す）。ファイルを選ぶパネルは、View 側（`ActorFilePicker`）。
     func setActorFile(_ path: String?) {
-        mutateWhenIdle { preferences in
-            preferences.actorFile = path
-            if let path { preferences.remember(actorFile: path) }
-            // 出席者は、選んだ ACTOR.md ごとに覚えている（別のファイルへ切り替えると、そのファイルで外した人に変わる）。
-            attendance.replace(excluded: Set(path.flatMap { preferences.absentActors[$0] } ?? []))
-        }
+        mutateWhenIdle { actorSelection.select(path, in: &$0) }
     }
 
     func setBatchMode(_ mode: BatchMode) {
@@ -351,7 +299,7 @@ final class MeetingController {
     func pause() {
         guard state == .running, let session else { return }
         state = .working("一時停止中…")
-        Task {
+        operations.run { [self] in
             do { try await session.pause(); state = .paused } catch { state = .running; notice = "一時停止できませんでした" }
         }
     }
@@ -359,7 +307,7 @@ final class MeetingController {
     func resume() {
         guard state == .paused, let session else { return }
         state = .working("再開処理中…")
-        Task {
+        operations.run { [self] in
             do { try await session.resume(); state = .running }
             catch let error as LiveSessionError { state = .paused; notice = FailureText.start(error) }
             catch { state = .paused; notice = "再開できませんでした" }
@@ -373,18 +321,20 @@ final class MeetingController {
 
     /// 会議を終える。記録を書き、エージェントへ終了の出来事を出す。
     func end(reason: EndReason) async {
-        // 開始・一時停止・再開の最中なら、終わるのを待つ（その間に終了を始めると、取り込みの停止が重なる）。
-        while case .working = state, session != nil { try? await Task.sleep(for: .milliseconds(100)) }
+        // 一時停止・再開・終了の最中なら、終わるのを待つ（その間に終了を始めると、取り込みの停止が重なる）。
+        await operations.idle()
         guard let session else { return }
         state = .working("終了処理中…")
-        defer { self.session = nil; state = .idle }
-        do {
-            let outcome = try await session.end(reason: reason)
-            defer { cleanRecords() }
-            notice = "終了しました（発話 \(outcome.utterances) 件）"
-        } catch {
-            notice = "会議を終了できませんでした"
-        }
+        await operations.run { [self] in
+            defer { self.session = nil; state = .idle }
+            do {
+                let outcome = try await session.end(reason: reason)
+                defer { cleanRecords() }
+                notice = "終了しました（発話 \(outcome.utterances) 件）"
+            } catch {
+                notice = "会議を終了できませんでした"
+            }
+        }.value
     }
 
     // MARK: 内部
@@ -394,7 +344,7 @@ final class MeetingController {
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
-        let (actors, labeler, actorNotice) = await actorSetup(selection)
+        let setup = await actorSelection.prepare(file: actorFile, usesSystemAudio: selection.system != .off, model: decisionModel, store: modelStore)
         let dataDirectory = dataDirectory
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
@@ -405,8 +355,8 @@ final class MeetingController {
             options: LiveSessionOptions(
                 policy: batchMode.policy,
                 preset: presetStore.resolve(id: presetID)?.info,
-                actors: actors,
-                labeler: labeler,
+                actors: setup.actors,
+                labeler: setup.labeler,
                 screen: screenSelection == .off ? nil : LiveSessionScreen(feed: ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() }, store: ScreenshotStore(root: dataDirectory))
             ),
             notify: notify
@@ -415,7 +365,7 @@ final class MeetingController {
             try await session.start()
             self.session = session
             state = .running
-            if let actorNotice { notice = actorNotice }
+            if let notice = setup.notice { self.notice = notice }
         } catch let error as LiveSessionError {
             if case .capture(.permissionDenied(let permission, _)) = error {
                 fail(FailureText.start(error), settings: permission.settingsURL)
@@ -424,33 +374,6 @@ final class MeetingController {
             }
         } catch {
             fail(error.localizedDescription)
-        }
-    }
-
-    /// 会議で使う `ACTOR.md` と、発話へ名前を付ける部品。読めない・推定を使えないときは、付けずに会議を始め、理由を知らせる（失敗を黙って捨てない）。
-    /// 判断モデルを選んでいない・取得していない・相手の音声を取り込まない・相手の側の候補がいないときは、**推定しない**（「本人」の対応づけだけ。相手は「相手」のまま）。
-    /// モデルの読み込み（初回は、GPU のコンパイルで数秒）は、画面を止めないよう、別のスレッドで行う。
-    private func actorSetup(_ selection: AudioSelection) async -> (ActorSource?, SpeakerLabeler?, String?) {
-        activeActors = nil
-        guard let path = actorFile else { return (nil, nil, nil) }
-        switch ActorFile.load(path: path) {
-        case .failure(let error):
-            return (nil, nil, "ACTOR.md を使えません: \(error.message)")
-        case .success(let list):
-            activeActors = list
-            // 判断モデルは、相手の音声を取り込むときだけ使う。読み込み（初回は数秒）は、画面を止めないよう、別のスレッドで。
-            let model = selection.system == .off ? nil : decisionModel
-            let store = modelStore, attendance = attendance
-            var problem: String?
-            let labeler: SpeakerLabeler
-            do {
-                labeler = try await Task.detached(priority: .userInitiated) { try SpeakerLabeler.make(list: list, model: model, store: store, attendance: attendance) }.value
-            } catch {
-                // 読み込めなくても、会議は始める（「本人」の対応づけだけ。理由を知らせる）。
-                labeler = SpeakerLabeler(list: list, guesser: nil)
-                problem = "相手の話者を推定できません" + ((error as? DecisionModelError).map { ": \($0.message)" } ?? "")
-            }
-            return (ActorSource(list: list, file: path), labeler, problem)
         }
     }
 
