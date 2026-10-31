@@ -8,13 +8,16 @@ public struct ModelArtifact: Sendable, Equatable {
     public let filename: String
     public let bytes: Int64
     public let sha256: String
+    /// 保管の場所（`models/` の下の相対パス）。無ければ、`<SHA-256 の先頭 12 桁>-<ファイル名>` の 1 ファイル。ディレクトリを持つモデル（声の分離。`VoiceModel`）が使う。
+    public let storedAs: String?
 
-    public init(repository: String, revision: String, filename: String, bytes: Int64, sha256: String) {
+    public init(repository: String, revision: String, filename: String, bytes: Int64, sha256: String, storedAs: String? = nil) {
         self.repository = repository
         self.revision = revision
         self.filename = filename
         self.bytes = bytes
         self.sha256 = sha256
+        self.storedAs = storedAs
     }
 
     /// Hugging Face の、版を固定した取得先。

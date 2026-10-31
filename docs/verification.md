@@ -983,3 +983,11 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 - **オフラインの内訳**：A は 83 %・C は 80 %・D は 76 % が、1 つのクラスタに入った（それぞれ別のクラスタ）。**B は 2 つのクラスタに割れた**（44 %＋21 %。ほかの話者へ混ざったのは 17 %）。話者のいる秒（2920 秒）の割り当てだけで見ると、誤りは約 17 %、**1 人が 2 つに割れるのを許せば、一致は約 77 %**（3370 秒中）。
 - **分かったこと**：（1）**混ざった実会議の音声でも、オフライン方式なら、主な話者を、おおむね分けられる**（4 人中 3 人は、1 つのクラスタにまとまる）。名前（Jev）が無くても、成り立つ。（2）**ライブ向け（Sortformer・LS-EEND）は、この会議では、大きく劣る**。ライブの ID は、「それまでの音声の全体を、定期的に分け直す」か、「会議の終わりに整える」形が現実的（先の疑似ライブ：JVS で 2〜23 %）。（3）**1 人が複数の ID に割れる**（B）・**短い発言や同時発話で「音声なし」になる**（13 %）ことが、主な誤り。
 - **未確認**：1 つの会議・1 つの録画方式（Zoom）。正解（画面の枠）の遅れ・食い違い（誤りの一部は、正解側の誤りの可能性）。発話の中での話者の切り替わり（文ごとの ID）。定期的な分け直しの、ID の安定（回をまたいだ対応づけ）。取り込み方針（SPEC §2）・ライセンス。
+
+### 2026-11-01 — 声の分離のモデルを、取得できるようにする（MIK-038 の 1 つ目。SPEC §3.14）
+
+- **ライセンスの確認（実装前の確認事項）**：FluidAudio は Apache-2.0。モデルのリポジトリ（`FluidInference/speaker-diarization-coreml`）は、`LICENSE`＝CC-BY-4.0、`NOTICE.md`＝CC-BY-4.0 の範囲は、`Segmentation`・`FBank`・`Embedding`・`PLDA`・`PldaRho` と、`plda-parameters.json`・`xvector-transform.json`（pyannote の speaker-diarization-community-1 由来。PLDA の定数は BUT Speech@FIT）。**出典（pyannote・WeSpeaker・BUT Speech@FIT・FluidInference）・CC-BY-4.0 へのリンク・改変（Core ML への変換）の表示が、条件**。商用利用も可。→ **取得して使える**。表示（設定ウィンドウ・同梱するライセンス）は、次の変更（アプリへの組み込み）で行う。
+- **ローカルでの読み込み（実装前の確認事項）**：FluidAudio は、`OfflineDiarizerModels.load(from: <ディレクトリ>)` で、`<ディレクトリ>/speaker-diarization-coreml/` から読む。`ModelHub.offlineMode = true` で、FluidAudio の通信を止められる（ソースで確認。実行での確認は、次の変更）。**必要なファイル**：`Segmentation`・`FBank`・`Embedding`・`PldaRho` の `.mlmodelc`（各 5 ファイル）と `plda-parameters.json`＝**21 ファイル・21,599,417 バイト**。
+- **変更**：`VoiceModel`・`VoiceModelCatalog`（版 `df2625ac…`〔FluidAudio が固定している版と同じ〕・21 ファイルのバイト数と SHA-256 を固定）、`ModelArtifact.storedAs`（入れ子の保管の場所）、`ModelStore` の声の分離の拡張、`ModelDownloader` が途中のディレクトリを 0700 で作る、`ModelInstallPlan`（小さいものから）、`models`（`kind: voice`。取得・削除・一覧）。**FluidAudio のパッケージは、まだ取り込んでいない**（次の変更）。単体 282 件（+5）・E2E 16/16 pass。
+- **実機（隔離した置き場所）**：`models download speaker-separation` で、21 ファイルを取得（全体の SHA-256 検証済み）。保管は `models/voice/df2625ac79a7/speaker-diarization-coreml/…`、ディレクトリは 0700・ファイルは 0600、`models` の一覧に `kind: voice`・`installed: true`・`downloadedBytes: 21599417`、`models delete` でフォルダごと消えた。確認後、置き場所を削除した。
+- **未確認**：FluidAudio での実際の読み込み（`offlineMode` で、取得済みのフォルダから）。設定ウィンドウでの取得・削除。

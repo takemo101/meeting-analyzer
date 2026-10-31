@@ -25,6 +25,11 @@ public struct ModelInstallPlan: Sendable {
         self.init(reported: model.artifacts)
     }
 
+    /// 声の分離のモデル：複数のファイルを、小さいものから順に。進み具合は、全体の合計。
+    public init(_ model: VoiceModel) {
+        self.init(reported: model.artifacts.sorted { $0.bytes < $1.bytes })
+    }
+
     /// 進み具合の全体（バイト数）。
     public var total: Int64 { reported.reduce(0) { $0 + $1.bytes } }
 
