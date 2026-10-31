@@ -487,18 +487,20 @@ final class MeetingController {
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
         let (actors, labeler, actorNotice) = await actorSetup(selection)
+        let dataDirectory = dataDirectory
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
             inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale), transcription: transcription, models: modelStore),
             sink: hub,
             store: SessionStore(root: dataDirectory),
-            policy: batchMode.policy,
-            screen: screenSelection == .off ? nil : ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() },
-            screenshots: screenSelection == .off ? nil : ScreenshotStore(root: dataDirectory),
-            preset: presetStore.resolve(id: presetID)?.info,
-            actors: actors,
-            labeler: labeler,
+            options: LiveSessionOptions(
+                policy: batchMode.policy,
+                preset: presetStore.resolve(id: presetID)?.info,
+                actors: actors,
+                labeler: labeler,
+                screen: screenSelection == .off ? nil : LiveSessionScreen(feed: ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() }, store: ScreenshotStore(root: dataDirectory))
+            ),
             notify: notify
         )
         do {

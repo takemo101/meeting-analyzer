@@ -63,12 +63,8 @@ actor ScreenRecorder {
     func startPeriodic(attach: @escaping @Sendable (Shot) async -> Void) {
         running = true
         ticker?.cancel()
-        ticker = Task { [interval] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                if Task.isCancelled { break }
-                if let shot = await self.captureDuringMeeting() { await attach(shot) }
-            }
+        ticker = repeatEvery(interval) {
+            if let shot = await self.captureDuringMeeting() { await attach(shot) }
         }
     }
 

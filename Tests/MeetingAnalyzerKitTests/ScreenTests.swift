@@ -165,7 +165,10 @@ struct LiveSessionScreenTests {
     private func session(_ screen: FakeScreen?, sink: RecordingSink, store: ScreenshotStore?, fake: FakeInputs = FakeInputs(), minGap: TimeInterval = 0, notify: @escaping @Sendable (LiveSessionNotice) -> Void = { _ in }) -> LiveSession {
         LiveSession(
             title: "t", speakers: [.others], inputs: fake.inputs, sink: sink, store: nil,
-            tickInterval: .seconds(60), screen: screen?.feed, screenshots: store, screenInterval: .milliseconds(20), screenMinGap: minGap, notify: notify
+            options: LiveSessionOptions(
+                timing: LiveSessionTiming(tickInterval: .seconds(60)),
+                screen: screen.flatMap { screen in store.map { LiveSessionScreen(feed: screen.feed, store: $0, interval: .milliseconds(20), minGap: minGap) } }
+            ), notify: notify
         )
     }
 
@@ -462,8 +465,11 @@ struct LiveSessionStabilityTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ScreenshotStore(root: root), screen = FakeScreen(), sink = RecordingSink(), fake = FakeInputs()
         let live = LiveSession(
-            title: "t", speakers: [.others], inputs: fake.inputs, sink: sink, store: nil, tickInterval: .seconds(60),
-            screen: screen.feed, screenshots: store, screenInterval: .milliseconds(15), screenMinGap: 0, notify: { _ in }
+            title: "t", speakers: [.others], inputs: fake.inputs, sink: sink, store: nil,
+            options: LiveSessionOptions(
+                timing: LiveSessionTiming(tickInterval: .seconds(60)),
+                screen: LiveSessionScreen(feed: screen.feed, store: store, interval: .milliseconds(15), minGap: 0)
+            ), notify: { _ in }
         )
         func directory() -> String { store.directory(sessionId: live.sessionId).path }
         func saved() -> Int { (try? FileManager.default.contentsOfDirectory(atPath: directory()))?.count ?? 0 }
