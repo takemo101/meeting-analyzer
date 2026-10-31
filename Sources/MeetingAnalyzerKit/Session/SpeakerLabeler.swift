@@ -60,3 +60,15 @@ public struct SpeakerLabeler: Sendable {
         }
     }
 }
+
+extension SpeakerLabeler {
+    /// `ACTOR.md` の一覧から、labeler を作る（会議・再生が、同じ手順を使う）。
+    /// 判断モデルがあり、相手の側の候補がいるときだけ、モデルを読み込んで、推定できる labeler にする。**無いときは、推定しない**（「本人」の対応づけだけ。相手は「相手」のまま。SPEC §3.13）。
+    /// **重い**（初回は、GPU のグラフのコンパイルで数秒）ので、呼び出し側は、画面を止めない場所（別のスレッド）で呼ぶ。読み込めなければ、`DecisionModelError` を投げる（見せ方は、呼び出し側の境界が決める）。
+    public static func make(list: ActorList, model: DecisionModel?, store: ModelStore, attendance: Attendance) throws -> SpeakerLabeler {
+        guard let model, !list.others.isEmpty else { return SpeakerLabeler(list: list, guesser: nil) }
+        let judge = try SystemOneJudge(model: model, store: store)
+        try judge.prepare()
+        return SpeakerLabeler(list: list, guesser: SpeakerGuesser(list: list, judge: judge, attendance: attendance))
+    }
+}

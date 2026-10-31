@@ -266,18 +266,15 @@ public struct CLIRunner {
                     guard unknown.isEmpty else { throw CLIError.input("--attendees に、ACTOR.md の相手の側に無い名前があります: \(unknown.joined(separator: "・"))（\(list.others.map(\.name).joined(separator: "・"))）") }
                     attendance.replace(excluded: known.subtracting(names))
                 }
-                // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。
-                var guesser: SpeakerGuesser?
-                if options.speaker == .others, !list.others.isEmpty, let id = options.judge, let model = DecisionModelCatalog.model(id: id) {
-                    guard modelStore.isInstalled(model) else { throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）") }
-                    do {
-                        let judge = try SystemOneJudge(model: model, store: modelStore)
-                        try judge.prepare()
-                        guesser = SpeakerGuesser(list: list, judge: judge, attendance: attendance)
-                    } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
+                // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。「相手」を再生するときだけ。
+                let model = options.speaker == .others ? options.judge.flatMap(DecisionModelCatalog.model(id:)) : nil
+                if let model, !list.others.isEmpty, !modelStore.isInstalled(model) {
+                    throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
                 }
+                do {
+                    labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance)
+                } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
                 actorSource = ActorSource(list: list, file: absolute)
-                labeler = SpeakerLabeler(list: list, guesser: guesser)
             }
         }
         let hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
