@@ -16,7 +16,7 @@ public enum DecisionModelError: Error, Equatable, Sendable {
         switch self {
         case .unreadable(let reason): return reason
         case .noGPU: return "この Mac の GPU（Metal）を使えません"
-        case .inputTooLong: return "入力が長すぎます"
+        case .inputTooLong: return "アクターの人数・説明が、判断モデルの入力に収まりません（ACTOR.md の人数を減らすか、説明を短くしてください）"
         case .failed(let reason): return reason
         }
     }

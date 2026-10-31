@@ -52,7 +52,8 @@ public enum ActorListError: Error, Equatable, Sendable {
 /// 書式：「## 名前」が 1 人分の節。節の中の「- 項目: 値」を読む（項目：`役割`・`呼ばれ方`・`話題`・`本人`。値の複数は `、` か `,` で区切る）。
 /// それ以外の文章（説明・ほかの見出し）は、読まずに、そのままにする。
 public struct ActorList: Equatable, Sendable {
-    public static let maxActors = 12
+    /// 人数の上限。判断モデルの選択肢の最大数（32）に収まる範囲で、実モデルで計測した人数（30）。多いほど、判断が遅く、メモリも使う（`SystemOneJudge.lengthTiers`）。
+    public static let maxActors = 30
     static let maxNameLength = 40
     static let maxItemLength = 60
     static let maxItems = 10

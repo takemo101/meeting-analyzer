@@ -67,7 +67,7 @@ extension SpeakerLabeler {
     /// **重い**（初回は、GPU のグラフのコンパイルで数秒）ので、呼び出し側は、画面を止めない場所（別のスレッド）で呼ぶ。読み込めなければ、`DecisionModelError` を投げる（見せ方は、呼び出し側の境界が決める）。
     public static func make(list: ActorList, model: DecisionModel?, store: ModelStore, attendance: Attendance) throws -> SpeakerLabeler {
         guard let model, !list.others.isEmpty else { return SpeakerLabeler(list: list, guesser: nil) }
-        let judge = try SystemOneJudge(model: model, store: store)
+        let judge = try SystemOneJudge(model: model, store: store, candidates: list.others)
         try judge.prepare()
         return SpeakerLabeler(list: list, guesser: SpeakerGuesser(list: list, judge: judge, attendance: attendance))
     }

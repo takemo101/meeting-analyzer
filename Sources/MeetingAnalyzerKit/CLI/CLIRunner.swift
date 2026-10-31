@@ -274,7 +274,7 @@ public struct CLIRunner {
         do {
             let labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance)
             return (ActorSource(list: list, file: absolute), labeler)
-        } catch { throw CLIError.transcription("判断モデルを読み込めません: \(error)") }
+        } catch { throw CLIError.transcription("判断モデルを読み込めません: " + ((error as? DecisionModelError)?.message ?? "\(error)")) }
     }
 
     /// 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。

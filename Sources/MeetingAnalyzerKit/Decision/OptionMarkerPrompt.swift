@@ -18,6 +18,16 @@ struct OptionMarkerPrompt {
         let positions: [Int]
     }
 
+    /// 問いと選択肢だけを入れたときの長さ（発言を入れる前。選択肢が多すぎれば `inputTooLong`）。段（入力の長さ）を選ぶのに使う。
+    func fixedLength(question: String, options: [String]) throws -> Int {
+        guard !options.isEmpty, options.count <= Self.maxOptions else { throw DecisionModelError.inputTooLong }
+        let pre = try encode("<state>\n"), post = try encode("</options>")
+        let mid = try encode("\n</state>\n<question>\n" + question + "\n</question>\n<options>\n")
+        let newline = try encode("\n")
+        let opts = try options.map { try encode($0 + Self.cue).count + 1 + newline.count }
+        return pre.count + mid.count + opts.reduce(0, +) + post.count
+    }
+
     func render(state: String, question: String, options: [String]) throws -> Rendered {
         guard !options.isEmpty, options.count <= Self.maxOptions else { throw DecisionModelError.inputTooLong }
         let pre = try encode("<state>\n")

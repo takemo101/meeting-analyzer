@@ -32,6 +32,26 @@ struct OptionMarkerPromptTests {
         #expect(throws: DecisionModelError.inputTooLong) { try prompt(maxLength: 5_000).render(state: "s", question: "q", options: (0...OptionMarkerPrompt.maxOptions).map { "o\($0)" }) }
         #expect(throws: DecisionModelError.inputTooLong) { try prompt(maxLength: 400).render(state: "s", question: "q", options: []) }
     }
+
+    @Test("問いと選択肢だけの長さは、発言を空にして組み立てたものと同じ（段を選ぶ計算が、実際の組み立てとずれない）。選択肢が多すぎる・無いときは、断る")
+    func fixedLengthMatchesRender() throws {
+        let options = ["佐藤 花子: 営業。話題: 見積もり・商談", "田中 美咲: 経理", "鈴木 一郎"]
+        let p = prompt(maxLength: 5_000)
+        #expect(try p.fixedLength(question: "誰か", options: options) == p.render(state: "", question: "誰か", options: options).ids.count)
+        #expect(try p.fixedLength(question: "誰か", options: options + ["もう 1 人"]) > p.fixedLength(question: "誰か", options: options), "選択肢が増えると、長くなる")
+        #expect(throws: DecisionModelError.inputTooLong) { try p.fixedLength(question: "q", options: []) }
+        #expect(throws: DecisionModelError.inputTooLong) { try p.fixedLength(question: "q", options: (0...OptionMarkerPrompt.maxOptions).map { "o\($0)" }) }
+    }
+
+    @Test("入力の長さの段：発言の分を取っておいて、収まる最小の段を選ぶ。最大の段でも収まらなければ、無し")
+    func lengthTier() {
+        let reserve = SystemOneJudge.utteranceReserve
+        #expect(SystemOneJudge.tier(forFixedLength: 0) == 512, "候補が少なければ、標準の段（いまの速さを保つ）")
+        #expect(SystemOneJudge.tier(forFixedLength: 512 - reserve) == 512)
+        #expect(SystemOneJudge.tier(forFixedLength: 512 - reserve + 1) == 1024)
+        #expect(SystemOneJudge.tier(forFixedLength: 2048 - reserve) == 2048)
+        #expect(SystemOneJudge.tier(forFixedLength: 2048 - reserve + 1) == nil)
+    }
 }
 
 @Suite("BPETokenizer：バイトレベルの BPE（合成した小さな tokenizer.json）")
