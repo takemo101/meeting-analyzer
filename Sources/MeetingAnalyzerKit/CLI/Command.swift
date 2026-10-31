@@ -56,6 +56,26 @@ public struct ReplayOptions: Equatable {
     public var judge: String?
     /// 出席者の名前（相手の側の人。SPEC §3.13）。無指定なら、ACTOR.md の全員。
     public var attendees: [String]?
+    /// 話者の判断の単位（SPEC §3.13）。既定は、文ごと。
+    public var unit: JudgmentUnit = .default
+}
+
+/// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）を、判断して見せる（SPEC §3.13）。
+public struct ActorsTryOptions: Equatable {
+    public enum Input: Equatable {
+        /// 本文 1 つ。
+        case text(String)
+        /// 評価の件のファイル（JSON Lines。`SpeakerEvalCase`）。
+        case cases(String)
+    }
+
+    public var file: String
+    /// 判断モデルの ID（`DecisionModelCatalog`）。
+    public var judge: String
+    /// 試す判断の単位（`both` なら、両方を、同じ入力で比べる）。
+    public var units: [JudgmentUnit]
+    public var attendees: [String]?
+    public var input: Input
 }
 
 /// `models` の操作。ID は、一覧（`LocalModelCatalog`・`DecisionModelCatalog`）にあるものだけ（読み取りの境界で検査済み）。
@@ -68,6 +88,8 @@ public enum ModelsCommand: Equatable {
 public enum Command: Equatable {
     /// `ACTOR.md` の書式を検査して、読み取れた内容を出す（SPEC §3.13）。
     case actorsCheck(file: String)
+    /// `ACTOR.md` と判断モデルで、本文・評価の件を、判断して見せる（診断。SPEC §3.13）。
+    case actorsTry(ActorsTryOptions)
     case gui
     case help
     case version
@@ -91,7 +113,9 @@ public enum CommandParser {
     private enum Option {
         static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
-        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees]
+        static let unit = "--unit", cases = "--cases"
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees, unit]
+        static let actorsTry: Set = [judge, attendees, unit, cases]
     }
 
     /// 引数を一度だけ検査して、型にする。知らないコマンド・オプション、足りない値、重複は、使い方の誤りとして断る。
@@ -104,7 +128,8 @@ public enum CommandParser {
         case "presets":
             return options(rest, allowed: [], positional: 0).map { _ in .presets }
         case "actors":
-            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md>")) }
+            if rest.first == "try" { return actorsTryOptions(Array(rest.dropFirst())).map { .actorsTry($0) } }
+            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md> | actors try <ACTOR.md> --judge <ID> [--unit sentence|utterance|both] [--attendees 名前,名前] (<本文> | --cases <ファイル>)")) }
             return .success(.actorsCheck(file: rest[1]))
         case "doctor":
             return options(rest, allowed: [Option.locale], positional: 0).map { .doctor(locale: $0.values[Option.locale] ?? defaultLocale) }
@@ -137,6 +162,11 @@ public enum CommandParser {
         let values = parsed.values
         guard let speaker = Speaker(rawValue: values[Option.speaker] ?? "others") else { return .failure(.usage("--speaker は you か others です")) }
         return model(values[Option.model]).flatMap { chosen in
+            let unit: JudgmentUnit
+            switch units(values[Option.unit], allowBoth: false) {
+            case .success(let value): unit = value[0]
+            case .failure(let error): return .failure(error)
+            }
             if let judge = values[Option.judge], DecisionModelCatalog.model(id: judge) == nil {
                 return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
             }
@@ -147,11 +177,35 @@ public enum CommandParser {
                     return ReplayOptions(
                         file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
                         locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
-                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names)
+                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names), unit: unit
                     )
                 }
             }
         }
+    }
+
+    /// `actors try` の値を、一度だけ検査して、型にする。
+    private static func actorsTryOptions(_ arguments: [String]) -> Result<ActorsTryOptions, CLIError> {
+        let withCases = arguments.contains(Option.cases)
+        return options(arguments, allowed: Option.actorsTry, positional: withCases ? 1 : 2).flatMap { parsed in
+            let values = parsed.values
+            guard let judge = values[Option.judge] else { return .failure(.usage("--judge が必要です（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
+            guard DecisionModelCatalog.model(id: judge) != nil else { return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
+            return units(values[Option.unit], allowBoth: true).map { units in
+                ActorsTryOptions(
+                    file: parsed.positional[0], judge: judge, units: units, attendees: values[Option.attendees].map(names),
+                    input: values[Option.cases].map { .cases($0) } ?? .text(parsed.positional[1])
+                )
+            }
+        }
+    }
+
+    /// `--unit` の値（`sentence`・`utterance`。`allowBoth` なら `both`＝両方）。無指定は、既定（文ごと）。
+    private static func units(_ value: String?, allowBoth: Bool) -> Result<[JudgmentUnit], CLIError> {
+        guard let value else { return .success([.default]) }
+        if allowBoth, value == "both" { return .success(JudgmentUnit.allCases) }
+        guard let unit = JudgmentUnit(rawValue: value) else { return .failure(.usage("--unit は \((JudgmentUnit.allCases.map(\.rawValue) + (allowBoth ? ["both"] : [])).joined(separator: "・")) のどれかです")) }
+        return .success([unit])
     }
 
     /// 秒数のオプション（0〜3600）。無指定は 0。

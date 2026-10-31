@@ -57,30 +57,64 @@ public struct SpeakerGuesser: Sendable {
     private let gate: SpeakerGate
     /// 今日の出席者。外された人は、話者の候補にしない（会議の途中で変わり得る。判断のたびに見る）。
     private let attendance: Attendance
+    /// 判断の単位（`segments` が使う）。
+    public let unit: JudgmentUnit
 
-    public init(list: ActorList, judge: any SpeakerJudge, gate: SpeakerGate = SpeakerGate(), attendance: Attendance = Attendance()) {
+    public init(list: ActorList, judge: any SpeakerJudge, gate: SpeakerGate = SpeakerGate(), attendance: Attendance = Attendance(), unit: JudgmentUnit = .default) {
         self.list = list
         self.judge = judge
         self.gate = gate
         self.attendance = attendance
+        self.unit = unit
+    }
+
+    /// 1 つの本文の判断と、その理由（診断：`actors try`）。
+    public struct Decision: Equatable, Sendable {
+        public enum Outcome: String, Sendable {
+            /// 付けた（名乗り）。
+            case introduced
+            /// 付けた（確信度の条件を満たした）。
+            case named
+            /// 短すぎて、問わなかった。
+            case tooShort
+            /// 候補がいない（出席者がいない、または、全員の名前が出た）。
+            case noCandidate
+            /// 内容を持たない発言（相づち・進行）。
+            case filler
+            /// 確信度が足りない。
+            case lowConfidence
+        }
+
+        public let outcome: Outcome
+        /// 付けた人（付けなかったときは `nil`）。
+        public let actor: Actor?
+        /// 判断モデルへ問うた候補と、その答え（問わなかったときは、空・`nil`）。
+        public let candidates: [Actor]
+        public let answer: SpeakerJudgement?
+    }
+
+    public func decide(_ text: String) async throws -> Decision {
+        let utterance = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard utterance.count >= Self.minimumLength else { return Decision(outcome: .tooShort, actor: nil, candidates: [], answer: nil) }
+        let others = attendance.present(list.others)
+        guard !others.isEmpty else { return Decision(outcome: .noCandidate, actor: nil, candidates: [], answer: nil) }
+
+        let found = Self.mentions(of: others, in: utterance)
+        if found.introduced.count == 1, let only = found.introduced.first { return Decision(outcome: .introduced, actor: others[only], candidates: [], answer: nil) }
+        let candidates = others.indices.filter { !found.mentioned.contains($0) }.map { others[$0] }
+        guard !candidates.isEmpty else { return Decision(outcome: .noCandidate, actor: nil, candidates: [], answer: nil) }
+
+        let answer = try await judge.judge(utterance: utterance, candidates: candidates)
+        guard answer.probabilities.count == candidates.count, let top = answer.probabilities.indices.max(by: { answer.probabilities[$0] < answer.probabilities[$1] }) else {
+            return Decision(outcome: .lowConfidence, actor: nil, candidates: candidates, answer: answer)
+        }
+        if answer.filler >= gate.maximumFiller { return Decision(outcome: .filler, actor: nil, candidates: candidates, answer: answer) }
+        if answer.probabilities[top] < gate.minimumConfidence { return Decision(outcome: .lowConfidence, actor: nil, candidates: candidates, answer: answer) }
+        return Decision(outcome: .named, actor: candidates[top], candidates: candidates, answer: answer)
     }
 
     public func guess(_ text: String) async throws -> Actor? {
-        let utterance = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard utterance.count >= Self.minimumLength else { return nil }
-        let others = attendance.present(list.others)
-        guard !others.isEmpty else { return nil }
-
-        let found = Self.mentions(of: others, in: utterance)
-        if found.introduced.count == 1, let only = found.introduced.first { return others[only] }
-        let candidates = others.indices.filter { !found.mentioned.contains($0) }.map { others[$0] }
-        guard !candidates.isEmpty else { return nil }
-
-        let answer = try await judge.judge(utterance: utterance, candidates: candidates)
-        guard answer.probabilities.count == candidates.count, answer.filler < gate.maximumFiller,
-              let top = answer.probabilities.indices.max(by: { answer.probabilities[$0] < answer.probabilities[$1] }),
-              answer.probabilities[top] >= gate.minimumConfidence else { return nil }
-        return candidates[top]
+        try await decide(text).actor
     }
 
     /// 分割した 1 区間：本文と、付けた名前（付けられなければ `nil`）。
@@ -101,7 +135,7 @@ public struct SpeakerGuesser: Sendable {
     /// 区間の本文をつなぐと、元の本文に戻る（文の間の空白は、区切りで落ちる）。
     public func segments(_ text: String) async throws -> [Segment] {
         let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sentences = SentenceSplitter.split(whole)
+        let sentences = unit == .utterance ? [whole] : SentenceSplitter.split(whole)
         guard sentences.count > 1 else { return [Segment(text: whole, actor: try await guess(whole))] }
         var groups: [(sentences: [String], actor: Actor?)] = []
         for sentence in sentences {

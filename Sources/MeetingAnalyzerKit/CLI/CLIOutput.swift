@@ -92,6 +92,66 @@ enum CLIOutput {
         let transcriptPath: String?
     }
 
+    /// `actors try` の区間 1 つ：本文・付けた名前（無ければ `null`）・理由（`SpeakerGuesser.Decision.Outcome`）・「内容を持たない」確率・上位の候補の確率。
+    struct TrySegment: Encodable {
+        let text: String
+        let actor: String?
+        let outcome: String
+        let filler: Double?
+        let top: [TryCandidate]
+    }
+
+    struct TryCandidate: Encodable {
+        let name: String
+        let probability: Double
+    }
+
+    /// `actors try`（本文 1 つ）の結果：判断の単位ごと。
+    struct TryResult: Encodable {
+        let unit: String
+        let segments: [TrySegment]
+    }
+
+    /// 評価の集計（文の数と、判断の結果の内訳）。
+    struct EvalScore: Encodable {
+        let sentences: Int
+        let named: Int
+        let correct: Int
+        /// 確信して間違い（別の人を付けた）。
+        let wrong: Int
+        let missed: Int
+        let falseName: Int
+        let rightlyUnnamed: Int
+        /// 名前を付けた文のうち、正解の割合。
+        let precision: Double
+
+        init(_ score: SpeakerEvalScore) {
+            sentences = score.sentences; named = score.named; correct = score.correct; wrong = score.wrong
+            missed = score.missed; falseName = score.falseName; rightlyUnnamed = score.rightlyUnnamed
+            precision = CLIOutput.rounded(score.precision)
+        }
+    }
+
+    /// `actors try --cases` の結果：判断の単位ごと。
+    struct EvalReport: Encodable {
+        let unit: String
+        let cases: Int
+        let secondsPerCase: Double
+        let total: EvalScore
+        let byTag: [String: EvalScore]
+
+        init(_ report: SpeakerEvalReport, unit: String) {
+            self.unit = unit
+            cases = report.cases
+            secondsPerCase = CLIOutput.rounded(report.cases == 0 ? 0 : report.seconds / Double(report.cases))
+            total = EvalScore(report.total)
+            byTag = report.byTag.mapValues(EvalScore.init)
+        }
+    }
+
+    /// 小数 3 桁に丸める。
+    static func rounded(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+
     /// 1 行の JSON にする（エンコードできなければ `{}`）。
     static func json<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()

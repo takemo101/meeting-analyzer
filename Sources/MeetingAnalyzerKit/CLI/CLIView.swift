@@ -68,6 +68,39 @@ enum CLIView {
         return lines.joined(separator: "\n")
     }
 
+    /// `actors try`（本文 1 つ）：区間ごとに、付けた名前（または、付けなかった理由）と、上位の候補の確率。
+    static func actorsTry(_ result: CLIOutput.TryResult, unitTitle: String, _ style: TerminalStyle) -> String {
+        var lines = [style.bold(unitTitle)]
+        for segment in result.segments {
+            let who = segment.actor.map { style.success($0) } ?? style.warning("付けない（\(reason(segment.outcome))）")
+            lines.append("  " + who + "  " + style.dim(segment.text))
+            let detail = segment.top.map { "\($0.name) \(Int(($0.probability * 100).rounded()))%" } + (segment.filler.map { ["内容を持たない \(Int(($0 * 100).rounded()))%"] } ?? [])
+            if !detail.isEmpty { lines.append("    " + style.dim(detail.joined(separator: "・"))) }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func reason(_ outcome: String) -> String {
+        switch outcome {
+        case "tooShort": return "短すぎる"
+        case "noCandidate": return "候補がいない"
+        case "filler": return "内容を持たない発言"
+        case "lowConfidence": return "確信度が足りない"
+        default: return outcome
+        }
+    }
+
+    /// `actors try --cases`：判断の単位ごとの、集計（全体と、場合の名前ごと）。
+    static func actorsEval(_ report: CLIOutput.EvalReport, unitTitle: String, _ style: TerminalStyle) -> String {
+        func row(_ name: String, _ score: CLIOutput.EvalScore) -> (name: String, text: [String]) {
+            (name, ["文 \(score.sentences)・付けた \(score.named)（正解 \(score.correct)・間違い \(score.wrong + score.falseName)）・付けなかった \(score.missed + score.rightlyUnnamed)・付けた中の正解 \(Int((score.precision * 100).rounded()))%"])
+        }
+        var rows = [row("全体", report.total)]
+        for (tag, score) in report.byTag.sorted(by: { $0.key < $1.key }) { rows.append(row(tag, score)) }
+        let head = style.bold(unitTitle) + style.dim("  発話 \(report.cases) 件・1 件あたり \(report.secondsPerCase) 秒")
+        return ([head] + style.table(rows, label: style.cyan).map { "  " + $0 }).joined(separator: "\n")
+    }
+
     // MARK: 失敗
 
     /// 人が読む失敗の表示。1 行目に何が起きたか、2 行目以降に、次にすること。
