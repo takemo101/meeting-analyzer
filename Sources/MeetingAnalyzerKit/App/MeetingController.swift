@@ -40,16 +40,8 @@ final class MeetingController {
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
-    /// いまのダウンロード（同時に 1 つ）。モデルの ID・取得済みと全体のバイト数。
-    struct ModelDownload: Equatable {
-        let id: String
-        var received: Int64
-        var total: Int64
-    }
-    private(set) var download: ModelDownload? { didSet { changed() } }
-    /// 直近のダウンロードの失敗（モデルの ID と理由）。次のダウンロードの開始で消す。
-    private(set) var downloadFailure: (id: String, reason: String)? { didSet { changed() } }
-    private var downloader: ModelDownloader?
+    /// モデルのダウンロードの状態と操作（設定ウィンドウが読む・操作する）。
+    let downloads: ModelDownloads
     private let defaults: UserDefaults
 
     /// 状態が変わったときに呼ぶ処理（メニューバーの絵・設定ウィンドウの表示を更新する）。
@@ -75,6 +67,7 @@ final class MeetingController {
         dataDirectory = RuntimePaths.dataDirectory(environment: environment)
         presetStore = PresetStore.standard(environment: environment)
         modelStore = ModelStore(root: dataDirectory)
+        downloads = ModelDownloads(store: modelStore)
         hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         var saved = CapturePreferences.load(defaults)
         // 保存したプリセットが、もう無ければ（自分のフォルダから消した）、既定に戻す。
@@ -85,6 +78,7 @@ final class MeetingController {
         preferences = saved
         retentionDays = RecordRetentionSetting.load(defaults)
         attendance.replace(excluded: Set(saved.actorFile.flatMap { saved.absentActors[$0] } ?? []))
+        downloads.onChange = { [weak self] in self?.changed() }
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
@@ -217,53 +211,11 @@ final class MeetingController {
 
     /// モデルを、ダウンロードする（利用者が押したときだけ。音声区間の検出のモデルも、一緒に取得する）。途中のファイルがあれば、続きから。取得できたら、そのモデルを選ぶ。
     func downloadModel(_ model: LocalModel) {
-        startDownload(id: model.id, name: model.name, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model.artifact)) { [self] in
+        downloads.start(id: model.id, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model.artifact)) { [self] in
             if state == .idle { setTranscription(.local(model.id)) }
+            notice = "「\(model.name)」を取得しました"
         }
     }
-
-    /// 取得の共通の手順：状態を「取得中」にし、`plan` を順に取り、終わったら後始末をして、成功なら `onInstalled`（そのモデルを選ぶ）、失敗なら理由を残す（取り消しは、何も残さない）。同時に 1 つだけ。
-    private func startDownload(id: String, name: String, plan: ModelInstallPlan, received: Int64, onInstalled: @escaping @MainActor () -> Void) {
-        guard download == nil else { return }
-        downloadFailure = nil
-        download = ModelDownload(id: id, received: received, total: plan.total)
-        let downloader = ModelDownloader(store: modelStore)
-        self.downloader = downloader
-        let throttle = ProgressThrottle()
-        Task {
-            var failure: Error?
-            do {
-                try await plan.run(fetch: { try await downloader.download($0, progress: $1) }) { received, total in
-                    guard throttle.shouldReport(received: received, total: total) else { return }
-                    Task { @MainActor in self.download = ModelDownload(id: id, received: received, total: total) }
-                }
-            } catch {
-                failure = error
-            }
-            download = nil
-            self.downloader = nil
-            switch failure {
-            case nil:
-                onInstalled()
-                notice = "「\(name)」を取得しました"
-            case let error as ModelDownloadError:
-                if error != .cancelled { downloadFailure = (id, FailureText.download(error)) }
-            case let error?:
-                downloadFailure = (id, "\(error)")
-            }
-        }
-    }
-
-    /// 途中までのダウンロード（`.part`）を、捨てる（取り消したあとに、続きから取得せず、やめるとき）。取得中・取得済みのモデルには、何もしない。
-    func discardPartialDownload(_ model: LocalModel) {
-        guard download?.id != model.id, !isInstalled(model) else { return }
-        modelStore.discardPartial(model.artifact)
-        if downloadFailure?.id == model.id { downloadFailure = nil }
-        changed()
-    }
-
-    /// ダウンロードを取り消す（取得済みの分は残り、続きから再開できる）。
-    func cancelDownload() { downloader?.cancel() }
 
     /// 取得したモデルを、削除する。使っているモデルなら、Mac 標準に戻す（会議の実行中は、使っているモデルを消せない）。
     func deleteModel(_ model: LocalModel) {
@@ -288,17 +240,10 @@ final class MeetingController {
 
     /// 判断モデルを、ダウンロードする（利用者が押したときだけ。トークナイザ → 重みの順。途中のファイルがあれば、続きから）。取得できたら、そのモデルを選ぶ。
     func downloadDecisionModel(_ model: DecisionModel) {
-        startDownload(id: model.id, name: model.name, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
+        downloads.start(id: model.id, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
             if state == .idle { setDecisionModel(model) }
+            notice = "「\(model.name)」を取得しました"
         }
-    }
-
-    /// 途中までのダウンロード（`.part`）を、捨てる。取得中・取得済みのモデルには、何もしない。
-    func discardPartialDownload(_ model: DecisionModel) {
-        guard download?.id != model.id, !isInstalled(model) else { return }
-        modelStore.discardPartial(model)
-        if downloadFailure?.id == model.id { downloadFailure = nil }
-        changed()
     }
 
     /// 取得した判断モデルを、削除する。使っているモデルなら、「推定しない」に戻す（会議の実行中は、使っているモデルを消せない）。
@@ -522,20 +467,5 @@ final class MeetingController {
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return "\(selection.summary) \(formatter.string(from: now))"
-    }
-}
-
-/// ダウンロードの進み具合の通知を、間引く（取得のたびに、画面を更新しない）：全体の 1% 以上進んだとき、または、最後。
-final class ProgressThrottle: @unchecked Sendable {
-    private let lock = NSLock()
-    private var lastPercent = -1
-
-    func shouldReport(received: Int64, total: Int64) -> Bool {
-        guard total > 0 else { return false }
-        lock.lock(); defer { lock.unlock() }
-        let percent = Int(received * 100 / total)
-        guard percent != lastPercent else { return false }
-        lastPercent = percent
-        return true
     }
 }

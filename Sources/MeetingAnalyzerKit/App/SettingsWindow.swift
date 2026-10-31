@@ -344,7 +344,7 @@ private struct ModelRowSpec {
         inUse = controller.transcription == .local(model.id)
         deleteNote = inUse ? "使っているモデルです。削除すると、Mac 標準に戻ります。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
         download = { controller.downloadModel(model) }
-        discard = { controller.discardPartialDownload(model) }
+        discard = { controller.downloads.discardPartial(model) }
         delete = { controller.deleteModel(model) }
     }
 
@@ -356,7 +356,7 @@ private struct ModelRowSpec {
         inUse = controller.decisionModel == model
         deleteNote = inUse ? "使っているモデルです。削除すると、話者の推定をしなくなります（相手は「相手」のまま）。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
         download = { controller.downloadDecisionModel(model) }
-        discard = { controller.discardPartialDownload(model) }
+        discard = { controller.downloads.discardPartial(model) }
         delete = { controller.deleteDecisionModel(model) }
     }
 }
@@ -377,7 +377,7 @@ private struct ModelRow: View {
         Binding(get: { settings.confirmingDelete == "discard:" + spec.id }, set: { settings.confirmingDelete = $0 ? "discard:" + spec.id : nil })
     }
 
-    private var downloading: MeetingController.ModelDownload? { controller.download?.id == spec.id ? controller.download : nil }
+    private var downloading: ModelDownloads.Download? { controller.downloads.current?.id == spec.id ? controller.downloads.current : nil }
     private var partial: Bool { !spec.installed && spec.downloadedBytes > 0 }
 
     var body: some View {
@@ -397,7 +397,7 @@ private struct ModelRow: View {
                 ProgressView(value: Double(downloading.received), total: Double(max(1, downloading.total)))
                 Text("\(Self.size(downloading.received)) / \(Self.size(downloading.total))").font(.caption).foregroundStyle(.secondary)
             }
-            if let failure = controller.downloadFailure, failure.id == spec.id {
+            if let failure = controller.downloads.failure, failure.id == spec.id {
                 Text(failure.reason).font(.caption).foregroundStyle(.red)
             }
         }
@@ -415,7 +415,7 @@ private struct ModelRow: View {
 
     @ViewBuilder private var control: some View {
         if downloading != nil {
-            Button("取り消す") { controller.cancelDownload() }
+            Button("取り消す") { controller.downloads.cancel() }
         } else if spec.installed {
             Button("削除…", role: .destructive) { settings.confirmingDelete = spec.id }
                 .disabled(spec.inUse && locked)
@@ -423,10 +423,10 @@ private struct ModelRow: View {
             HStack {
                 if partial {
                     Button("破棄…", role: .destructive) { settings.confirmingDelete = "discard:" + spec.id }
-                        .disabled(controller.download != nil)
+                        .disabled(controller.downloads.current != nil)
                 }
                 Button(partial ? "続きから取得" : "ダウンロード") { spec.download() }
-                    .disabled(controller.download != nil)
+                    .disabled(controller.downloads.current != nil)
             }
         }
     }
