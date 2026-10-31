@@ -98,26 +98,20 @@ public struct CLIRunner {
         } catch let error as CLIError {
             return report(error)
         } catch {
-            err(errIsTerminal ? CLIView.failure(.input("\(error)"), errStyle) : Self.json(["ok": false, "code": "internal", "message": "\(error)"]))
+            err(errIsTerminal ? CLIView.failure(.input("\(error)"), errStyle) : CLIOutput.json(CLIOutput.Failure(code: "internal", message: "\(error)")))
             return 1
         }
     }
 
     /// 失敗を、標準エラーへ出し、終了コードを返す。
     public func report(_ error: CLIError) -> Int32 {
-        err(errIsTerminal ? CLIView.failure(error, errStyle) : Self.json(["ok": false, "code": error.code, "message": error.message]))
+        err(errIsTerminal ? CLIView.failure(error, errStyle) : CLIOutput.json(CLIOutput.Failure(code: error.code, message: error.message)))
         return error.exitCode
-    }
-
-    static func json(_ object: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]),
-              let text = String(data: data, encoding: .utf8) else { return "{}" }
-        return text
     }
 
     private func doctor(_ localeId: String) async throws {
         let readiness = await SpeechReadiness.check(locale: Locale(identifier: localeId))
-        out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : Self.json(["locale": readiness.locale, "supported": readiness.supported, "installed": readiness.installed]))
+        out(outIsTerminal ? CLIView.doctor(readiness, outStyle) : CLIOutput.json(CLIOutput.Doctor(locale: readiness.locale, supported: readiness.supported, installed: readiness.installed)))
     }
 
     /// ダウンロード式のモデル（文字起こし・話者の推定）の、一覧・取得・削除（SPEC §3.12・§3.13）。一覧は、端末では表、パイプでは 1 行 1 件の JSON。
@@ -127,10 +121,10 @@ public struct CLIRunner {
         case .list:
             if outIsTerminal { out(CLIView.models(LocalModelCatalog.all, decision: DecisionModelCatalog.all, store: store, directory: store.directory.path, outStyle)); return }
             for model in LocalModelCatalog.all {
-                out(Self.json(["kind": "transcription", "id": model.id, "name": model.name, "bytes": model.artifact.bytes, "installed": store.isInstalled(model.artifact), "downloadedBytes": store.downloadedBytes(model.artifact)]))
+                out(CLIOutput.json(CLIOutput.ModelLine(kind: "transcription", id: model.id, name: model.name, bytes: Int64(model.artifact.bytes), installed: store.isInstalled(model.artifact), downloadedBytes: store.downloadedBytes(model.artifact))))
             }
             for model in DecisionModelCatalog.all {
-                out(Self.json(["kind": "decision", "id": model.id, "name": model.name, "bytes": model.bytes, "installed": store.isInstalled(model), "downloadedBytes": store.downloadedBytes(model)]))
+                out(CLIOutput.json(CLIOutput.ModelLine(kind: "decision", id: model.id, name: model.name, bytes: Int64(model.bytes), installed: store.isInstalled(model), downloadedBytes: store.downloadedBytes(model))))
             }
         case .download(let id):
             let name: String, path: String, plan: ModelInstallPlan
@@ -151,14 +145,14 @@ public struct CLIRunner {
                 throw CLIError.transcription("ダウンロードできませんでした: \(error.message)（もう一度実行すると、続きから取得します）")
             }
             report.finish()
-            out(outIsTerminal ? CLIView.modelDownloaded(name: name, path: path, outStyle) : Self.json(["ok": true, "id": id, "path": path]))
+            out(outIsTerminal ? CLIView.modelDownloaded(name: name, path: path, outStyle) : CLIOutput.json(CLIOutput.Downloaded(id: id, path: path)))
         case .delete(let id):
             if let model = LocalModelCatalog.model(id: id) {
                 store.delete(model.artifact)
-                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+                out(outIsTerminal ? "\(model.name) を削除しました" : CLIOutput.json(CLIOutput.Deleted(id: model.id)))
             } else if let model = DecisionModelCatalog.model(id: id) {
                 store.delete(model)
-                out(outIsTerminal ? "\(model.name) を削除しました" : Self.json(["ok": true, "id": model.id, "deleted": true]))
+                out(outIsTerminal ? "\(model.name) を削除しました" : CLIOutput.json(CLIOutput.Deleted(id: model.id)))
             } else {
                 throw CLIError.usage("知らないモデルです: \(id)")
             }
@@ -173,9 +167,9 @@ public struct CLIRunner {
             return
         }
         for preset in presets {
-            out(Self.json(["id": preset.id, "name": preset.name, "source": preset.source == .user ? "user" : "builtin", "description": preset.summary]))
+            out(CLIOutput.json(CLIOutput.PresetLine(id: preset.id, name: preset.name, source: preset.source == .user ? "user" : "builtin", description: preset.summary)))
         }
-        for item in skipped { out(Self.json(["skipped": item.file, "reason": item.reason])) }
+        for item in skipped { out(CLIOutput.json(CLIOutput.SkippedPreset(skipped: item.file, reason: item.reason))) }
     }
 
     private func readableFile(_ path: String) throws -> URL {
@@ -191,7 +185,7 @@ public struct CLIRunner {
         let file = try readableFile(path)
         do {
             for try await update in updates(file, Locale(identifier: localeId), model, modelStore) where update.isFinal {
-                out(outIsTerminal ? CLIView.transcript(text: update.text, start: update.start, end: update.end, outStyle) : Self.json(["text": update.text, "isFinal": true, "start": update.start, "end": update.end]))
+                out(outIsTerminal ? CLIView.transcript(text: update.text, start: update.start, end: update.end, outStyle) : CLIOutput.json(CLIOutput.Transcript(text: update.text, start: update.start, end: update.end)))
             }
         } catch let error as TranscriptionError { throw error.cliError }
     }
@@ -230,12 +224,8 @@ public struct CLIRunner {
         case .failure(let error): throw CLIError.input(error.message)
         case .success(let list):
             if outIsTerminal { out(CLIView.actors(list, path: absolute, outStyle)); return }
-            let actors: [[String: Any]] = list.actors.map { actor in
-                var item: [String: Any] = ["name": actor.name, "aliases": actor.aliases, "topics": actor.topics, "self": actor.isSelf]
-                if let role = actor.role { item["role"] = role }
-                return item
-            }
-            out(Self.json(["ok": true, "path": absolute, "actors": actors, "warnings": list.warnings]))
+            let actors = list.actors.map { CLIOutput.ActorLine(name: $0.name, aliases: $0.aliases, topics: $0.topics, isSelf: $0.isSelf, role: $0.role) }
+            out(CLIOutput.json(CLIOutput.ActorsCheck(path: absolute, actors: actors, warnings: list.warnings)))
         }
     }
 
@@ -330,9 +320,7 @@ public struct CLIRunner {
         if outIsTerminal {
             out(CLIView.replaySummary(sessionId: end.sessionId, utterances: end.utterances, batches: end.batches, duration: TimeInterval(end.durationSeconds), path: end.transcriptPath, outStyle))
         } else {
-            var summary: [String: Any] = ["ok": true, "sessionId": end.sessionId, "batches": end.batches, "utterances": end.utterances, "durationSeconds": end.durationSeconds]
-            if let path = end.transcriptPath { summary["transcriptPath"] = path }
-            out(Self.json(summary))
+            out(CLIOutput.json(CLIOutput.ReplaySummary(sessionId: end.sessionId, batches: end.batches, utterances: end.utterances, durationSeconds: end.durationSeconds, transcriptPath: end.transcriptPath)))
         }
     }
 }
