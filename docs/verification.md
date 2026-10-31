@@ -751,3 +751,9 @@ AI はこれらを合格にしない。取り込みとメニューの操作は�
 ### 2026-10-31 — リファクタリング（MIK-027）の確認
 
 - **MIK-027（試験の集め役・一時ディレクトリの helper を 1 つに）**：試験だけの変更（プロダクションのコードは変えていない）。`Output`・`Seen`・`Calls`・`Notices`・`CountLog`・`ProgressLog`（同じ形の 6 つ）を、`TestSupport.swift` の `Collected<Element>` 1 つに置き換え、`RecordingSink` も、それを使う形にした。`tempDirectory()`（PresetTests）を `tempURL("presets")` に統一した。単体 257 件（前と同数）・全件 pass。E2E は、プロダクションのコードが同じなので、実行していない。
+
+### 2026-10-31 — リファクタリング（MIK-028）の確認
+
+- **MIK-028（文言を固定する試験をやめる・ActorTests の分割）**：試験だけの変更（プロダクションのコードは変えていない）。単体 257 件（前と同数）・全件 pass。E2E は、プロダクションのコードが同じなので、実行していない。
+- **置き換えた・削除した試験**：(1) `CLIViewTests` の「起動の表示は、エージェントごとに、字幕の届き方を正しく言う」は、「チャンネル」「拡張」「プラグイン」「自動では届きません」「接続できません」の語句を固定していた。**構造で確かめる試験**に置き換えた：字幕の届き方の説明が、Claude・pi/omp・opencode（押し込みあり／なし）で 4 通りに違う／pi と omp は同じ／`--standalone` は押し込むときだけ／接続の有無で表示が変わる／登録の行は、結果があるときだけ増え、元のファイルを控えたときは 1 行増える／登録の結果ごとに表示が違う。(2) `ActorAuthoringSkillTests` の「12 人まで」「64 KB まで」の文章の一致の確認を**削除した**（skill の文章の複製を固定するだけで、数値の正本は SPEC とコード。skill の完成例が、アプリと同じ規則で読めること・見出しがあることは、残した）。**この削除で、skill の文章の上限の数値が、実装と食い違っても、試験は気づかない**。
+- **分割**：`ActorTests.swift`（448 行）を、`ActorTestSupport.swift`（共有する偽物・例）・`ActorFileTests.swift`（ACTOR.md の読み取り・ファイル）・`SpeakerGuesserTests.swift`（判断・分割）・`ActorFlowTests.swift`（会議の流れ）・`ActorCommandTests.swift`（CLI・skill）に分けた（どれも 150 行以下）。

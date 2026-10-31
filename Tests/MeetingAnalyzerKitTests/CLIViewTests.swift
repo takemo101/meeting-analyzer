@@ -37,16 +37,26 @@ struct CLIViewTests {
         #expect(rows.count == 4, "複数行の説明は、続きの行になる")
     }
 
-    @Test("起動の表示は、エージェントごとに、字幕の届き方を正しく言う")
-    func launchDescribesDelivery() {
-        let style = TerminalStyle.plain
-        func banner(_ agent: LaunchableAgent) -> String { CLIView.launch(agent: agent, appConnected: true, registration: agent == .claude ? nil : .alreadyRegistered("/p"), registrationText: nil, style) }
-        #expect(banner(.claude).contains("チャンネル") && !banner(.claude).contains("MCP 登録"), "Claude は、設定を書かない")
-        #expect(banner(.pi).contains("拡張") && banner(.omp).contains("拡張"))
-        #expect(banner(.opencode).contains("プラグイン") && banner(.opencode).contains("--standalone"))
-        let admin = CLIView.launch(agent: .opencode, appConnected: true, registration: .alreadyRegistered("/p"), registrationText: nil, pushes: false, style)
-        #expect(admin.contains("自動では届きません"), "管理コマンド（mcp list など）には、プラグインを載せないので、押し込みを約束しない")
-        #expect(CLIView.launch(agent: .claude, appConnected: false, registration: nil, registrationText: nil, style).contains("接続できません"))
+    @Test("起動の表示は、字幕の届き方（エージェント・押し込みの有無）・アプリへの接続・登録の結果ごとに、違う。登録の行は、結果があるときだけ増える")
+    func launchVariesWithItsInputs() {
+        func banner(_ agent: LaunchableAgent, registration: RegistrationOutcome? = nil, connected: Bool = true, pushes: Bool = true) -> [String] {
+            CLIView.launch(agent: agent, appConnected: connected, registration: registration, registrationText: nil, pushes: pushes, .plain).components(separatedBy: "\n")
+        }
+        // 1 行目は、エージェントの名前。字幕の届き方は、それ以外の行。
+        func delivery(_ lines: [String]) -> String { lines.dropFirst().joined(separator: "\n") }
+        #expect(banner(.claude)[0].contains(LaunchableAgent.claude.command) && banner(.pi)[0].contains(LaunchableAgent.pi.command))
+        let variants = [banner(.claude), banner(.pi), banner(.opencode), banner(.opencode, pushes: false)].map(delivery)
+        #expect(Set(variants).count == 4, "Claude・pi/omp・opencode（押し込みあり／なし）で、字幕の届き方の説明が、それぞれ違う")
+        #expect(delivery(banner(.pi)) == delivery(banner(.omp)), "pi と omp は、同じ拡張で届く")
+        #expect(delivery(banner(.opencode, pushes: false)) != delivery(banner(.opencode)), "管理コマンド（mcp list など）には、プラグインを載せないので、押し込みを約束しない")
+        #expect(banner(.opencode).joined().contains("--standalone") && !banner(.opencode, pushes: false).joined().contains("--standalone"), "専用のサーバーで動くのは、押し込むときだけ")
+        #expect(banner(.claude, connected: false) != banner(.claude, connected: true), "アプリに接続できないことが、表示に出る")
+
+        let none = banner(.pi).count
+        #expect(banner(.pi, registration: .alreadyRegistered("/p")).count == none + 1)
+        #expect(banner(.pi, registration: .registered("/p", backedUp: false)).count == none + 1)
+        #expect(banner(.pi, registration: .registered("/p", backedUp: true)).count == none + 2, "元のファイルを控えたことを、1 行で知らせる")
+        #expect(Set([RegistrationOutcome.alreadyRegistered("/p"), .registered("/p", backedUp: false), .updated("/p", backedUp: false), .manual(path: "/p", reason: "r")].map { delivery(banner(.pi, registration: $0)) }).count == 4, "登録の結果ごとに、表示が違う")
     }
 
     @Test("自動で登録できないときは、手で足す文を、そのまま見せる")
