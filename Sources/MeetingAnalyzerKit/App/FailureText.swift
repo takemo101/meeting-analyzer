@@ -39,4 +39,13 @@ enum FailureText {
             return "相手の話者の推定に失敗したため、止めました（文字起こしと転送は続きます）"
         }
     }
+
+    /// モデルの取得に失敗したとき（設定ウィンドウの 1 行）。原因に、次にすることを添える。
+    static func download(_ error: ModelDownloadError) -> String {
+        switch error {
+        case .network: return error.message + "。もう一度押すと、続きから取得します"
+        case .sizeMismatch, .checksumMismatch: return error.message + "。もう一度押してください"
+        case .badStatus, .cancelled, .writeFailed: return error.message
+        }
+    }
 }

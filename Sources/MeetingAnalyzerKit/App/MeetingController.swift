@@ -238,31 +238,39 @@ final class MeetingController {
 
     /// モデルを、ダウンロードする（利用者が押したときだけ。音声区間の検出のモデルも、一緒に取得する）。途中のファイルがあれば、続きから。取得できたら、そのモデルを選ぶ。
     func downloadModel(_ model: LocalModel) {
+        startDownload(id: model.id, name: model.name, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model.artifact)) { [self] in
+            if state == .idle { setTranscription(.local(model.id)) }
+        }
+    }
+
+    /// 取得の共通の手順：状態を「取得中」にし、`plan` を順に取り、終わったら後始末をして、成功なら `onInstalled`（そのモデルを選ぶ）、失敗なら理由を残す（取り消しは、何も残さない）。同時に 1 つだけ。
+    private func startDownload(id: String, name: String, plan: ModelInstallPlan, received: Int64, onInstalled: @escaping @MainActor () -> Void) {
         guard download == nil else { return }
         downloadFailure = nil
-        download = ModelDownload(id: model.id, received: modelStore.downloadedBytes(model.artifact), total: model.artifact.bytes)
+        download = ModelDownload(id: id, received: received, total: plan.total)
         let downloader = ModelDownloader(store: modelStore)
         self.downloader = downloader
         let throttle = ProgressThrottle()
         Task {
+            var failure: Error?
             do {
-                try await downloader.download(LocalModelCatalog.voiceActivity) { _, _ in }
-                try await downloader.download(model.artifact) { received, total in
+                try await plan.run(fetch: { try await downloader.download($0, progress: $1) }) { received, total in
                     guard throttle.shouldReport(received: received, total: total) else { return }
-                    Task { @MainActor in self.download = ModelDownload(id: model.id, received: received, total: total) }
+                    Task { @MainActor in self.download = ModelDownload(id: id, received: received, total: total) }
                 }
-                download = nil
-                self.downloader = nil
-                if state == .idle { setTranscription(.local(model.id)) }
-                notice = "「\(model.name)」を取得しました"
-            } catch let error as ModelDownloadError {
-                download = nil
-                self.downloader = nil
-                if error != .cancelled { downloadFailure = (model.id, Self.describe(error)) }
             } catch {
-                download = nil
-                self.downloader = nil
-                downloadFailure = (model.id, "\(error)")
+                failure = error
+            }
+            download = nil
+            self.downloader = nil
+            switch failure {
+            case nil:
+                onInstalled()
+                notice = "「\(name)」を取得しました"
+            case let error as ModelDownloadError:
+                if error != .cancelled { downloadFailure = (id, FailureText.download(error)) }
+            case let error?:
+                downloadFailure = (id, "\(error)")
             }
         }
     }
@@ -304,36 +312,8 @@ final class MeetingController {
 
     /// 判断モデルを、ダウンロードする（利用者が押したときだけ。トークナイザ → 重みの順。途中のファイルがあれば、続きから）。取得できたら、そのモデルを選ぶ。
     func downloadDecisionModel(_ model: DecisionModel) {
-        guard download == nil else { return }
-        downloadFailure = nil
-        download = ModelDownload(id: model.id, received: modelStore.downloadedBytes(model), total: model.bytes)
-        let downloader = ModelDownloader(store: modelStore)
-        self.downloader = downloader
-        let throttle = ProgressThrottle()
-        Task {
-            do {
-                var finished: Int64 = 0
-                for artifact in model.artifacts {
-                    let base = finished
-                    try await downloader.download(artifact) { received, _ in
-                        guard throttle.shouldReport(received: base + received, total: model.bytes) else { return }
-                        Task { @MainActor in self.download = ModelDownload(id: model.id, received: base + received, total: model.bytes) }
-                    }
-                    finished += artifact.bytes
-                }
-                download = nil
-                self.downloader = nil
-                if state == .idle { setDecisionModel(model) }
-                notice = "「\(model.name)」を取得しました"
-            } catch let error as ModelDownloadError {
-                download = nil
-                self.downloader = nil
-                if error != .cancelled { downloadFailure = (model.id, Self.describe(error)) }
-            } catch {
-                download = nil
-                self.downloader = nil
-                downloadFailure = (model.id, "\(error)")
-            }
+        startDownload(id: model.id, name: model.name, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
+            if state == .idle { setDecisionModel(model) }
         }
     }
 
@@ -354,17 +334,6 @@ final class MeetingController {
         }
         modelStore.delete(model)
         changed()
-    }
-
-    private static func describe(_ error: ModelDownloadError) -> String {
-        switch error {
-        case .network(let reason): return "通信に失敗しました（\(reason)）。もう一度押すと、続きから取得します"
-        case .badStatus(let code): return "サーバーが、想定外の応答（\(code)）を返しました"
-        case .sizeMismatch: return "ファイルの大きさが、想定と違います。もう一度押してください"
-        case .checksumMismatch: return "ファイルの検証（SHA-256）に通りませんでした。もう一度押してください"
-        case .cancelled: return "取り消しました"
-        case .writeFailed(let reason): return "ディスクに書けません（\(reason)）"
-        }
     }
 
     // MARK: アクター（ACTOR.md。SPEC §3.13）

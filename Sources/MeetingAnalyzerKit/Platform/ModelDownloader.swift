@@ -15,6 +15,20 @@ public enum ModelDownloadError: Error, Sendable, Equatable {
     case writeFailed(String)
 }
 
+extension ModelDownloadError {
+    /// 利用者に見せる、原因の文（メニュー・CLI が同じ文を使う。対処の案内は、見せる側が足す）。
+    public var message: String {
+        switch self {
+        case .network(let reason): return "通信に失敗しました（\(reason)）"
+        case .badStatus(let code): return "サーバーが、想定外の応答（\(code)）を返しました"
+        case .sizeMismatch: return "ファイルの大きさが、想定と違います"
+        case .checksumMismatch: return "ファイルの検証（SHA-256）に通りません"
+        case .cancelled: return "取り消しました"
+        case .writeFailed(let reason): return "ディスクに書けません（\(reason)）"
+        }
+    }
+}
+
 /// モデルのファイルを、Hugging Face から取得する（SPEC §3.12）。**利用者が押したときだけ**使う。音声は送らない（通信するのは、固定した版のファイルの取得だけ）。
 /// 途中で切れても、取得済みの分（`.part`）から、続きを（HTTP の Range で）再開できる。完了したら、大きさと SHA-256 を確かめ、合えば、本来の名前にして、0600 にする。
 /// 同時に 1 つだけ。

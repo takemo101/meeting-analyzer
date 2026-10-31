@@ -133,28 +133,22 @@ public struct CLIRunner {
                 out(Self.json(["kind": "decision", "id": model.id, "name": model.name, "bytes": model.bytes, "installed": store.isInstalled(model), "downloadedBytes": store.downloadedBytes(model)]))
             }
         case .download(let id):
+            let name: String, path: String, plan: ModelInstallPlan
+            if let model = LocalModelCatalog.model(id: id) {
+                name = model.name; path = store.fileURL(model.artifact).path; plan = ModelInstallPlan(model)
+            } else if let model = DecisionModelCatalog.model(id: id) {
+                name = model.name; path = store.fileURL(model.weights).path; plan = ModelInstallPlan(model)
+            } else {
+                throw CLIError.usage("知らないモデルです: \(id)")
+            }
             let report = ProgressLine(enabled: errIsTerminal, write: err)
-            let name: String, path: String
             do {
-                if let model = LocalModelCatalog.model(id: id) {
-                    name = model.name; path = store.fileURL(model.artifact).path
-                    // 音声区間の検出のモデル（小さい）も、一緒に取得する。
-                    try await modelDownload(LocalModelCatalog.voiceActivity, store) { _, _ in }
-                    try await modelDownload(model.artifact, store) { received, total in report.update(name: model.name, received: received, total: total) }
-                } else if let model = DecisionModelCatalog.model(id: id) {
-                    name = model.name; path = store.fileURL(model.weights).path
-                    var finished: Int64 = 0
-                    for artifact in model.artifacts {
-                        let base = finished
-                        try await modelDownload(artifact, store) { received, _ in report.update(name: model.name, received: base + received, total: model.bytes) }
-                        finished += artifact.bytes
-                    }
-                } else {
-                    throw CLIError.usage("知らないモデルです: \(id)")
+                try await plan.run(fetch: { [modelDownload] artifact, progress in try await modelDownload(artifact, store, progress) }) { received, total in
+                    report.update(name: name, received: received, total: total)
                 }
             } catch let error as ModelDownloadError {
                 report.finish()
-                throw CLIError.transcription("ダウンロードできませんでした: \(Self.describe(error))（もう一度実行すると、続きから取得します）")
+                throw CLIError.transcription("ダウンロードできませんでした: \(error.message)（もう一度実行すると、続きから取得します）")
             }
             report.finish()
             out(outIsTerminal ? CLIView.modelDownloaded(name: name, path: path, outStyle) : Self.json(["ok": true, "id": id, "path": path]))
@@ -168,17 +162,6 @@ public struct CLIRunner {
             } else {
                 throw CLIError.usage("知らないモデルです: \(id)")
             }
-        }
-    }
-
-    private static func describe(_ error: ModelDownloadError) -> String {
-        switch error {
-        case .network(let reason): return "通信に失敗しました（\(reason)）"
-        case .badStatus(let code): return "サーバーが、想定外の応答（\(code)）を返しました"
-        case .sizeMismatch: return "ファイルの大きさが、想定と違います"
-        case .checksumMismatch: return "ファイルの検証（SHA-256）に通りません"
-        case .cancelled: return "取り消されました"
-        case .writeFailed(let reason): return "ディスクに書けません（\(reason)）"
         }
     }
 
