@@ -58,6 +58,57 @@ public struct LiveSessionOutcome: Sendable, Equatable {
     public let transcriptPath: String?
 }
 
+/// 会議の時間の設定。既定は実機の値（試験は、時計・間隔を差し替える）。
+public struct LiveSessionTiming: Sendable {
+    public var clock: @Sendable () -> Date
+    /// 未送信の発話を、送る時かを確かめる間隔。
+    public var tickInterval: Duration
+    /// 終了・一時停止のとき、認識が残りを確定して終わるのを待つ上限。
+    public var finalizeTimeout: Duration
+
+    public init(clock: @escaping @Sendable () -> Date = { Date() }, tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5)) {
+        self.clock = clock
+        self.tickInterval = tickInterval
+        self.finalizeTimeout = finalizeTimeout
+    }
+}
+
+/// 画面の取り込みの設定（選んだときだけ渡す。SPEC §3.5）。
+public struct LiveSessionScreen: Sendable {
+    public var feed: ScreenFeed
+    public var store: ScreenshotStore
+    /// 撮る間隔。
+    public var interval: Duration
+    /// 前の保存から、これだけ（秒）あいていなければ、保存しない。
+    public var minGap: TimeInterval
+
+    public init(feed: ScreenFeed, store: ScreenshotStore, interval: Duration = .seconds(2), minGap: TimeInterval = 10) {
+        self.feed = feed
+        self.store = store
+        self.interval = interval
+        self.minGap = minGap
+    }
+}
+
+/// 会議の設定：まとめ方・分析のしかた・アクター・時間・画面。すべて既定値つき（何も渡さなければ、実機の既定）。
+public struct LiveSessionOptions: Sendable {
+    public var policy: BatchingPolicy
+    public var preset: PresetInfo?
+    public var actors: ActorSource?
+    public var labeler: SpeakerLabeler?
+    public var timing: LiveSessionTiming
+    public var screen: LiveSessionScreen?
+
+    public init(policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil, timing: LiveSessionTiming = LiveSessionTiming(), screen: LiveSessionScreen? = nil) {
+        self.policy = policy
+        self.preset = preset
+        self.actors = actors
+        self.labeler = labeler
+        self.timing = timing
+        self.screen = screen
+    }
+}
+
 /// ライブのセッション 1 つ。状態遷移（`SessionLifecycle`）・取り込みの流れ・バッチの公開（`SessionPipeline`）・時間（tick）を組み立てる。
 /// すべての操作を、この actor で直列にする。パイプラインは同期なので、操作の途中に別の更新が割り込まない。
 public actor LiveSession {
@@ -91,14 +142,8 @@ public actor LiveSession {
         let task: Task<Void, Never>
     }
 
-    public init(
-        title: String, speakers: [Speaker], inputs: LiveInputs, sink: any EventSink, store: SessionStore?,
-        policy: BatchingPolicy = .standard, clock: @escaping @Sendable () -> Date = { Date() },
-        tickInterval: Duration = .milliseconds(250), finalizeTimeout: Duration = .seconds(5),
-        screen: ScreenFeed? = nil, screenshots: ScreenshotStore? = nil, screenInterval: Duration = .seconds(2), screenMinGap: TimeInterval = 10, preset: PresetInfo? = nil,
-        actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil,
-        notify: @escaping @Sendable (LiveSessionNotice) -> Void
-    ) {
+    public init(title: String, speakers: [Speaker], inputs: LiveInputs, sink: any EventSink, store: SessionStore?, options: LiveSessionOptions = LiveSessionOptions(), notify: @escaping @Sendable (LiveSessionNotice) -> Void) {
+        let clock = options.timing.clock
         let startedAt = clock()
         let sessionId = UUID()
         self.sessionId = sessionId
@@ -107,16 +152,14 @@ public actor LiveSession {
         self.speakers = speakers
         self.inputs = inputs
         self.clock = clock
-        self.tickInterval = tickInterval
-        self.finalizeTimeout = finalizeTimeout
+        self.tickInterval = options.timing.tickInterval
+        self.finalizeTimeout = options.timing.finalizeTimeout
         self.notify = notify
-        self.labeler = labeler
-        self.screenRecorder = screen.flatMap { feed in
-            screenshots.map { store in
-                ScreenRecorder(feed: feed, store: store, sessionId: sessionId, interval: screenInterval, minGap: screenMinGap, elapsed: { clock().timeIntervalSince(startedAt) }, notify: notify)
-            }
+        self.labeler = options.labeler
+        self.screenRecorder = options.screen.map { screen in
+            ScreenRecorder(feed: screen.feed, store: screen.store, sessionId: sessionId, interval: screen.interval, minGap: screen.minGap, elapsed: { clock().timeIntervalSince(startedAt) }, notify: notify)
         }
-        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: policy, preset: preset, actors: actors, checkpointInterval: 10)
+        self.pipeline = SessionPipeline(sessionId: sessionId, title: title, startedAt: startedAt, sink: sink, store: store, policy: options.policy, preset: options.preset, actors: options.actors, checkpointInterval: 10)
     }
 
     public var phase: SessionLifecycle.Phase { lifecycle.phase }
@@ -125,12 +168,17 @@ public actor LiveSession {
 
     /// 開始する。取り込みを始める（権限の確認は、ここで OS が出す）。失敗したら、何も始めず、待機のまま。
     public func start() async throws {
-        guard lifecycle.phase == .idle else { throw LiveSessionError.invalidState(lifecycle.phase) }
-        guard !speakers.isEmpty else { throw LiveSessionError.failed("取り込む音声が選ばれていません") }
-        // 画面を選んでいるときは、最初の 1 枚を、ここで撮る（権限の確認は、開始の操作の中で出す。撮れなければ、何も始めない）。
-        if let first = try await screenRecorder?.captureFirst() { attach(first) }
-        do { try await beginSegment() } catch { await screenRecorder?.discard(); throw error }
-        try? lifecycle.start()
+        let before = lifecycle
+        try transition { try $0.start() }
+        do {
+            guard !speakers.isEmpty else { throw LiveSessionError.failed("取り込む音声が選ばれていません") }
+            // 画面を選んでいるときは、最初の 1 枚を、ここで撮る（権限の確認は、開始の操作の中で出す。撮れなければ、何も始めない）。
+            if let first = try await screenRecorder?.captureFirst() { attach(first) }
+            do { try await beginSegment() } catch { await screenRecorder?.discard(); throw error }
+        } catch {
+            lifecycle = before
+            throw error
+        }
         pipeline.begin(sources: speakers)
         startTicker()
         await startScreenRecording()
@@ -138,34 +186,41 @@ public actor LiveSession {
 
     /// 一時停止する。取り込みを止め、認識の残りを確定して取り込み、未送信の発話を出し切る。
     public func pause() async throws {
-        guard lifecycle.phase == .running else { throw LiveSessionError.invalidState(lifecycle.phase) }
+        try transition { try $0.pause() }
         stopTicker()
         await screenRecorder?.stopPeriodic()
         await endSegment()
-        try? lifecycle.pause()
         pipeline.flushPending(at: elapsed())
     }
 
     /// 再開する。取り込みを始められなければ、一時停止のまま。
     public func resume() async throws {
-        guard lifecycle.phase == .paused else { throw LiveSessionError.invalidState(lifecycle.phase) }
-        try await beginSegment()
-        try? lifecycle.resume()
+        let before = lifecycle
+        try transition { try $0.resume() }
+        do { try await beginSegment() } catch {
+            lifecycle = before
+            throw error
+        }
         startTicker()
         await startScreenRecording()
     }
 
     /// 終了する。取り込みを止める → 認識の残りを取り込む → 未送信を出し切る → 記録を書く → 最後に終了の出来事を 1 回出す（SPEC §3.8）。
     public func end(reason: EndReason) async throws -> LiveSessionOutcome {
-        guard lifecycle.phase == .running || lifecycle.phase == .paused else { throw LiveSessionError.invalidState(lifecycle.phase) }
+        try transition { try $0.end(reason) }
         stopTicker()
         await screenRecorder?.stopPeriodic()
         await endSegment()
-        try? lifecycle.end(reason)
         let now = clock()
         let end = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
         // 画像は、記録（`transcript.md`）と同じフォルダに残る（同じ寿命で、アプリが消す。SPEC §3.8）。
         return LiveSessionOutcome(utterances: end.utterances, transcriptPath: end.transcriptPath)
+    }
+
+    /// 状態の遷移を、**操作の最初に**行う（許されない遷移は `invalidState`）。操作の途中の待ちで、別の操作が割り込んでも、同じ遷移を 2 度は通らない。
+    /// 開始・再開は、そのあとの取り込みが失敗したら、呼び出し側が、遷移の前の状態へ戻す。
+    private func transition(_ change: (inout SessionLifecycle) throws -> Void) throws {
+        do { try change(&lifecycle) } catch SessionLifecycle.TransitionError.invalid(let from, _) { throw LiveSessionError.invalidState(from) }
     }
 
     // MARK: 取り込みの流れ
@@ -248,13 +303,7 @@ public actor LiveSession {
     // MARK: 時間
 
     private func startTicker() {
-        ticker = Task { [tickInterval] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: tickInterval)
-                if Task.isCancelled { break }
-                self.tick()
-            }
-        }
+        ticker = repeatEvery(tickInterval) { await self.tick() }
     }
 
     private func stopTicker() {

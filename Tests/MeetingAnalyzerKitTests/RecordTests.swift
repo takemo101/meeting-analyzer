@@ -74,8 +74,10 @@ struct LiveSessionRecordTests {
         let screen = FakeScreen(), sink = RecordingSink(), fake = FakeInputs()
         let live = LiveSession(
             title: "定例", speakers: [.others], inputs: fake.inputs, sink: sink, store: SessionStore(root: root),
-            tickInterval: .milliseconds(20), screen: screen.feed, screenshots: ScreenshotStore(root: root),
-            screenInterval: .milliseconds(15), screenMinGap: 0, notify: { _ in }
+            options: LiveSessionOptions(
+                timing: LiveSessionTiming(tickInterval: .milliseconds(20)),
+                screen: LiveSessionScreen(feed: screen.feed, store: ScreenshotStore(root: root), interval: .milliseconds(15), minGap: 0)
+            ), notify: { _ in }
         )
         let file = SessionStore(root: root).transcriptURL(sessionId: live.sessionId)
 

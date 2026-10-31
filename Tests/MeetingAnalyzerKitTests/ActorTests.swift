@@ -246,7 +246,7 @@ private struct Rig {
         let clock = self.clock, notices = self.notices
         return LiveSession(
             title: "テスト会議", speakers: [.you, .others], inputs: fake.inputs, sink: sink, store: store,
-            clock: { clock.now }, tickInterval: .seconds(60), actors: actors, labeler: labeler, notify: { notices.add($0) }
+            options: LiveSessionOptions(actors: actors, labeler: labeler, timing: LiveSessionTiming(clock: { clock.now }, tickInterval: .seconds(60))), notify: { notices.add($0) }
         )
     }
 }

@@ -74,8 +74,8 @@ private struct Rig {
     func session(speakers: [Speaker] = [.you, .others], policy: BatchingPolicy = .standard, tick: Duration = .seconds(60)) -> LiveSession {
         let clock = self.clock, notices = self.notices
         return LiveSession(
-            title: "テスト会議", speakers: speakers, inputs: fake.inputs, sink: sink, store: store, policy: policy,
-            clock: { clock.now }, tickInterval: tick, notify: { notices.add($0) }
+            title: "テスト会議", speakers: speakers, inputs: fake.inputs, sink: sink, store: store,
+            options: LiveSessionOptions(policy: policy, timing: LiveSessionTiming(clock: { clock.now }, tickInterval: tick)), notify: { notices.add($0) }
         )
     }
 }
@@ -147,6 +147,28 @@ struct LiveSessionTests {
         await #expect(throws: LiveSessionError.invalidState(.ended(.user))) { try await session.start() }
         await #expect(throws: LiveSessionError.invalidState(.ended(.user))) { try await session.end(reason: .user) }
         #expect(rig.sink.ends.count == 1)
+    }
+
+    @Test("同時に 2 つの終了（開始）が来ても、遷移は 1 度だけ通る：もう一方は断られ、終了の出来事は 1 回、取り込みの流れは 1 組だけ開く")
+    func simultaneousOperationsPassOnce() async throws {
+        let rig = Rig()
+        let session = rig.session()
+        let starts = [Task { try await session.start() }, Task { try await session.start() }]
+        var started = 0
+        for task in starts {
+            switch await task.result {
+            case .success: started += 1
+            case .failure(let error): #expect(error as? LiveSessionError == .invalidState(.running), "もう一方は、すでに実行中として断られる")
+            }
+        }
+        #expect(started == 1)
+        #expect(rig.fake.opened.count == 2, "本人・相手の 1 組だけ（二重に開かない）")
+
+        let ends = [Task { try await session.end(reason: .user) }, Task { try await session.end(reason: .user) }]
+        var ended = 0
+        for task in ends { if case .success = await task.result { ended += 1 } }
+        #expect(ended == 1)
+        #expect(rig.sink.ends.count == 1, "終了の出来事は、1 回だけ")
     }
 
     @Test("選んだ音声だけを開く。マイクだけなら、システム音声は開かない")
