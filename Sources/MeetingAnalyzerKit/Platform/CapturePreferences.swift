@@ -18,6 +18,8 @@ public struct CapturePreferences: Sendable, Equatable {
     public var voiceSeparation = false
     /// 声紋を使う（SPEC §3.15）。既定はオフ。オンにできるのは、声による話者の分離がオンのときだけ（アプリが確かめる）。
     public var voiceprints = false
+    /// 声による話者の分離の、話者の人数（SPEC §3.14）。無指定（`nil`）は、自動。2〜8。声の似た人が 1 つにまとまるとき、指定する。
+    public var voiceSpeakerCount: Int?
     /// 最近使った `ACTOR.md`（新しい順。選んでいるものを含む。メニューで切り替える。SPEC §3.13）。
     public var actorFiles: [String] = []
     /// `ACTOR.md` ごとの、出席者から外した人の名前（既定は全員出席。あとから足された人は、出席）。
@@ -39,7 +41,7 @@ public struct CapturePreferences: Sendable, Equatable {
         if names.isEmpty { absentActors[path] = nil } else { absentActors[path] = names.sorted() }
     }
 
-    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation", voiceprints: "capture.voiceprints")
+    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation", voiceprints: "capture.voiceprints", voiceSpeakerCount: "capture.voiceSpeakerCount")
 
     public static func load(_ defaults: UserDefaults = .standard) -> CapturePreferences {
         var result = CapturePreferences()
@@ -78,6 +80,8 @@ public struct CapturePreferences: Sendable, Equatable {
         if let id = defaults.string(forKey: keys.decisionModel), DecisionModelCatalog.model(id: id) != nil { result.decisionModel = id }
         if defaults.object(forKey: keys.voiceSeparation) != nil { result.voiceSeparation = defaults.bool(forKey: keys.voiceSeparation) }
         if defaults.object(forKey: keys.voiceprints) != nil { result.voiceprints = defaults.bool(forKey: keys.voiceprints) }
+        // 範囲外・壊れた値は、自動（無指定）に戻す。
+        if defaults.object(forKey: keys.voiceSpeakerCount) != nil, VoiceSeparationTuning.speakerCountRange.contains(defaults.integer(forKey: keys.voiceSpeakerCount)) { result.voiceSpeakerCount = defaults.integer(forKey: keys.voiceSpeakerCount) }
         return result
     }
 
@@ -102,5 +106,6 @@ public struct CapturePreferences: Sendable, Equatable {
         if let decisionModel { defaults.set(decisionModel, forKey: Self.keys.decisionModel) } else { defaults.removeObject(forKey: Self.keys.decisionModel) }
         defaults.set(voiceSeparation, forKey: Self.keys.voiceSeparation)
         defaults.set(voiceprints, forKey: Self.keys.voiceprints)
+        if let voiceSpeakerCount { defaults.set(voiceSpeakerCount, forKey: Self.keys.voiceSpeakerCount) } else { defaults.removeObject(forKey: Self.keys.voiceSpeakerCount) }
     }
 }

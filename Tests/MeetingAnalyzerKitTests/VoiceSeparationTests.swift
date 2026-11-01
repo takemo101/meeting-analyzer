@@ -213,4 +213,34 @@ struct ReplaySeparateOptionTests {
         guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav", "--speaker", "you", "--separate"]) else { Issue.record("本人との組み合わせを断らない"); return }
         guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav", "--separate", "--separate"]) else { Issue.record("重複を断らない"); return }
     }
+
+    @Test("--speakers：2〜8 の人数。--separate と一緒でなければ、使えない。範囲外・数でない値は、使い方の誤り。無指定は、自動")
+    func parsesSpeakers() {
+        guard case .success(.replay(let auto)) = CommandParser.parse(["replay", "a.wav", "--separate"]) else { Issue.record("parse failed"); return }
+        #expect(auto.speakers == nil)
+        guard case .success(.replay(let three)) = CommandParser.parse(["replay", "a.wav", "--separate", "--speakers", "3"]) else { Issue.record("parse failed"); return }
+        #expect(three.speakers == 3)
+        for bad in [["--speakers", "3"], ["--separate", "--speakers", "1"], ["--separate", "--speakers", "9"], ["--separate", "--speakers", "三"], ["--separate", "--speakers"]] {
+            guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav"] + bad) else { Issue.record("\(bad) を断らない"); return }
+        }
+    }
+}
+
+@Suite("声の分離：人数が少なく出たときの切り分け（記録の見出し）")
+struct VoiceDiagnosticsTests {
+    @Test("見出しに、分離が見つけた話者の数と、声が付かなかった発話の数が出る。短い発言が、どの区間にも入らないときも、数える")
+    func headerShowsFoundAndUnassigned() throws {
+        let sink = RecordingSink(), store = SessionStore(root: tempURL("voice-diag"))
+        defer { try? FileManager.default.removeItem(at: store.root) }
+        let pipeline = SessionPipeline(title: "会議", sink: sink, store: store)
+        pipeline.begin(sources: [.others])
+        pipeline.ingest(TranscriptionUpdate(text: "最初の人の話です", isFinal: true, start: 0, end: 4), speaker: .others)
+        pipeline.ingest(TranscriptionUpdate(text: "短い", isFinal: true, start: 10, end: 10.6), speaker: .others)
+        pipeline.ingest(TranscriptionUpdate(text: "二人目の話です", isFinal: true, start: 20, end: 24), speaker: .others)
+        // 分離は、2 人を見つけたが、真ん中の短い発話は、どちらにも入らなかった。
+        pipeline.applyVoices([VoiceSegment(speaker: "a", start: 0, end: 5), VoiceSegment(speaker: "a", start: 19, end: 25), VoiceSegment(speaker: "b", start: 30, end: 40)])
+        let end = pipeline.finish(reason: .user, endedAt: Date(), at: 25)
+        let text = try String(contentsOfFile: try #require(end.transcriptPath), encoding: .utf8)
+        #expect(text.contains("話者（声）: 1 人（分離が見つけた話者: 2 人・声が付かなかった発話: 1 件）"), "\(text)")
+    }
 }

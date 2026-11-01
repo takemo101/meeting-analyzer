@@ -31,16 +31,30 @@ public enum VoiceSeparationError: Error, Sendable, Equatable {
     }
 }
 
+/// 分離の調整（SPEC §3.14）。無指定（`nil`）は、自動（FluidAudio の既定）。
+public struct VoiceSeparationTuning: Sendable, Equatable {
+    /// 話者の人数（分かっているとき）。2〜8。無指定は、自動。声の似た人が 1 つにまとまるとき、人数を指定すると、その数に分ける。
+    public var speakerCount: Int?
+
+    public static let speakerCountRange = 2...8
+
+    public init(speakerCount: Int? = nil) {
+        self.speakerCount = speakerCount
+    }
+}
+
 /// FluidAudio のオフライン方式（話者の区間の検出・埋め込み・クラスタリング）。**このファイルだけが、FluidAudio を使う**。
 /// モデルは、**取得済み・検証済みのフォルダ**（`ModelStore.folder`）から読み込む。**FluidAudio の通信は止める**（`ModelHub.offlineMode`）。
 /// 会議の終了のときに 1 回だけ読み込み、分離したら、解放する（会議が実行中でないとき、メモリ・CPU を使わない）。
 public struct FluidVoiceSeparator: VoiceSeparating {
     private let model: VoiceModel
     private let store: ModelStore
+    private let tuning: VoiceSeparationTuning
 
-    public init(model: VoiceModel, store: ModelStore) {
+    public init(model: VoiceModel, store: ModelStore, tuning: VoiceSeparationTuning = VoiceSeparationTuning()) {
         self.model = model
         self.store = store
+        self.tuning = tuning
     }
 
     public func separate(_ samples: [Float]) async throws -> VoiceSeparation {
@@ -53,7 +67,9 @@ public struct FluidVoiceSeparator: VoiceSeparating {
         do {
             // `prepareModels` は、読み込みに失敗すると、フォルダを**消して**、取り直そうとする（通信は止めてあるので、取り直せない）。検証済みのファイルを消されないよう、直接読み込む。
             let models = try await OfflineDiarizerModels.load(from: store.folder(model))
-            let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+            var config = OfflineDiarizerConfig()
+            if let count = tuning.speakerCount { config.clustering.numSpeakers = count }
+            let manager = OfflineDiarizerManager(config: config)
             manager.initialize(models: models)
             let result = try await manager.process(audio: samples)
             return VoiceSeparation(
