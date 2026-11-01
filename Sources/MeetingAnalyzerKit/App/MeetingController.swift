@@ -459,6 +459,14 @@ final class MeetingController {
     /// 終了のあと、名付けの画面を出す部品（メニューバーの項目が、画面を持つので、そこから渡される）。
     var onNamingAvailable: (() -> Void)?
 
+    /// 次の会議の題名（開始の前の設定の画面で付ける。任意。空なら、自動の題名）。開始できたら、空に戻す（会議ごとに付ける）。
+    var meetingTitle = ""
+
+    func setMeetingTitle(_ text: String) {
+        meetingTitle = String(text.prefix(MeetingTitleRule.maxLength))
+        changed()
+    }
+
     /// 会議を終える。記録を書き、エージェントへ終了の出来事を出す。
     func end(reason: EndReason) async {
         // 一時停止・再開・終了の最中なら、終わるのを待つ（その間に終了を始めると、取り込みの停止が重なる）。
@@ -513,7 +521,7 @@ final class MeetingController {
             voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil, modelRevision: model.revision)
         }
         let session = LiveSession(
-            title: Self.sessionTitle(selection: selection),
+            title: MeetingTitleRule.normalize(meetingTitle) ?? Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
             inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale), transcription: transcription, models: modelStore, recorder: recorder),
             sink: hub,
@@ -530,6 +538,7 @@ final class MeetingController {
         do {
             try await session.start()
             self.session = session
+            meetingTitle = ""
             clearNaming()
             state = .running
             if let notice = [setup.notice, voiceNotice].compactMap({ $0 }).joined(separator: " ／ ").nilIfEmpty { self.notice = notice }
