@@ -39,7 +39,7 @@ extension MeetingController {
         reseparation = .running
         changed()
         let loaded = voiceprintLibrary(for: model)
-        let separator = voiceSeparatorFactory(model, modelStore, VoiceSeparationTuning(speakerCount: count))
+        let separator = voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: count))
         let result = await session.reseparate(audio: savedAudioStore, separator: separator, library: loaded.library)
         // 分け直している間に、次の会議が始まった（名付けの対象が替わった）ら、捨てる。
         guard namingSession === session else { return }

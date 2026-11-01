@@ -186,6 +186,28 @@ struct SettingsView: View {
                 }
                 Text("声の似た人が 1 つにまとまって、人数が少なく出るときは、相手の人数（2〜8）を指定すると、その数に分けます。分かっていないときは、自動のままにします。")
                     .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("詳細（分離の調整）") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        tuningSlider(
+                            title: "同じ人とみなす距離の上限", value: controller.voiceClusterThreshold, defaultValue: VoiceSeparationTuning.defaultClusterThreshold,
+                            range: VoiceSeparationTuning.clusterThresholdRange, step: 0.05, format: "%.2f", set: { controller.setVoiceClusterThreshold($0) },
+                            caption: "小さいほど、別の人に分かれやすく（声の似た人も分かれる。1 人が複数に割れやすい）、大きいほど、まとまりやすい（人数が少なく出る）。"
+                        )
+                        tuningSlider(
+                            title: "声の特徴を取る、最短の発言（秒）", value: controller.voiceMinSegmentSeconds, defaultValue: VoiceSeparationTuning.defaultMinSegmentSeconds,
+                            range: VoiceSeparationTuning.minSegmentSecondsRange, step: 0.1, format: "%.1f", set: { controller.setVoiceMinSegmentSeconds($0) },
+                            caption: "これより短い発言には、話者の番号が付きません。小さくすると、短い相づちにも付きますが、声の特徴が不安定になります。"
+                        )
+                        Button("既定に戻す") {
+                            controller.setVoiceClusterThreshold(nil)
+                            controller.setVoiceMinSegmentSeconds(nil)
+                        }
+                        .disabled(controller.voiceClusterThreshold == nil && controller.voiceMinSegmentSeconds == nil)
+                        Text("次の会議の終了から（名付けの画面の「分け直す」にも）効きます。実会議での最適な値は、確かめていません。迷ったときは、既定のままにします。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 6)
+                }
             }
             Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち、分けたら捨てます（下の「相手の音声を保存する」を選んだときだけ、ファイルに残します。ネットワークには出しません）。ダウンロードは、押したときだけ（Hugging Face）。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -292,6 +314,19 @@ struct SettingsView: View {
             RemoteSkillRow(settings: model, skill: .actors)
             Text("貼ると、エージェントが、この URL の手順（skill）を読み、プロジェクトの資料から ACTOR.md を作ります。skill のファイルを、自分の環境へ置く必要はありません。作ってもらったファイルは、上の「選ぶ…」で選びます。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// 調整のスライダー（`value` が `nil` なら、既定を示す）。
+    @ViewBuilder private func tuningSlider(title: String, value: Double?, defaultValue: Double, range: ClosedRange<Double>, step: Double, format: String, set: @escaping (Double?) -> Void, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: format, value ?? defaultValue) + (value == nil ? "（既定）" : "")).monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(get: { value ?? defaultValue }, set: { set(($0 / step).rounded() * step) }), in: range, step: step)
+            Text(caption).font(.caption).foregroundStyle(.secondary)
         }
     }
 

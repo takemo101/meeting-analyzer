@@ -41,6 +41,13 @@ final class MeetingController {
     var voiceSeparation: Bool { preferences.voiceSeparation }
     /// 話者の人数（SPEC §3.14）。無指定は、自動。
     var voiceSpeakerCount: Int? { preferences.voiceSpeakerCount }
+    /// 分離の調整（SPEC §3.16）。無指定は、既定。
+    var voiceClusterThreshold: Double? { preferences.voiceClusterThreshold }
+    var voiceMinSegmentSeconds: Double? { preferences.voiceMinSegmentSeconds }
+    /// 分離器へ渡す調整（人数は、会議の設定、または、分け直しで選んだ値）。
+    func voiceTuning(speakerCount: Int?) -> VoiceSeparationTuning {
+        VoiceSeparationTuning(speakerCount: speakerCount, clusterThreshold: preferences.voiceClusterThreshold, minSegmentSeconds: preferences.voiceMinSegmentSeconds)
+    }
     /// 声の分離のモデル（いまは 1 つ）。
     var voiceModel: VoiceModel? { VoiceModelCatalog.all.first }
     /// 声紋を使う（SPEC §3.15）。オンで、声による話者の分離もオンのときだけ、会議で使う。
@@ -339,6 +346,18 @@ final class MeetingController {
         mutateWhenIdle { $0.voiceSpeakerCount = count }
     }
 
+    /// 併合のしきい値を指定する（`nil`＝既定。範囲外は、何もしない）。会議の実行中は、変えられない。
+    func setVoiceClusterThreshold(_ value: Double?) {
+        if let value { guard VoiceSeparationTuning.clusterThresholdRange.contains(value) else { return } }
+        mutateWhenIdle { $0.voiceClusterThreshold = value }
+    }
+
+    /// 短い区間の下限（秒）を指定する（`nil`＝既定。範囲外は、何もしない）。会議の実行中は、変えられない。
+    func setVoiceMinSegmentSeconds(_ value: Double?) {
+        if let value { guard VoiceSeparationTuning.minSegmentSecondsRange.contains(value) else { return } }
+        mutateWhenIdle { $0.voiceMinSegmentSeconds = value }
+    }
+
     /// 声の分離のモデルを、ダウンロードする（利用者が押したときだけ。小さいファイルから。途中のファイルがあれば、続きから）。取得できたら、オンにする。
     func downloadVoiceModel(_ model: VoiceModel) {
         downloads.start(id: model.id, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
@@ -479,7 +498,7 @@ final class MeetingController {
             let loaded = voiceprintLibrary(for: model)
             let library = loaded.library
             voiceNotice = loaded.notice
-            voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
+            voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),

@@ -31,15 +31,26 @@ public enum VoiceSeparationError: Error, Sendable, Equatable {
     }
 }
 
-/// 分離の調整（SPEC §3.14）。無指定（`nil`）は、自動（FluidAudio の既定）。
+/// 分離の調整（SPEC §3.14・§3.16）。無指定（`nil`）は、自動（FluidAudio の既定）。
 public struct VoiceSeparationTuning: Sendable, Equatable {
     /// 話者の人数（分かっているとき）。2〜8。無指定は、自動。声の似た人が 1 つにまとまるとき、人数を指定すると、その数に分ける。
     public var speakerCount: Int?
+    /// 声の特徴が近い（距離がこの値以下の）話者を、同じ人にまとめる上限。小さいほど、別の人に分かれやすく、大きいほど、まとまりやすい。範囲は `clusterThresholdRange`。無指定は、既定（0.6）。
+    public var clusterThreshold: Double?
+    /// これより短い区間（秒）は、声の特徴を取らない（話者 ID が付かない）。小さいほど、短い発言にも付くが、特徴は不安定になる。範囲は `minSegmentSecondsRange`。無指定は、既定（1.0）。
+    public var minSegmentSeconds: Double?
 
     public static let speakerCountRange = 2...8
+    public static let clusterThresholdRange = 0.3...0.9
+    public static let minSegmentSecondsRange = 0.3...2.0
+    /// FluidAudio の既定（画面に見せる）。
+    public static let defaultClusterThreshold = 0.6
+    public static let defaultMinSegmentSeconds = 1.0
 
-    public init(speakerCount: Int? = nil) {
+    public init(speakerCount: Int? = nil, clusterThreshold: Double? = nil, minSegmentSeconds: Double? = nil) {
         self.speakerCount = speakerCount
+        self.clusterThreshold = clusterThreshold
+        self.minSegmentSeconds = minSegmentSeconds
     }
 }
 
@@ -69,6 +80,8 @@ public struct FluidVoiceSeparator: VoiceSeparating {
             let models = try await OfflineDiarizerModels.load(from: store.folder(model))
             var config = OfflineDiarizerConfig()
             if let count = tuning.speakerCount { config.clustering.numSpeakers = count }
+            if let threshold = tuning.clusterThreshold { config.clustering.threshold = threshold }
+            if let seconds = tuning.minSegmentSeconds { config.embedding.minSegmentDurationSeconds = seconds }
             let manager = OfflineDiarizerManager(config: config)
             manager.initialize(models: models)
             let result = try await manager.process(audio: samples)
