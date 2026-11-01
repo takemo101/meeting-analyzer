@@ -13,6 +13,8 @@ public struct Transcript: Sendable, Equatable {
 
     /// 会議で使った `ACTOR.md` のアクター（SPEC §3.13）。あれば、記録の見出しに書く。
     public var actors: ActorList?
+    /// 再開した記録で使う、`ACTOR.md` のアクターの要約（`actors` が無いとき、見出しに書く。SPEC §3.16）。
+    public var actorsSummary: String?
     /// 声で分けた話者の数（SPEC §3.14）。分けたときだけ。
     public var voiceSpeakers: Int?
     /// 分離が見つけた話者の数と、声（話者 ID）が付かなかった確定した「相手」の発話の数（記録の見出しに書く。人数が少ないときの原因の切り分けのため）。
@@ -26,6 +28,17 @@ public struct Transcript: Sendable, Equatable {
     public var voiceNames: [Int: String] = [:]
 
     public init() {}
+
+    /// 再開のための中身（SPEC §3.16）：発話（すべて）と、撮った画像。
+    func snapshotContent() -> (utterances: [Utterance], shots: [(offset: TimeInterval, path: String)]) {
+        (byKey.values.sorted { $0.key < $1.key }, shots.map { ($0.offset, $0.path) })
+    }
+
+    /// 再開した記録（`snapshotContent` の逆）。
+    init(utterances: [Utterance], shots: [(offset: TimeInterval, path: String)]) {
+        for utterance in utterances { byKey[utterance.key] = utterance }
+        self.shots = shots.map { Shot(offset: $0.offset, path: $0.path) }
+    }
 
     public var isEmpty: Bool { byKey.isEmpty }
     public var utteranceCount: Int { byKey.count }
@@ -111,7 +124,7 @@ public struct Transcript: Sendable, Equatable {
         }
         header.append("- 発話数: \(utteranceCount)")
         if !shots.isEmpty { header.append("- 画像: \(shots.count) 枚") }
-        if let actors { header.append("- アクター（ACTOR.md）: \(actors.summary)") }
+        if let summary = actors?.summary ?? actorsSummary { header.append("- アクター（ACTOR.md）: \(summary)") }
         if let voiceSpeakers {
             var detail = ""
             if let voiceFound, let voiceUnassigned { detail = "（分離が見つけた話者: \(voiceFound) 人・声が付かなかった発話: \(voiceUnassigned) 件）" }

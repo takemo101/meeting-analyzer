@@ -60,8 +60,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
-            // 直前の会議に、名前を付けていない話者がいるとき（次の会議を始めるまで。SPEC §3.15）。
-            if controller.canNameSpeakers { menu.addItem(action("話者の名付け…", #selector(openNaming))) }
+            // 直前の会議に、名前を付けていない話者がいる・分け直せるとき、または、音声を保存した過去の会議があるとき（SPEC §3.15・§3.16）。
+            if controller.canOpenNaming { menu.addItem(action("話者の名付け…", #selector(openNaming))) }
         case .running:
             menu.addItem(action("一時停止", #selector(pause)))
             menu.addItem(action("会議を終了", #selector(endMeeting)))

@@ -25,12 +25,15 @@ extension MeetingController {
         guard let session = namingSession else { return NamingOutcome(failure: "名付けできる会議がありません（次の会議を始めたあとは、名付けられません）") }
         switch await session.nameSpeakers([id: name]) {
         case .success(let named):
+            // 確定している間に、別の会議へ替えた（名付けの対象が替わった）ら、画面の状態へは反映しない（記録は、すでに書き直されている）。
+            guard namingSession === session else { return NamingOutcome() }
             for item in named.speakers { namedSpeakers[item.speaker] = item.name }
             var outcome = NamingOutcome()
             if remember, voiceprintsEnabled, let confirmed = named.speakers.first?.name {
                 outcome.warning = rememberVoice(name: confirmed, embedding: await session.voiceEmbedding(of: id))
             }
             changed()
+            refreshPastMeetings()
             return outcome
         case .failure(let error):
             return NamingOutcome(failure: error.message)
@@ -41,7 +44,7 @@ extension MeetingController {
     /// 名前の無い話者ごとに、長い発話を最大 20 件、判断モデルへ問い、確率の平均の上位 3 人を、ヒントにする（**名前は決めない**）。計算は、画面を止めない別のスレッドで行い、終わったらモデルを解放する。
     /// 1 回の名付けにつき 1 回だけ（開き直しても、計算し直さない）。失敗は、理由を画面に出す（名付けは、できる）。
     func computeNamingHints() async {
-        guard let session = namingSession, hintState == .notRequested, let model = decisionModel, let file = actorFile else { return }
+        guard state == .idle, let session = namingSession, hintState == .notRequested, let model = decisionModel, let file = actorFile else { return }
         guard case .success(let list) = ActorFile.load(path: file), !list.others.isEmpty else { return }
         hintState = .computing
         changed()
@@ -74,9 +77,12 @@ extension MeetingController {
 
     /// 次の会議の開始のとき、名付けの対象を手放す（話者 N のままの人は、そのまま）。
     func clearNaming() {
-        guard namingSession != nil || !namingSpeakers.isEmpty else { return }
+        guard namingSession != nil || !namingSpeakers.isEmpty || previousSession != nil else { return }
         stopPlayback()
         namingSession = nil
+        namingMeeting = nil
+        previousSession = nil
+        previousMeeting = nil
         namingSpeakers = []
         namedSpeakers = [:]
         namingCandidates = [:]

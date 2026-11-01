@@ -80,7 +80,14 @@ final class MeetingController {
 
     private var session: LiveSession?
     /// 名付けの対象：直前の会議（声で分けた話者がいるときだけ）。**次の会議を始める・アプリを終了するまで**（SPEC §3.15）。
-    var namingSession: LiveSession?
+    var namingSession: (any NamingTarget)?
+    /// いま名付けている会議の表示（題名・開始）。
+    var namingMeeting: NamingMeeting?
+    /// 直前の会議（終わったばかりの `LiveSession`。名付けの画面で、過去の会議から戻れるように持つ。次の会議の開始・アプリの終了で手放す）と、その表示。
+    var previousSession: LiveSession?
+    var previousMeeting: NamingMeeting?
+    /// あとから名付けできる会議（音声と名付けの写しがある会議。新しい順。起動時・会議の開始と終了のとき・6 時間ごと・削除のときに数え直す。SPEC §3.16）。
+    var pastMeetings: [PastMeeting] = []
     /// 名付けの画面に見せる、話者ごとの要約と、確定した名前（話者 N → 名前）。
     var namingSpeakers: [SpeakerSummary] = []
     var namedSpeakers: [Int: String] = [:]
@@ -118,9 +125,9 @@ final class MeetingController {
     }
     private let environment: [String: String]
     /// このアプリのデータの置き場所（記録・画像・モデル・自分のプリセット）。起動のときに、1 度だけ求める。
-    private let dataDirectory: URL
+    let dataDirectory: URL
     /// エージェントへ渡す窓口。待ち受けを始められなくても、記録は続けられる（出来事は、保持するだけ）。
-    private let hub: HubServer
+    let hub: HubServer
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment, defaults: UserDefaults = .standard) {
         self.environment = environment
@@ -197,7 +204,11 @@ final class MeetingController {
         Task.detached(priority: .utility) {
             if let days { RecordRetention(root: root).deleteExpired(olderThanDays: days, except: active) }
             let summary = SavedAudioStore(root: root).summary()
-            await MainActor.run { self.updateSavedAudio(summary) }
+            let meetings = SavedAudioStore(root: root).pastMeetings()
+            await MainActor.run {
+                self.updateSavedAudio(summary)
+                self.updatePastMeetings(meetings)
+            }
         }
     }
 
@@ -455,16 +466,10 @@ final class MeetingController {
                 notice = "終了しました（発話 \(outcome.utterances) 件）"
                 // 声で分けた話者がいれば、または、音声を保存していて分け直せれば、名付けの対象にする（次の会議の開始まで）。声紋で名前が付いた話者は、確定済み。
                 let summaries = await session.speakerSummaries()
-                let canReseparate = savedAudioStore.exists(sessionId: session.sessionId)
-                if !summaries.isEmpty || canReseparate {
-                    let matched = await session.speakerNames()
-                    namingSession = session
-                    namingSpeakers = summaries
-                    namedSpeakers = matched
-                    voiceMatched = Set(matched.keys)
-                    namingCandidates = await session.speakerCandidates()
-                    reseparation = .idle
-                    touchVoiceprints(Set(matched.values))
+                if !summaries.isEmpty || savedAudioStore.exists(sessionId: session.sessionId) {
+                    let matched = await adoptNaming(session, meeting: NamingMeeting(sessionId: session.sessionId, title: session.title, startedAt: session.startedAt))
+                    previousSession = session
+                    previousMeeting = namingMeeting
                     let matchedNote = matched.isEmpty ? "" : "・声紋で \(matched.count) 人に名前が付きました"
                     let rest = summaries.filter { matched[$0.id] == nil }.count
                     if summaries.isEmpty {
@@ -498,7 +503,7 @@ final class MeetingController {
             let loaded = voiceprintLibrary(for: model)
             let library = loaded.library
             voiceNotice = loaded.notice
-            voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
+            voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil, modelRevision: model.revision)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),

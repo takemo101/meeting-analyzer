@@ -29,6 +29,8 @@ public final class SessionPipeline: @unchecked Sendable {
     /// 終了の時刻と、終了のときに書いた記録のパス（名付けで、記録を書き直すために覚える）。
     private var endedAt: Date?
     private var finalTranscriptPath: String?
+    /// 音声を保存した会議だけ：名付けの写し（`speakers.json`）を書く、分離モデルの版（SPEC §3.16「あとからの名付け」）。`nil` は、書かない。
+    private var snapshotRevision: String?
 
     private struct Stream {
         var currentId = 0
@@ -146,7 +148,7 @@ public final class SessionPipeline: @unchecked Sendable {
     /// 会議が終わったあとに、声の分離をやり直した結果を、反映する（SPEC §3.16「再分離」）。確定した「相手」の発話へ、話者 ID を付け直し、**その会議の名前は、すべて外す**
     /// （話者 ID の対応が変わるため。`library` があれば、声紋の照合から、やり直す）。記録を書き直し、`speakers` の出来事（`reseparated`＝これまでの `speakers` は無効。いまの名前のすべて）を出す。
     /// **記録を書き直せなければ、何も変えない**。
-    public func reapplyVoices(_ segments: [VoiceSegment], embeddings: [String: [Float]], library: VoiceprintLibrary?) -> Result<SpeakersNamed, SpeakerNamingError> {
+    public func reapplyVoices(_ segments: [VoiceSegment], embeddings: [String: [Float]], library: VoiceprintLibrary?, modelRevision: String? = nil) -> Result<SpeakersNamed, SpeakerNamingError> {
         guard finished, let endedAt else { return .failure(.notFinished) }
         var updated = transcript
         let targets = updated.ordered.filter { $0.speaker == .others && $0.isFinal && ($0.endedAt ?? $0.startedAt) > $0.startedAt }
@@ -177,6 +179,8 @@ public final class SessionPipeline: @unchecked Sendable {
         voiceEmbeddings = newEmbeddings
         voiceCandidates = candidates
         finalTranscriptPath = path
+        if let modelRevision, snapshotRevision != nil { snapshotRevision = modelRevision }
+        persistSnapshot()
         let named = SpeakersNamed(sessionId: sessionId.uuidString.lowercased(), transcriptPath: path, speakers: updated.voiceNames.sorted { $0.key < $1.key }.map { SpeakerName(speaker: $0.key, name: $0.value) }, reseparated: true)
         sink.publish(.speakers(named))
         return .success(named)
@@ -236,9 +240,48 @@ public final class SessionPipeline: @unchecked Sendable {
         }
         transcript = updated
         finalTranscriptPath = path
+        persistSnapshot()
         let named = SpeakersNamed(sessionId: sessionId.uuidString.lowercased(), transcriptPath: path, speakers: names.sorted { $0.key < $1.key }.map { SpeakerName(speaker: $0.key, name: $0.value) })
         sink.publish(.speakers(named))
         return .success(named)
+    }
+
+    /// 音声を保存した会議の、名付けの写しを、書くようにする（SPEC §3.16）。`finish` の前に呼ぶ。`modelRevision`：声の特徴を作った分離モデルの版。
+    public func keepSnapshot(modelRevision: String) {
+        guard !finished else { return }
+        snapshotRevision = modelRevision
+    }
+
+    /// 名付けの写しを書く（書くようにしていて、記録を書く会議のとき）。**書けなくても、会議・名付けは止めない**（あとから名付けられないだけ）。
+    private func persistSnapshot() {
+        guard let revision = snapshotRevision, let store, let endedAt else { return }
+        let snapshot = SessionSnapshot(sessionId: sessionId, title: title, startedAt: startedAt, endedAt: endedAt, modelRevision: revision, transcript: transcript, embeddings: voiceEmbeddings)
+        SavedAudioStore(root: store.root).writeSnapshot(snapshot, sessionId: sessionId)
+    }
+
+    /// 終わった会議を、名付けの写しから、元に戻す（SPEC §3.16「あとからの名付け」）。記録の書き直し・`speakers` の出来事は、この会議の `sessionId` で出る。
+    /// `currentModelRevision`：いまの分離モデルの版。写しの版と違えば、声の特徴は使わない（「この声を覚える」ができない。声紋と同じ規則）。
+    public static func restored(_ snapshot: SessionSnapshot, sink: any EventSink, store: SessionStore, currentModelRevision: String?) -> SessionPipeline? {
+        guard let id = UUID(uuidString: snapshot.sessionId) else { return nil }
+        let pipeline = SessionPipeline(sessionId: id, title: snapshot.title, startedAt: snapshot.startedDate, sink: sink, store: store)
+        pipeline.transcript = snapshot.makeTranscript()
+        pipeline.finished = true
+        pipeline.endedAt = snapshot.endedDate
+        pipeline.finalTranscriptPath = store.transcriptURL(sessionId: id).path
+        pipeline.snapshotRevision = snapshot.modelRevision
+        if currentModelRevision == snapshot.modelRevision { pipeline.voiceEmbeddings = snapshot.voiceEmbeddings }
+        return pipeline
+    }
+
+    /// 声紋の候補を、声の特徴と声紋から作り直す（再開した会議で、名前の無い話者の候補を出す。**名前は付けない**）。
+    public func refreshCandidates(_ library: VoiceprintLibrary?) {
+        voiceCandidates = [:]
+        guard let library else { return }
+        for (id, embedding) in voiceEmbeddings where transcript.voiceNames[id] == nil {
+            let match = library.match(embedding)
+            if !match.candidates.isEmpty { voiceCandidates[id] = match.candidates }
+            else if let automatic = match.automatic { voiceCandidates[id] = [VoiceprintCandidate(name: automatic.name, similarity: automatic.similarity)] }
+        }
     }
 
     /// 会議の途中の書き足し：変わっていれば、`checkpointInterval` 秒に 1 回まで、記録を書き直す（終了の記録と同じ場所。終了で、整えて書き直す）。
@@ -264,6 +307,7 @@ public final class SessionPipeline: @unchecked Sendable {
             if case .success(let url) = store.writeTranscript(markdown, sessionId: sessionId) { transcriptPath = url.path }
         }
         finalTranscriptPath = transcriptPath
+        persistSnapshot()
         let end = SessionEnd(
             sessionId: sessionId, title: title, reason: reason, startedAt: startedAt, endedAt: endedAt,
             batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath, speakers: transcript.voiceSpeakers

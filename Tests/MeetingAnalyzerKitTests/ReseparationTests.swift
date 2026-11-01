@@ -154,6 +154,7 @@ struct ReseparationFlowTests {
                 : separation([VoiceSegment(speaker: "q", start: 0, end: 12)])
         }
         controller.namingSession = session
+        controller.namingMeeting = NamingMeeting(sessionId: session.sessionId, title: "テスト会議", startedAt: session.startedAt)
         controller.namingSpeakers = await session.speakerSummaries()
         #expect(controller.namingAudioAvailable && !controller.canReseparate, "モデルが未取得のあいだは、分け直せない")
         await controller.reseparateSpeakers(count: 2)
