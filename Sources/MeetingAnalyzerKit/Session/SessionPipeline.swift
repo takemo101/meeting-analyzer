@@ -23,6 +23,9 @@ public final class SessionPipeline: @unchecked Sendable {
     private var lastCheckpoint: TimeInterval?
     /// 前に書いたあとに、記録が変わったか。
     private var dirty = false
+    /// 終了の時刻と、終了のときに書いた記録のパス（名付けで、記録を書き直すために覚える）。
+    private var endedAt: Date?
+    private var finalTranscriptPath: String?
 
     private struct Stream {
         var currentId = 0
@@ -120,6 +123,38 @@ public final class SessionPipeline: @unchecked Sendable {
         dirty = true
     }
 
+    /// 名付けの画面に見せる、話者（話者 N）ごとの要約（SPEC §3.15）。
+    public func speakerSummaries() -> [SpeakerSummary] { transcript.speakerSummaries() }
+
+    /// 人間が確定した名前を、話者 N に付ける（SPEC §3.15）：記録（`transcript.md`）を名前つきで書き直し、`speakers` の出来事を出す。
+    /// 会議が終わったあとだけ。**記録を書き直せなければ、確定しない**（名前も、出来事も、残さない）。確定した名前は、変えられない。
+    public func nameSpeakers(_ requested: [Int: String]) -> Result<SpeakersNamed, SpeakerNamingError> {
+        guard finished, let endedAt else { return .failure(.notFinished) }
+        guard !requested.isEmpty else { return .failure(.empty) }
+        let known = Set(transcript.speakerSummaries().map(\.id))
+        var names: [Int: String] = [:]
+        for (id, raw) in requested.sorted(by: { $0.key < $1.key }) {
+            guard known.contains(id) else { return .failure(.unknownSpeaker(id)) }
+            guard transcript.voiceNames[id] == nil else { return .failure(.alreadyNamed(id)) }
+            guard let name = SpeakerNameRule.normalize(raw) else { return .failure(.invalidName) }
+            names[id] = name
+        }
+        var updated = transcript
+        updated.voiceNames.merge(names) { _, new in new }
+        var path = finalTranscriptPath
+        if let store {
+            switch store.writeTranscript(updated.markdown(title: title, startedAt: startedAt, endedAt: endedAt), sessionId: sessionId) {
+            case .success(let url): path = url.path
+            case .failure: return .failure(.writeFailed)
+            }
+        }
+        transcript = updated
+        finalTranscriptPath = path
+        let named = SpeakersNamed(sessionId: sessionId.uuidString.lowercased(), transcriptPath: path, speakers: names.sorted { $0.key < $1.key }.map { SpeakerName(speaker: $0.key, name: $0.value) })
+        sink.publish(.speakers(named))
+        return .success(named)
+    }
+
     /// 会議の途中の書き足し：変わっていれば、`checkpointInterval` 秒に 1 回まで、記録を書き直す（終了の記録と同じ場所。終了で、整えて書き直す）。
     /// 失敗しても、続ける（終了の記録の失敗は、`ended` の記録のパスが無いことで伝わる）。
     private func checkpoint(at now: TimeInterval, force: Bool = false) {
@@ -136,11 +171,13 @@ public final class SessionPipeline: @unchecked Sendable {
         precondition(!finished, "finish は 1 回だけ")
         while batcher.hasPending { deliver(batcher.flush(at: now)) }
         finished = true
+        self.endedAt = endedAt
         var transcriptPath: String?
         if let store, !transcript.isEmpty {
             let markdown = transcript.markdown(title: title, startedAt: startedAt, endedAt: endedAt)
             if case .success(let url) = store.writeTranscript(markdown, sessionId: sessionId) { transcriptPath = url.path }
         }
+        finalTranscriptPath = transcriptPath
         let end = SessionEnd(
             sessionId: sessionId, title: title, reason: reason, startedAt: startedAt, endedAt: endedAt,
             batches: sequence, utterances: transcript.utteranceCount, transcriptPath: transcriptPath, speakers: transcript.voiceSpeakers

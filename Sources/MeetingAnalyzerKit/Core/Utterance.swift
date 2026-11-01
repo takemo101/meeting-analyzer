@@ -31,7 +31,11 @@ public struct Utterance: Sendable, Equatable {
     }
 
     /// 発言者の表示：「相手」・「相手（推定: 佐藤 花子）」・「本人（山田 太郎）」。声で分けたときは、「相手（話者 2）」・「相手（話者 2・推定: 佐藤 花子）」。
-    public var speakerLabel: String {
+    public var speakerLabel: String { speakerLabel(confirmedName: nil) }
+
+    /// `confirmedName`（人間が確定した名前。SPEC §3.15）があれば、「相手（佐藤 花子）」（話者 N・推定の名前より優先する）。
+    public func speakerLabel(confirmedName: String?) -> String {
+        if let confirmedName { return "\(speaker.displayName)（\(confirmedName)）" }
         var parts: [String] = []
         if let voice { parts.append("話者 \(voice)") }
         if let actor { parts.append(actor.guessed ? "推定: \(actor.name)" : actor.name) }

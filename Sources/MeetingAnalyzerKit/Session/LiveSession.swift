@@ -237,6 +237,12 @@ public actor LiveSession {
         return LiveSessionOutcome(utterances: end.utterances, transcriptPath: end.transcriptPath)
     }
 
+    /// 名付けの画面に見せる、話者（話者 N）ごとの要約（SPEC §3.15）。会議が終わったあとで、声で分けられていれば、1 人以上。
+    public func speakerSummaries() -> [SpeakerSummary] { pipeline.speakerSummaries() }
+
+    /// 人間が確定した名前を、話者 N に付ける（SPEC §3.15）。会議が終わったあとだけ。記録を書き直し、`speakers` の出来事を出す。
+    public func nameSpeakers(_ names: [Int: String]) -> Result<SpeakersNamed, SpeakerNamingError> { pipeline.nameSpeakers(names) }
+
     /// 状態の遷移を、**操作の最初に**行う（許されない遷移は `invalidState`）。操作の途中の待ちで、別の操作が割り込んでも、同じ遷移を 2 度は通らない。
     /// 開始・再開は、そのあとの取り込みが失敗したら、呼び出し側が、遷移の前の状態へ戻す。
     private func transition(_ change: (inout SessionLifecycle) throws -> Void) throws {
