@@ -98,12 +98,12 @@ struct VoiceTranscriptTests {
         #expect(ended.speakers == 2)
     }
 
-    @Test("名前（推定）が付いた発話は、「相手（話者 2・推定: 名前）」。分離していない会議の記録・終了の出来事は、これまでの形のまま")
-    func nameAndOldShape() throws {
-        var utterance = Utterance(id: 1, speaker: .others, text: "はい", isFinal: true, startedAt: 0, actor: ActorLabel(name: "佐藤 花子", guessed: true), voice: 2)
-        #expect(utterance.speakerLabel == "相手（話者 2・推定: 佐藤 花子）")
+    @Test("話者 ID が付いた発話は、「相手（話者 2）」。分離していない会議の記録・終了の出来事は、これまでの形のまま")
+    func labelAndOldShape() throws {
+        var utterance = Utterance(id: 1, speaker: .others, text: "はい", isFinal: true, startedAt: 0, voice: 2)
+        #expect(utterance.speakerLabel == "相手（話者 2）")
         utterance.voice = nil
-        #expect(utterance.speakerLabel == "相手（推定: 佐藤 花子）")
+        #expect(utterance.speakerLabel == "相手")
         let plain = SessionEnd(sessionId: UUID(), title: "t", reason: .user, startedAt: Date(), endedAt: Date(), batches: 0, utterances: 0, transcriptPath: nil)
         let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
         #expect(json["speakers"] == nil)

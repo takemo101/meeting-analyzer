@@ -47,8 +47,8 @@ struct ActorSelectionTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let path = try write(["佐藤 花子"], to: root, file: "a.md")
         let selection = ActorSelection()
-        let setup = await selection.prepare(file: path, usesSystemAudio: false, model: nil, store: ModelStore(root: root))
-        #expect(setup.actors != nil && setup.labeler != nil && setup.notice == nil)
+        let setup = selection.prepare(file: path)
+        #expect(setup.actors != nil && setup.notice == nil)
 
         _ = try write(["佐藤 花子", "田中 美咲"], to: root, file: "a.md")
         #expect(selection.choices(file: path, meetingRunning: true).map(\.name) == ["佐藤 花子"])
@@ -59,10 +59,10 @@ struct ActorSelectionTests {
     func unreadableOrNone() async {
         let root = tempURL("actor-missing")
         let selection = ActorSelection()
-        let none = await selection.prepare(file: nil, usesSystemAudio: true, model: nil, store: ModelStore(root: root))
-        #expect(none.actors == nil && none.labeler == nil && none.notice == nil)
-        let missing = await selection.prepare(file: root.appendingPathComponent("無い.md").path, usesSystemAudio: true, model: nil, store: ModelStore(root: root))
-        #expect(missing.actors == nil && missing.labeler == nil && missing.notice?.hasPrefix("ACTOR.md を使えません") == true)
+        let none = selection.prepare(file: nil)
+        #expect(none.actors == nil && none.notice == nil)
+        let missing = selection.prepare(file: root.appendingPathComponent("無い.md").path)
+        #expect(missing.actors == nil && missing.notice?.hasPrefix("ACTOR.md を使えません") == true)
         #expect(selection.status(file: nil) == .none)
     }
 }

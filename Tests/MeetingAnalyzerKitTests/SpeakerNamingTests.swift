@@ -66,11 +66,13 @@ struct SpeakerNamingRuleTests {
         #expect(summaries[1].utteranceCount == 1 && summaries[1].seconds == 4)
     }
 
-    @Test("記録の行：確定した名前は「相手（名前）」。名前が無い話者は「相手（話者 N）」のまま。名前は、推定の名前より優先する")
+    @Test("記録の行：確定した名前は「相手（名前）」。名前が無い話者は「相手（話者 N）」のまま。「本人」は、ACTOR.md の本人の名前")
     func labelsUseConfirmedNames() {
-        let guessed = Utterance(id: 1, speaker: .others, text: "はい", isFinal: true, startedAt: 0, actor: ActorLabel(name: "推定の人", guessed: true), voice: 2)
-        #expect(guessed.speakerLabel(confirmedName: "佐藤 花子") == "相手（佐藤 花子）")
-        #expect(guessed.speakerLabel(confirmedName: nil) == "相手（話者 2・推定: 推定の人）")
+        let other = Utterance(id: 1, speaker: .others, text: "はい", isFinal: true, startedAt: 0, voice: 2)
+        #expect(other.speakerLabel(confirmedName: "佐藤 花子") == "相手（佐藤 花子）")
+        #expect(other.speakerLabel(confirmedName: nil) == "相手（話者 2）")
+        #expect(Utterance(id: 1, speaker: .others, text: "はい", isFinal: true, startedAt: 0).speakerLabel == "相手")
+        #expect(Utterance(id: 1, speaker: .you, text: "はい", isFinal: true, startedAt: 0, actor: "山田 太郎").speakerLabel == "本人（山田 太郎）")
     }
 }
 

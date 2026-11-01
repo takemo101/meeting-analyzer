@@ -27,9 +27,9 @@ enum CLIView {
             ("actors check <ACTOR.md>", ["ACTOR.md（会話に出てくる人の一覧）の書式を検査して、読み取れた内容を出す"]),
             ("doctor [--locale L]", ["その言語のオンデバイス認識が、この Mac で使えるか調べる（既定 ja_JP）"]),
             ("transcribe <音声ファイル> [--locale L] [--model ID]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）。--model で、ダウンロードしたモデルを使う"]),
-            ("models [download <ID>|delete <ID>]", ["ダウンロードして使えるモデル（文字起こし・話者の推定）の、一覧・取得（続きから再開できる）・削除"]),
+            ("models [download <ID>|delete <ID>]", ["ダウンロードして使えるモデル（文字起こし・名前のヒント・話者の分離）の、一覧・取得（続きから再開できる）・削除"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>  --judge <ID>  --attendees <名前,名前>",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>  --separate",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))
@@ -68,36 +68,22 @@ enum CLIView {
         return lines.joined(separator: "\n")
     }
 
-    /// `actors try`（本文 1 つ）：区間ごとに、付けた名前（または、付けなかった理由）と、上位の候補の確率。
-    static func actorsTry(_ result: CLIOutput.TryResult, unitTitle: String, _ style: TerminalStyle) -> String {
-        var lines = [style.bold(unitTitle) + style.dim("  " + result.gate.text)]
-        for segment in result.segments {
-            let who = segment.actor.map { style.success($0) } ?? style.warning("付けない（\(reason(segment.outcome))）")
-            lines.append("  " + who + "  " + style.dim(segment.text))
-            let detail = segment.top.map { "\($0.name) \(Int(($0.probability * 100).rounded()))%" } + (segment.filler.map { ["内容を持たない \(Int(($0 * 100).rounded()))%"] } ?? [])
-            if !detail.isEmpty { lines.append("    " + style.dim(detail.joined(separator: "・"))) }
-        }
-        return lines.joined(separator: "\n")
+    /// `actors try`（本文 1 つ）：名前のヒント（確定ではない）。名乗りは「名乗りあり」、それ以外は、確率。
+    static func actorsTry(_ result: CLIOutput.TryResult, _ style: TerminalStyle) -> String {
+        guard !result.hints.isEmpty else { return style.warning("ヒントなし（短い発言・内容を持たない発言・候補がいない、など）") }
+        return (["名前のヒント（確定ではありません）"].map(style.bold) + result.hints.map { hint in
+            "  " + (hint.introduced ? style.success("名乗りあり: \(hint.name)") : "\(hint.name) \(Int(((hint.probability ?? 0) * 100).rounded()))%")
+        }).joined(separator: "\n")
     }
 
-    private static func reason(_ outcome: String) -> String {
-        switch outcome {
-        case "tooShort": return "短すぎる"
-        case "noCandidate": return "候補がいない"
-        case "filler": return "内容を持たない発言"
-        case "lowConfidence": return "確信度が足りない"
-        default: return outcome
-        }
-    }
-
-    /// `actors try --cases`：判断の単位ごとの、集計（全体と、場合の名前ごと）。
-    static func actorsEval(_ report: CLIOutput.EvalReport, unitTitle: String, _ style: TerminalStyle) -> String {
+    /// `actors try --cases`：ヒントの当たり方の集計（全体と、場合の名前ごと）。
+    static func actorsEval(_ report: CLIOutput.EvalReport, _ style: TerminalStyle) -> String {
         func row(_ name: String, _ score: CLIOutput.EvalScore) -> (name: String, text: [String]) {
-            (name, ["文 \(score.sentences)・付けた \(score.named)（正解 \(score.correct)・間違い \(score.wrong + score.falseName)）・付けなかった \(score.missed + score.rightlyUnnamed)・付けた中の正解 \(Int((score.precision * 100).rounded()))%"])
+            (name, ["話者 \(score.speakers)・先頭が正解 \(score.top1)（\(Int((score.top1Rate * 100).rounded()))%）・ヒントに出た \(score.shown)（\(Int((score.shownRate * 100).rounded()))%）"])
         }
         var rows = [row("全体", report.total)]
         for (tag, score) in report.byTag.sorted(by: { $0.key < $1.key }) { rows.append(row(tag, score)) }
-        let head = style.bold(unitTitle) + style.dim("  発話 \(report.cases) 件・1 件あたり \(report.secondsPerCase) 秒・" + report.gate.text)
+        let head = style.bold("名前のヒント") + style.dim("  話者 \(report.speakers) 人・1 人あたり \(report.secondsPerSpeaker) 秒")
         return ([head] + style.table(rows, label: style.cyan).map { "  " + $0 }).joined(separator: "\n")
     }
 
@@ -178,7 +164,7 @@ enum CLIView {
         lines += style.table(voiceRows, label: style.cyan).map { "  " + $0 }
         lines.append("")
         lines.append(style.dim("取得：\(AppInfo.name) models download <ID>（Hugging Face から。続きから再開できる）  削除：models delete <ID>"))
-        lines.append(style.dim("使う：transcribe・replay に --model <ID>（文字起こし）、replay に --judge <ID>（話者の推定）、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))
+        lines.append(style.dim("使う：transcribe・replay に --model <ID>（文字起こし）、actors try に --judge <ID>（名前のヒントの診断）、または、メニューの「設定…」で選ぶ。置き場所：\(directory)/"))
         return lines.joined(separator: "\n")
     }
 

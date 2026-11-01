@@ -48,8 +48,6 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case screenshotFailed(String)
     /// 「本人」の発話が、直近の「相手」の発話とほとんど同じ。相手の声が、マイクへ回り込んでいる疑い（ヘッドホンの案内）。セッションにつき 1 回。
     case possibleEcho
-    /// 話者の推定が失敗した（モデルを使えない・応答しない、など）。以後、「相手」への名前の推定を止め、文字起こしと転送は続ける。セッションにつき 1 回。
-    case speakerGuessFailed
     /// 声による話者の分離（会議の終了時）に失敗した。記録に、話者 ID は付かない（理由は、記録の見出しにも書く）。
     case voiceSeparationFailed(String)
     /// 会議が長く、声の分離は、最初の 3 時間だけ（音声を持てる上限）。
@@ -113,16 +111,14 @@ public struct LiveSessionOptions: Sendable {
     public var policy: BatchingPolicy
     public var preset: PresetInfo?
     public var actors: ActorSource?
-    public var labeler: SpeakerLabeler?
     public var timing: LiveSessionTiming
     public var screen: LiveSessionScreen?
     public var voice: LiveSessionVoice?
 
-    public init(policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil, timing: LiveSessionTiming = LiveSessionTiming(), screen: LiveSessionScreen? = nil, voice: LiveSessionVoice? = nil) {
+    public init(policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, timing: LiveSessionTiming = LiveSessionTiming(), screen: LiveSessionScreen? = nil, voice: LiveSessionVoice? = nil) {
         self.policy = policy
         self.preset = preset
         self.actors = actors
-        self.labeler = labeler
         self.timing = timing
         self.screen = screen
         self.voice = voice
@@ -154,8 +150,8 @@ public actor LiveSession {
     private let screenRecorder: ScreenRecorder?
     private var echo = EchoDetector()
     private var echoReported = false
-    private let labeler: SpeakerLabeler?
-    private var labelingFailed = false
+    /// 「本人」の発話に付ける名前（`ACTOR.md` の本人。決まった対応）。「相手」の名前は、会議のあとに、人間が確定する（SPEC §3.15）。
+    private let selfName: String?
     private let voice: LiveSessionVoice?
 
     private struct Running {
@@ -176,7 +172,7 @@ public actor LiveSession {
         self.tickInterval = options.timing.tickInterval
         self.finalizeTimeout = options.timing.finalizeTimeout
         self.notify = notify
-        self.labeler = options.labeler
+        self.selfName = options.actors?.selfName
         self.voice = options.voice
         self.screenRecorder = options.screen.map { screen in
             ScreenRecorder(feed: screen.feed, store: screen.store, sessionId: sessionId, interval: screen.interval, minGap: screen.minGap, elapsed: { clock().timeIntervalSince(startedAt) }, notify: notify)
@@ -314,7 +310,7 @@ public actor LiveSession {
     private func consume(_ stream: LiveInputStream, speaker: Speaker, origin: TimeInterval) async {
         do {
             for try await update in stream.updates {
-                for part in await labeled(update, speaker: speaker) { ingest(part.update, speaker: speaker, origin: origin, actor: part.actor) }
+                ingest(update, speaker: speaker, origin: origin, actor: speaker == .you ? selfName : nil)
             }
             if !stopping { notify(.captureStopped(speaker)) }
         } catch {
@@ -322,21 +318,7 @@ public actor LiveSession {
         }
     }
 
-    /// 更新を、話者ごとの区間に分け、アクターを付ける（SPEC §3.13）。「相手」は、確定した更新だけ（暫定の文は、分けず、名前も付けない）。推定の待ちの間、同じ流れの次の更新は、順に待つ。
-    /// 区間は、別の発話（別の `id`）になり、元の時刻を文字数で按分した時刻を持つ。失敗したら、1 回だけ知らせ、以後は分けず・付けない（会議は続ける。この更新は、そのまま流す）。
-    private func labeled(_ update: TranscriptionUpdate, speaker: Speaker) async -> [(update: TranscriptionUpdate, actor: ActorLabel?)] {
-        guard let labeler, !labelingFailed else { return [(update, nil)] }
-        do {
-            return try await labeler.split(update, speaker: speaker)
-        } catch {
-            if Task.isCancelled || error is CancellationError { return [(update, nil)] }
-            labelingFailed = true
-            notify(.speakerGuessFailed)
-            return [(update, nil)]
-        }
-    }
-
-    private func ingest(_ update: TranscriptionUpdate, speaker: Speaker, origin: TimeInterval, actor: ActorLabel?) {
+    private func ingest(_ update: TranscriptionUpdate, speaker: Speaker, origin: TimeInterval, actor: String?) {
         guard segmentActive else { return }
         let shifted = TranscriptionUpdate(text: update.text, isFinal: update.isFinal, start: update.start + origin, end: update.end + origin)
         pipeline.ingest(shifted, speaker: speaker, actor: actor)

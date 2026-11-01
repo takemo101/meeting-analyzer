@@ -13,10 +13,8 @@ public struct CaptionUpdate: Codable, Equatable, Sendable {
     /// 発話の開始（エポックからのミリ秒）。
     public let timestamp: Double
     public let isFinal: Bool
-    /// `ACTOR.md` のアクターの名前（SPEC §3.13）。無ければ省く。`speaker` は、これがあっても `本人`・`相手` のまま。
+    /// `ACTOR.md` の本人の名前（SPEC §3.13）。「本人」の発話にだけ付く（相手の字幕には付かない：名前は、会議のあとに付く。§3.15）。無ければ省く。`speaker` は、これがあっても `本人`・`相手` のまま。
     public var actor: String? = nil
-    /// `actor` が、内容から選んだ推定か（`true`）。`本人` を `ACTOR.md` の本人へ対応づけたときは `false`。`actor` が無いときは省く。
-    public var actorGuessed: Bool? = nil
 }
 
 /// セッションの開始の内容。`preset` は、本人が選んだ、この会話の分析のしかた（SPEC §3.11）。`actorFile` は、本人が選んだ `ACTOR.md` の絶対パス（SPEC §3.13）。
@@ -115,7 +113,7 @@ public enum TranscriptEvent: Equatable, Sendable {
             CaptionUpdate(
                 id: utterance.key, version: utterance.version, speaker: utterance.speaker.displayName, source: utterance.speaker.rawValue,
                 text: utterance.text, timestamp: ((sessionStart.timeIntervalSince1970 + utterance.startedAt) * 1000).rounded(), isFinal: utterance.isFinal,
-                actor: utterance.actor?.name, actorGuessed: utterance.actor?.guessed
+                actor: utterance.actor
             )
         }
         return .captions(sessionId: sessionId.uuidString.lowercased(), sequence: sequence, updates: updates, screenshot: screenshot)

@@ -78,8 +78,8 @@ public final class SessionPipeline: @unchecked Sendable {
     }
 
     /// 更新を 1 つ受ける。確定した発話の次の更新は、新しい発話として扱う。送る時になっていれば、送る。
-    /// `actor`：この発話に付ける `ACTOR.md` のアクター（無ければ「本人」「相手」のまま）。
-    public func ingest(_ update: TranscriptionUpdate, speaker: Speaker, actor: ActorLabel? = nil) {
+    /// `actor`：この発話に付ける、`ACTOR.md` の本人の名前（「本人」の発話だけ。無ければ「本人」のまま）。
+    public func ingest(_ update: TranscriptionUpdate, speaker: Speaker, actor: String? = nil) {
         guard !finished else { return }
         // 前の更新からこの更新までに、静けさが十分あったなら、前の発話は、この更新を混ぜずに送る。
         tick(at: update.end)

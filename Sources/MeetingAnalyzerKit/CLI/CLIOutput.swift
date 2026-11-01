@@ -94,75 +94,50 @@ enum CLIOutput {
         let speakers: Int?
     }
 
-    /// `actors try` の区間 1 つ：本文・付けた名前（無ければ `null`）・理由（`SpeakerGuesser.Decision.Outcome`）・「内容を持たない」確率・上位の候補の確率。
-    struct TrySegment: Encodable {
-        let text: String
-        let actor: String?
-        let outcome: String
-        let filler: Double?
-        let top: [TryCandidate]
-    }
-
-    struct TryCandidate: Encodable {
+    /// `actors try` のヒント 1 件：名前・確率の平均（名乗りだけのヒントは `null`）・名乗りか。
+    struct TryHint: Encodable {
         let name: String
-        let probability: Double
-    }
+        let probability: Double?
+        let introduced: Bool
 
-    /// 判断の条件（`SpeakerGate`）。結果が、どの条件のものかが分かるように、結果に添える。
-    struct Gate: Encodable {
-        let minConfidence: Double
-        let maxFiller: Double
-        let rival: Double
-
-        init(_ gate: SpeakerGate) {
-            minConfidence = gate.minimumConfidence; maxFiller = gate.maximumFiller; rival = gate.rivalConfidence
+        init(_ hint: SpeakerHint) {
+            name = hint.name
+            probability = hint.probability.map(CLIOutput.rounded)
+            introduced = hint.introduced
         }
-
-        /// 人が読む形（`確信度 ≥0.9・内容なし <0.5・別の人 ≥0.4`）。
-        var text: String { "確信度 ≥\(minConfidence)・内容なし <\(maxFiller)・別の人 ≥\(rival)" }
     }
 
-    /// `actors try`（本文 1 つ）の結果：判断の単位ごと。
+    /// `actors try`（本文 1 つ）の結果：名前のヒント（確定ではない）。
     struct TryResult: Encodable {
-        let unit: String
-        let gate: Gate
-        let segments: [TrySegment]
+        let hints: [TryHint]
     }
 
-    /// 評価の集計（文の数と、判断の結果の内訳）。
+    /// 評価の集計（話者の数と、ヒントの当たり方）。
     struct EvalScore: Encodable {
-        let sentences: Int
-        let named: Int
-        let correct: Int
-        /// 確信して間違い（別の人を付けた）。
-        let wrong: Int
-        let missed: Int
-        let falseName: Int
-        let rightlyUnnamed: Int
-        /// 名前を付けた文のうち、正解の割合。
-        let precision: Double
+        let speakers: Int
+        /// ヒントの先頭が、正解。
+        let top1: Int
+        /// 正解が、ヒントに出た。
+        let shown: Int
+        let top1Rate: Double
+        let shownRate: Double
 
         init(_ score: SpeakerEvalScore) {
-            sentences = score.sentences; named = score.named; correct = score.correct; wrong = score.wrong
-            missed = score.missed; falseName = score.falseName; rightlyUnnamed = score.rightlyUnnamed
-            precision = CLIOutput.rounded(score.precision)
+            speakers = score.speakers; top1 = score.top1; shown = score.shown
+            top1Rate = CLIOutput.rounded(score.top1Rate); shownRate = CLIOutput.rounded(score.shownRate)
         }
     }
 
-    /// `actors try --cases` の結果：判断の単位ごと。
+    /// `actors try --cases` の結果。
     struct EvalReport: Encodable {
-        let unit: String
-        let gate: Gate
-        let cases: Int
-        let secondsPerCase: Double
+        let speakers: Int
+        let secondsPerSpeaker: Double
         let total: EvalScore
         let byTag: [String: EvalScore]
 
-        init(_ report: SpeakerEvalReport, unit: String, gate: SpeakerGate) {
-            self.unit = unit
-            self.gate = Gate(gate)
-            cases = report.cases
-            secondsPerCase = CLIOutput.rounded(report.cases == 0 ? 0 : report.seconds / Double(report.cases))
+        init(_ report: SpeakerEvalReport) {
+            speakers = report.speakers
+            secondsPerSpeaker = CLIOutput.rounded(report.speakers == 0 ? 0 : report.seconds / Double(report.speakers))
             total = EvalScore(report.total)
             byTag = report.byTag.mapValues(EvalScore.init)
         }

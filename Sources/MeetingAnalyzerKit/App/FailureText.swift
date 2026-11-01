@@ -35,8 +35,6 @@ enum FailureText {
             return reason
         case .possibleEcho:
             return "相手の声がマイクに入っている可能性があります。ヘッドホンを使うと確実です"
-        case .speakerGuessFailed:
-            return "相手の話者の推定に失敗したため、止めました（文字起こしと転送は続きます）"
         case .voiceSeparationFailed:
             return "話者の声の分離に失敗しました（記録に、話者 ID は付きません）"
         case .voiceSeparationTruncated:

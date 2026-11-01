@@ -18,14 +18,13 @@ final class ActorSelection {
         let present: Bool
     }
 
-    /// 会議の開始のための結果：`ActorSource` と labeler（選んでいなければ、どちらも無し）と、利用者へ知らせる理由（あれば）。
+    /// 会議の開始のための結果：`ActorSource`（選んでいなければ無し）と、利用者へ知らせる理由（あれば）。
     struct Setup {
         var actors: ActorSource?
-        var labeler: SpeakerLabeler?
         var notice: String?
     }
 
-    /// 今日の出席者（外した人）。会議の途中でも変えられ、判断のたびに、この状態を見る。
+    /// 今日の出席者（外した人）。会議の途中でも変えられ、名付けのヒントは、そのときの出席者を見る。
     let attendance = Attendance()
     /// 実行中の会議が、開始のときに読んだ一覧（会議の途中で、ファイルが書き換わっても、メニューは、会議が使っている一覧を見せる）。
     private var active: ActorList?
@@ -73,10 +72,9 @@ final class ActorSelection {
         return (list?.others ?? []).map { Choice(name: $0.name, role: $0.role, present: attendance.isPresent($0.name)) }
     }
 
-    /// 会議で使う `ACTOR.md` と、発話へ名前を付ける部品。読めない・推定を使えないときは、付けずに会議を始め、理由を知らせる（失敗を黙って捨てない）。
-    /// 判断モデルを選んでいない・取得していない・相手の音声を取り込まない・相手の側の候補がいないときは、**推定しない**（「本人」の対応づけだけ。相手は「相手」のまま）。
-    /// モデルの読み込み（初回は、GPU のコンパイルで数秒）は、画面を止めないよう、別のスレッドで行う。
-    func prepare(file: String?, usesSystemAudio: Bool, model: DecisionModel?, store: ModelStore) async -> Setup {
+    /// 会議で使う `ACTOR.md`（SPEC §3.13）。読めないときは、アクターなしで会議を始め、理由を知らせる（失敗を黙って捨てない）。
+    /// 会議の最中に、「相手」の名前は付けない（判断モデルも、読み込まない）。「本人」の名前だけ、一覧の本人から付く。
+    func prepare(file: String?) -> Setup {
         active = nil
         guard let file else { return Setup() }
         switch ActorFile.load(path: file) {
@@ -84,18 +82,7 @@ final class ActorSelection {
             return Setup(notice: "ACTOR.md を使えません: \(error.message)")
         case .success(let list):
             active = list
-            let model = usesSystemAudio ? model : nil
-            let attendance = attendance
-            var problem: String?
-            let labeler: SpeakerLabeler
-            do {
-                labeler = try await Task.detached(priority: .userInitiated) { try SpeakerLabeler.make(list: list, model: model, store: store, attendance: attendance) }.value
-            } catch {
-                // 読み込めなくても、会議は始める（「本人」の対応づけだけ。理由を知らせる）。
-                labeler = SpeakerLabeler(list: list, guesser: nil)
-                problem = "相手の話者を推定できません" + ((error as? DecisionModelError).map { ": \($0.message)" } ?? "")
-            }
-            return Setup(actors: ActorSource(list: list, file: file), labeler: labeler, notice: problem)
+            return Setup(actors: ActorSource(list: list, file: file))
         }
     }
 }

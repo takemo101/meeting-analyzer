@@ -232,15 +232,15 @@ struct SettingsView: View {
         }
         .disabled(locked)
 
-        Section("相手の話者の推定") {
+        Section("名前のヒント") {
             Picker("使うモデル", selection: Binding(get: { controller.decisionModel?.id ?? "" }, set: { controller.setDecisionModel(DecisionModelCatalog.model(id: $0)) })) {
-                Text("推定しない（相手のまま）").tag("")
+                Text("ヒントを出さない").tag("")
                 ForEach(DecisionModelCatalog.all.filter { controller.isInstalled($0) }) { entry in Text(entry.name).tag(entry.id) }
             }
             ForEach(DecisionModelCatalog.all) { entry in
                 ModelRow(settings: model, spec: ModelRowSpec(entry, controller), locked: locked)
             }
-            Text("発言の内容から、誰が話したかを判断します（この Mac の中だけで動作）。選んでいないときは、「相手」のままです。ダウンロードは、押したときだけ（Hugging Face）。")
+            Text("会議のあとの「話者の名付け…」で、話者ごとに、名前のヒント（確率つき。確定ではありません）を出します。名前を決めるのは、あなたです。発言の内容だけを手がかりにするので、話題が重なる人どうしは、当たりません（この Mac の中だけで動作）。選んでいないときは、ヒントを出しません。ダウンロードは、押したときだけ（Hugging Face）。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(locked)
@@ -248,7 +248,7 @@ struct SettingsView: View {
         // 出席者は、会議の実行中でも変えられる（ほかの設定のように、ロックしない）。
         let choices = controller.actorChoices
         if !choices.isEmpty {
-            Section("出席者（相手として、判断する人）") {
+            Section("出席者（名付けの選択肢・ヒントの候補）") {
                 ForEach(choices, id: \.name) { choice in
                     Toggle(isOn: Binding(get: { choice.present }, set: { controller.setPresent(choice.name, $0) })) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -257,7 +257,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Text("チェックした人の中から、相手の話者を判断します。会議の途中でも変えられます（変えたあとの発言から効きます）。チェックし忘れた人の発言は、別の人に付くか、付きません。")
+                Text("チェックした人が、名付けの選択肢と、ヒントの候補になります。会議の途中でも変えられます（名付けのとき、その時点の出席者を見ます）。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -387,7 +387,7 @@ private struct AppChoice {
     let title: String
 }
 
-/// 追加でダウンロードするモデル 1 つの、表示と操作（文字起こしのモデルも、話者の推定のモデルも、同じ行で扱う）。
+/// 追加でダウンロードするモデル 1 つの、表示と操作（文字起こしのモデルも、名前のヒントのモデルも、同じ行で扱う）。
 private struct ModelRowSpec {
     let id: String
     let name: String
@@ -420,7 +420,7 @@ private struct ModelRowSpec {
         // 途中かどうかは、重みで見る（トークナイザは、ほかのモデルと共有していて、先に取得済みのことがある）。
         downloadedBytes = controller.modelStore.downloadedBytes(model.weights)
         inUse = controller.decisionModel == model
-        deleteNote = inUse ? "使っているモデルです。削除すると、話者の推定をしなくなります（相手は「相手」のまま）。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
+        deleteNote = inUse ? "使っているモデルです。削除すると、名前のヒントを出さなくなります。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
         download = { controller.downloadDecisionModel(model) }
         discard = { controller.downloads.discardPartial(model) }
         delete = { controller.deleteDecisionModel(model) }

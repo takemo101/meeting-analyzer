@@ -239,8 +239,8 @@ public struct CLIRunner {
         }
     }
 
-    /// `ACTOR.md` と判断モデルで、本文 1 つ、または、評価の件（`--cases`）を、判断して見せる（診断。SPEC §3.13）。会議と同じ規則・同じ判断モデル・同じ道（`SpeakerGuesser.segments`）を通す。
-    /// 結果は、判断の単位（`--unit`）ごとに出す（`both` なら、同じ入力で、両方を比べられる）。
+    /// `ACTOR.md` と判断モデルで、本文 1 つ、または、評価の件（`--cases`）の、名前のヒントを見せる（診断。SPEC §3.13）。名付けの画面と同じ規則・同じ判断モデル・同じ道（`SpeakerHintMaker`）を通す。
+    /// 本文 1 つは、1 人の話者の発話として扱う。評価の件は、正解の話者ごとに文をまとめて、ヒントの当たり方を数える。
     private func actorsTry(_ options: ActorsTryOptions) async throws {
         let absolute = URL(fileURLWithPath: options.file).path
         let list: ActorList
@@ -260,15 +260,15 @@ public struct CLIRunner {
             try judge.prepare()
         } catch { throw CLIError.transcription("判断モデルを読み込めません: " + ((error as? DecisionModelError)?.message ?? "\(error)")) }
 
-        let cases: [SpeakerEvalCase]
-        if case .cases(let path) = options.input { cases = try evalCases(path, list: list) } else { cases = [] }
+        let maker = SpeakerHintMaker(list: list, judge: judge, attendance: attendance)
         do {
-            for unit in options.units {
-                let guesser = SpeakerGuesser(list: list, judge: judge, gate: options.gate, attendance: attendance, unit: unit)
-                switch options.input {
-                case .text(let text): try await printTry(text, unit: unit, guesser: guesser, gate: options.gate)
-                case .cases: printEval(try await SpeakerEvaluation.run(cases: cases, guesser: guesser), unit: unit, gate: options.gate)
-                }
+            switch options.input {
+            case .text(let text):
+                let result = CLIOutput.TryResult(hints: try await maker.hints(for: [text]).map(CLIOutput.TryHint.init))
+                out(outIsTerminal ? CLIView.actorsTry(result, outStyle) : CLIOutput.json(result))
+            case .cases(let path):
+                let report = CLIOutput.EvalReport(try await SpeakerEvaluation.run(cases: try evalCases(path, list: list), maker: maker))
+                out(outIsTerminal ? CLIView.actorsEval(report, outStyle) : CLIOutput.json(report))
             }
         } catch let error as DecisionModelError { throw CLIError.transcription("判断に失敗しました: " + error.message) }
     }
@@ -287,30 +287,13 @@ public struct CLIRunner {
         return cases
     }
 
-    /// 本文 1 つの判断（区間ごとに、付けた名前・理由・上位の候補の確率）。
-    private func printTry(_ text: String, unit: JudgmentUnit, guesser: SpeakerGuesser, gate: SpeakerGate) async throws {
-        var segments: [CLIOutput.TrySegment] = []
-        for segment in try await guesser.segments(text) {
-            let decision = try await guesser.decide(segment.text)
-            let top = zip(decision.candidates, decision.answer?.probabilities ?? []).sorted { $0.1 > $1.1 }.prefix(3).map { CLIOutput.TryCandidate(name: $0.0.name, probability: CLIOutput.rounded($0.1)) }
-            segments.append(CLIOutput.TrySegment(text: segment.text, actor: segment.actor?.name, outcome: decision.outcome.rawValue, filler: decision.answer.map { CLIOutput.rounded($0.filler) }, top: Array(top)))
-        }
-        let result = CLIOutput.TryResult(unit: unit.rawValue, gate: CLIOutput.Gate(gate), segments: segments)
-        out(outIsTerminal ? CLIView.actorsTry(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
-    }
-
-    private func printEval(_ report: SpeakerEvalReport, unit: JudgmentUnit, gate: SpeakerGate) {
-        let result = CLIOutput.EvalReport(report, unit: unit.rawValue, gate: gate)
-        out(outIsTerminal ? CLIView.actorsEval(result, unitTitle: unit.title, outStyle) : CLIOutput.json(result))
-    }
-
     /// 音声ファイルを、セッションとして再生する。実機と同じ流れ（パイプライン → ハブ → 記録）を通し、ハブの窓口を開く。
     /// `--hold` の間、窓口を開けたままにして、エージェント（`meeting-analyzer mcp`）が読めるようにする。
-    /// `--actors` があれば、その `ACTOR.md` で、発話に名前を付ける（「本人」は対応づけ、「相手」は、`--judge` の判断モデルで推定する）。
+    /// `--actors` があれば、その `ACTOR.md` を使う（「本人」の発話には、一覧の本人の名前が付く。「相手」の名前は、会議のあとの名付けで付く）。
     private func replay(_ options: ReplayOptions) async throws {
         let file = try readableFile(options.file)
         let preset = try resolvePreset(options.preset)
-        let (actorSource, labeler) = try prepareActors(options)
+        let actorSource = try prepareActors(options)
         let hub = try startHub()
         defer { hub.stop() }
         await waitForAgent(on: hub, upTo: options.wait)
@@ -325,7 +308,7 @@ public struct CLIRunner {
 
         let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
-        let lastEnd = try await play(file, options, labeler: labeler, into: pipeline)
+        let lastEnd = try await play(file, options, selfName: options.speaker == .you ? actorSource?.selfName : nil, into: pipeline)
         if let separator { await separateVoices(file, with: separator, into: pipeline) }
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
         let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
@@ -364,25 +347,14 @@ public struct CLIRunner {
         return found.info
     }
 
-    /// `--actors` の `ACTOR.md` と、発話へ名前を付ける部品（指定が無ければ、どちらも無し）。読めない・出席者の名前が無い・判断モデルが無い・読み込めないときは、断る。
-    private func prepareActors(_ options: ReplayOptions) throws -> (ActorSource?, SpeakerLabeler?) {
-        guard let path = options.actors else { return (nil, nil) }
+    /// `--actors` の `ACTOR.md`（指定が無ければ、無し）。読めないときは、断る。
+    private func prepareActors(_ options: ReplayOptions) throws -> ActorSource? {
+        guard let path = options.actors else { return nil }
         let absolute = URL(fileURLWithPath: path).path
-        let list: ActorList
         switch ActorFile.load(path: absolute) {
         case .failure(let error): throw CLIError.input(error.message)
-        case .success(let loaded): list = loaded
+        case .success(let list): return ActorSource(list: list, file: absolute)
         }
-        let attendance = try replayAttendance(options.attendees, in: list)
-        // 推定は、--judge で選んだ判断モデルがあるときだけ（無ければ、「相手」のまま。SPEC §3.13）。「相手」を再生するときだけ。
-        let model = options.speaker == .others ? options.judge.flatMap(DecisionModelCatalog.model(id:)) : nil
-        if let model, !list.others.isEmpty, !modelStore.isInstalled(model) {
-            throw CLIError.transcription("判断モデル「\(model.name)」が、取得されていません（\(AppInfo.name) models download \(model.id)）")
-        }
-        do {
-            let labeler = try SpeakerLabeler.make(list: list, model: model, store: modelStore, attendance: attendance, unit: options.unit)
-            return (ActorSource(list: list, file: absolute), labeler)
-        } catch { throw CLIError.transcription("判断モデルを読み込めません: " + ((error as? DecisionModelError)?.message ?? "\(error)")) }
     }
 
     /// 出席者：指定があれば、その人だけを話者の候補にする（相手の側の名前。無い名前は、断る）。
@@ -408,16 +380,12 @@ public struct CLIRunner {
         while hub.clientCount == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
     }
 
-    /// 音声ファイルの認識結果を、（名前を付けて）パイプラインへ入れる。返すのは、最後の更新の終わりの秒。
-    private func play(_ file: URL, _ options: ReplayOptions, labeler: SpeakerLabeler?, into pipeline: SessionPipeline) async throws -> TimeInterval {
+    /// 音声ファイルの認識結果を、パイプラインへ入れる（`selfName`：「本人」を再生するときの、`--actors` の本人の名前）。返すのは、最後の更新の終わりの秒。
+    private func play(_ file: URL, _ options: ReplayOptions, selfName: String?, into pipeline: SessionPipeline) async throws -> TimeInterval {
         var lastEnd: TimeInterval = 0
         do {
             for try await update in updates(file, Locale(identifier: options.locale), options.model, modelStore) {
-                var parts: [(update: TranscriptionUpdate, actor: ActorLabel?)] = [(update, nil)]
-                if let labeler {
-                    do { parts = try await labeler.split(update, speaker: options.speaker) } catch { throw CLIError.input("話者の推定に失敗しました") }
-                }
-                for part in parts { pipeline.ingest(part.update, speaker: options.speaker, actor: part.actor) }
+                pipeline.ingest(update, speaker: options.speaker, actor: selfName)
                 lastEnd = max(lastEnd, update.end)
             }
         } catch let error as TranscriptionError { throw error.cliError }
