@@ -71,23 +71,29 @@ struct StartPanelView: View {
                 if !idle {
                     Section { Label("会議の実行中は、選べません。", systemImage: "lock").foregroundStyle(.secondary) }
                 }
+                Section("会議の題名（任意）") {
+                    TextField("会議の題名", text: titleBinding, prompt: Text("例：週次の定例（空なら、自動で付けます）"))
+                        .labelsHidden()
+                    Text("記録の見出しと、エージェントへの開始の出来事に入ります。あとから名付けるとき、会議を見分けやすくなります。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 CaptureChoicesView(controller: controller, apps: model.apps)
                 if controller.voiceSeparation {
                     Section("話者の分離（声）") {
-                        Picker("話者の人数", selection: Binding(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })) {
+                        Picker("話者の人数", selection: speakerCountBinding) {
                             Text("自動").tag(0)
-                            ForEach(Array(VoiceSeparationTuning.speakerCountRange), id: \.self) { count in Text("\(count) 人").tag(count) }
+                            ForEach(Self.speakerCounts, id: \.self) { count in Text("\(count) 人").tag(count) }
                         }
                         Text("相手の人数（2〜8）が分かっているときは、指定すると、その数に分けます。声の似た人が 1 つにまとまるときに、効きます。分からなければ、自動のままにします。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("相手の音声を保存する", isOn: Binding(get: { controller.saveOthersAudio }, set: { controller.setSaveOthersAudio($0) }))
+                        Text("相手の声（システム音声）の録音を、この Mac に、記録と同じ期間だけ保存します。マイク（あなた）の声は保存しません。保存すると、あとから、分け直し・聞き直し・名付けができます。録音は、参加者の声なので、参加者へ知らせてください。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 ForwardingChoicesView(controller: controller)
                 ActorChoicesView(controller: controller)
-                Section {
-                    Text("ここで選んだ内容は、設定にも保存され、次の会議にも使われます。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                StartStatusSection(controller: controller)
             }
             .formStyle(.grouped)
             .disabled(!idle)
@@ -106,6 +112,44 @@ struct StartPanelView: View {
             }
             .padding(14)
         }
-        .frame(width: 540, height: 720)
+        .frame(width: 540, height: 760)
+    }
+
+    private var titleBinding: Binding<String> {
+        Binding<String>(get: { controller.meetingTitle }, set: { controller.setMeetingTitle($0) })
+    }
+
+    private static let speakerCounts: [Int] = Array(VoiceSeparationTuning.speakerCountRange)
+
+    private var speakerCountBinding: Binding<Int> {
+        Binding<Int>(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })
+    }
+}
+
+/// 開始の前の、接続と許可の状況（読むだけ）。許可は、確認だけで、要求しない（要求は、開始のときに OS が行う）。
+struct StartStatusSection: View {
+    let controller: MeetingController
+
+    var body: some View {
+        Section("状況") {
+            row(controller.agentCount > 0, ok: "エージェント: \(controller.agentCount) 件接続中", ng: "エージェント: 未接続（字幕を渡す先が、まだありません）")
+            if controller.selection.microphone {
+                row(MicrophoneCapture.isAuthorized, ok: "マイクの許可: 済み", ng: "マイクの許可: まだ（開始のとき、OS が確認します。断ると、取り込めません）")
+            }
+            if controller.selection.system != .off || controller.screen != .off {
+                row(ScreenRecordingPermission.isGranted, ok: "画面収録の許可: 済み", ng: "画面収録の許可: まだ（システム音声・画面の取り込みに要ります。開始のとき、OS が確認します）")
+            }
+            Text("ここで選んだ内容は、設定にも保存され、次の会議にも使われます（題名は、その会議だけ）。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// 1 行（できていれば緑のチェック、まだなら、橙の注意）。
+    @ViewBuilder private func row(_ ok: Bool, ok okText: String, ng ngText: String) -> some View {
+        if ok {
+            Label(okText, systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout)
+        } else {
+            Label(ngText, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+        }
     }
 }
