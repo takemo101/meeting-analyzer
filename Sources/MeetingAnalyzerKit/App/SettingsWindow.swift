@@ -181,12 +181,38 @@ struct SettingsView: View {
                     .disabled(!controller.isInstalled(voice))
                 ModelRow(settings: model, spec: ModelRowSpec(voice, controller), locked: locked)
             }
-            Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち（ファイルにも、ネットワークにも出しません）、分けたら捨てます。ダウンロードは、押したときだけ（Hugging Face）。声の特徴の保存や、会議をまたぐ識別は、しません。")
+            Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち（ファイルにも、ネットワークにも出しません）、分けたら捨てます。ダウンロードは、押したときだけ（Hugging Face）。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("出典：pyannote・WeSpeaker・BUT Speech@FIT のモデルを、Fluid Inference が Core ML に変換したもの（CC-BY-4.0。変換による改変あり）。ライセンスは、アプリの Resources/licenses に同梱しています。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(locked)
+
+        Section("声紋（会議をまたぐ識別）") {
+            Toggle("声紋を使う", isOn: Binding(get: { controller.voiceprintsEnabled }, set: { controller.setVoiceprints($0) }))
+                .disabled(!controller.voiceSeparation)
+            Text("声の特徴（音声ではありません）を、この Mac に保存して、次の会議で、同じ声の人に、同じ名前を付けます。保存するのは、会議のあとの「話者の名付け…」で「この声を覚える」を選んだ人だけです。ネットワークには出さず、会議の記録の保持期間では消えません。声を覚えることは、会議の参加者へ知らせてください。声による話者の分離がオンのときだけ、使えます。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let problem = controller.voiceprintProblem {
+                Label("声紋のファイルを使えません: \(problem)（消していません。「すべて削除」で、作り直せます）", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+            }
+            ForEach(controller.voiceprintRows, id: \.name) { row in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.name)
+                        Text("覚えた声 \(row.vectorCount) 件・最後に使った日 \(row.lastUsed.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("削除") { controller.deleteVoiceprint(row.name) }
+                }
+            }
+            if !controller.voiceprintRows.isEmpty || controller.voiceprintProblem != nil {
+                Button("すべて削除", role: .destructive) { controller.deleteAllVoiceprints() }
+            } else {
+                Text("まだ、覚えた声はありません。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(model.controller.state == .running || model.controller.state == .paused)
 
         Section("アクター定義") {
             HStack {

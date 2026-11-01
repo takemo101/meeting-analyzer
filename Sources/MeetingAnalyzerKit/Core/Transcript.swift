@@ -109,7 +109,7 @@ public struct Transcript: Sendable, Equatable {
         if voiceSpeakers != nil {
             speakerNote += "「相手（話者 N）」は、声の違いから分けた、同じ声のまとまりです（人物の特定ではありません。1 人が複数の番号に分かれたり、複数人が 1 つの番号に入ったりし得ます）。"
             if !voiceNames.isEmpty {
-                speakerNote += "「相手（名前）」は、利用者が確定した名前です。"
+                speakerNote += "「相手（名前）」は、利用者が確定した名前、または、利用者が覚えた声との一致です。"
             }
         }
         var blocks = [

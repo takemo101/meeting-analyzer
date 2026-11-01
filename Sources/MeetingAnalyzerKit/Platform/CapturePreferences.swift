@@ -16,6 +16,8 @@ public struct CapturePreferences: Sendable, Equatable {
     public var decisionModel: String?
     /// 声による話者の分離（SPEC §3.14）。既定はオフ。オンにできるのは、モデルが取得済みのときだけ（アプリが確かめる）。
     public var voiceSeparation = false
+    /// 声紋を使う（SPEC §3.15）。既定はオフ。オンにできるのは、声による話者の分離がオンのときだけ（アプリが確かめる）。
+    public var voiceprints = false
     /// 最近使った `ACTOR.md`（新しい順。選んでいるものを含む。メニューで切り替える。SPEC §3.13）。
     public var actorFiles: [String] = []
     /// `ACTOR.md` ごとの、出席者から外した人の名前（既定は全員出席。あとから足された人は、出席）。
@@ -37,7 +39,7 @@ public struct CapturePreferences: Sendable, Equatable {
         if names.isEmpty { absentActors[path] = nil } else { absentActors[path] = names.sorted() }
     }
 
-    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation")
+    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation", voiceprints: "capture.voiceprints")
 
     public static func load(_ defaults: UserDefaults = .standard) -> CapturePreferences {
         var result = CapturePreferences()
@@ -75,6 +77,7 @@ public struct CapturePreferences: Sendable, Equatable {
         // 知らないモデルの ID（消えたモデル・壊れた値）は、無し（推定しない）に戻す。
         if let id = defaults.string(forKey: keys.decisionModel), DecisionModelCatalog.model(id: id) != nil { result.decisionModel = id }
         if defaults.object(forKey: keys.voiceSeparation) != nil { result.voiceSeparation = defaults.bool(forKey: keys.voiceSeparation) }
+        if defaults.object(forKey: keys.voiceprints) != nil { result.voiceprints = defaults.bool(forKey: keys.voiceprints) }
         return result
     }
 
@@ -98,5 +101,6 @@ public struct CapturePreferences: Sendable, Equatable {
         defaults.set(absentActors, forKey: Self.keys.absentActors)
         if let decisionModel { defaults.set(decisionModel, forKey: Self.keys.decisionModel) } else { defaults.removeObject(forKey: Self.keys.decisionModel) }
         defaults.set(voiceSeparation, forKey: Self.keys.voiceSeparation)
+        defaults.set(voiceprints, forKey: Self.keys.voiceprints)
     }
 }

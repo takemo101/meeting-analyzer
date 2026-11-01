@@ -1,10 +1,20 @@
 import FluidAudio
 import Foundation
 
+/// 分離の結果：区間（秒。`samples` の先頭が 0。`speaker` は、会議ごとの、意味のない文字列）と、話者ごとの声の特徴（埋め込み。無い話者もある）。
+public struct VoiceSeparation: Sendable, Equatable {
+    public let segments: [VoiceSegment]
+    public let embeddings: [String: [Float]]
+
+    public init(segments: [VoiceSegment], embeddings: [String: [Float]] = [:]) {
+        self.segments = segments
+        self.embeddings = embeddings
+    }
+}
+
 /// 会議の音声（16 kHz・モノラル）を、声の違いで分ける（SPEC §3.14）。実機は `FluidVoiceSeparator`、テストは偽物。
 public protocol VoiceSeparating: Sendable {
-    /// 区間（秒。`samples` の先頭が 0）と、話者の名前（会議ごとの意味のない文字列）。
-    func separate(_ samples: [Float]) async throws -> [VoiceSegment]
+    func separate(_ samples: [Float]) async throws -> VoiceSeparation
 }
 
 public enum VoiceSeparationError: Error, Sendable, Equatable {
@@ -33,7 +43,7 @@ public struct FluidVoiceSeparator: VoiceSeparating {
         self.store = store
     }
 
-    public func separate(_ samples: [Float]) async throws -> [VoiceSegment] {
+    public func separate(_ samples: [Float]) async throws -> VoiceSeparation {
         guard store.ensureVerified(model) else { throw VoiceSeparationError.modelUnavailable }
         ModelHub.offlineMode = true
         // FluidAudio の記録は、端末（標準エラー）へ出さない（失敗は、こちらが、1 つの文で伝える。環境の情報・処理の細部の行も、出さない）。
@@ -46,7 +56,10 @@ public struct FluidVoiceSeparator: VoiceSeparating {
             let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
             manager.initialize(models: models)
             let result = try await manager.process(audio: samples)
-            return result.segments.map { VoiceSegment(speaker: $0.speakerId, start: TimeInterval($0.startTimeSeconds), end: TimeInterval($0.endTimeSeconds)) }
+            return VoiceSeparation(
+                segments: result.segments.map { VoiceSegment(speaker: $0.speakerId, start: TimeInterval($0.startTimeSeconds), end: TimeInterval($0.endTimeSeconds)) },
+                embeddings: result.speakerDatabase ?? [:]
+            )
         } catch {
             throw VoiceSeparationError.failed(String(describing: error))
         }

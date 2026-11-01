@@ -348,8 +348,8 @@ public struct CLIRunner {
                 recorder.append(buffer)
             }
             guard let captured = recorder.snapshot() else { return }
-            let segments = try await separator.separate(captured.samples)
-            pipeline.applyVoices(captured.timeline.sessionSegments(from: segments))
+            let separation = try await separator.separate(captured.samples)
+            pipeline.applyVoices(captured.timeline.sessionSegments(from: separation.segments), embeddings: separation.embeddings)
         } catch {
             let reason = (error as? VoiceSeparationError)?.message ?? "\(error)"
             pipeline.noteVoiceFailure(reason)

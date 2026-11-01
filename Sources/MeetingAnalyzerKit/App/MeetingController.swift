@@ -14,7 +14,7 @@ final class MeetingController {
 
     private(set) var state: State = .idle { didSet { changed() } }
     /// 失敗・知らせ（メニューの 1 行）。次の開始、または会議の終了で更新する。
-    private(set) var notice: String? { didSet { changed() } }
+    var notice: String? { didSet { changed() } }
     /// 取り込みの設定（SPEC §5）：マイク・システム音声・画面・まとめ方・プリセット・使う文字起こし・ACTOR.md・判断モデルなど。設定ウィンドウ・メニューで選び、覚えておく。**ここが、1 つの持ち主**（読み出しは、下の計算プロパティ）。
     private(set) var preferences = CapturePreferences()
     /// 取り込む音声の選択。
@@ -41,6 +41,12 @@ final class MeetingController {
     var voiceSeparation: Bool { preferences.voiceSeparation }
     /// 声の分離のモデル（いまは 1 つ）。
     var voiceModel: VoiceModel? { VoiceModelCatalog.all.first }
+    /// 声紋を使う（SPEC §3.15）。オンで、声による話者の分離もオンのときだけ、会議で使う。
+    var voiceprintsEnabled: Bool { preferences.voiceprints && preferences.voiceSeparation }
+    /// 声紋の保管（`<データの置き場所>/voiceprints.json`）。
+    let voiceprintStore: VoiceprintStore
+    /// 保存した声紋を読んだ結果（設定ウィンドウの一覧。変えるたびに読み直す）。
+    var voiceprintState: VoiceprintLoad = .none
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -64,6 +70,9 @@ final class MeetingController {
     /// 名付けの画面に見せる、話者ごとの要約と、確定した名前（話者 N → 名前）。
     var namingSpeakers: [SpeakerSummary] = []
     var namedSpeakers: [Int: String] = [:]
+    /// 声紋の候補（話者 N → 候補。自動で名前が付かなかった話者だけ）と、声紋の一致で名前が付いた話者。
+    var namingCandidates: [Int: [VoiceprintCandidate]] = [:]
+    var voiceMatched: Set<Int> = []
     private let environment: [String: String]
     /// このアプリのデータの置き場所（記録・画像・モデル・自分のプリセット）。起動のときに、1 度だけ求める。
     private let dataDirectory: URL
@@ -76,6 +85,7 @@ final class MeetingController {
         dataDirectory = RuntimePaths.dataDirectory(environment: environment)
         presetStore = PresetStore.standard(environment: environment)
         modelStore = ModelStore(root: dataDirectory)
+        voiceprintStore = VoiceprintStore(root: dataDirectory)
         downloads = ModelDownloads(store: modelStore)
         hub = HubServer(socketPath: RuntimePaths.hubSocket(environment: environment))
         var saved = CapturePreferences.load(defaults)
@@ -85,7 +95,9 @@ final class MeetingController {
         if case .local(let id) = saved.transcription, !(LocalModelCatalog.model(id: id).map { modelStore.isInstalled($0.artifact) } ?? false) { saved.transcription = .apple }
         if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
         if saved.voiceSeparation, !(VoiceModelCatalog.all.first.map { modelStore.isInstalled($0) } ?? false) { saved.voiceSeparation = false }
+        if saved.voiceprints, !saved.voiceSeparation { saved.voiceprints = false }
         preferences = saved
+        voiceprintState = voiceprintStore.load()
         retentionDays = RecordRetentionSetting.load(defaults)
         actorSelection.restore(from: saved)
         downloads.onChange = { [weak self] in self?.changed() }
@@ -97,7 +109,7 @@ final class MeetingController {
     }
 
     /// 「待機中だけ変えられる設定」を変える：待機中でなければ、何もしない。変えたら、保存して、通知する。
-    private func mutateWhenIdle(_ change: (inout CapturePreferences) -> Void) {
+    func mutateWhenIdle(_ change: (inout CapturePreferences) -> Void) {
         guard state == .idle else { return }
         change(&preferences)
         persist()
@@ -274,7 +286,7 @@ final class MeetingController {
     /// 声による話者の分離を、オン・オフする。オンにできるのは、モデルが取得済みのときだけ。会議の実行中は、変えられない。
     func setVoiceSeparation(_ enabled: Bool) {
         if enabled { guard let model = voiceModel, isInstalled(model) else { return } }
-        mutateWhenIdle { $0.voiceSeparation = enabled }
+        mutateWhenIdle { $0.voiceSeparation = enabled; if !enabled { $0.voiceprints = false } }
     }
 
     /// 声の分離のモデルを、ダウンロードする（利用者が押したときだけ。小さいファイルから。途中のファイルがあれば、続きから）。取得できたら、オンにする。
@@ -290,6 +302,7 @@ final class MeetingController {
         if voiceSeparation {
             guard state == .idle else { return }
             preferences.voiceSeparation = false
+            preferences.voiceprints = false
             persist()
         }
         modelStore.delete(model)
@@ -370,13 +383,19 @@ final class MeetingController {
                 let outcome = try await session.end(reason: reason)
                 defer { cleanRecords() }
                 notice = "終了しました（発話 \(outcome.utterances) 件）"
-                // 声で分けた話者がいれば、名付けの対象にする（次の会議の開始まで）。
+                // 声で分けた話者がいれば、名付けの対象にする（次の会議の開始まで）。声紋で名前が付いた話者は、確定済み。
                 let summaries = await session.speakerSummaries()
                 if !summaries.isEmpty {
+                    let matched = await session.speakerNames()
                     namingSession = session
                     namingSpeakers = summaries
-                    namedSpeakers = [:]
-                    notice = "終了しました（発話 \(outcome.utterances) 件・話者 \(summaries.count) 人。メニューの「話者の名付け…」で、名前を付けられます）"
+                    namedSpeakers = matched
+                    voiceMatched = Set(matched.keys)
+                    namingCandidates = await session.speakerCandidates()
+                    touchVoiceprints(Set(matched.values))
+                    let matchedNote = matched.isEmpty ? "" : "・声紋で \(matched.count) 人に名前が付きました"
+                    let rest = summaries.filter { matched[$0.id] == nil }.count
+                    notice = "終了しました（発話 \(outcome.utterances) 件・話者 \(summaries.count) 人\(matchedNote)" + (rest > 0 ? "。メニューの「話者の名付け…」で、名前を付けられます）" : "）")
                 }
             } catch {
                 notice = "会議を終了できませんでした"
@@ -396,10 +415,20 @@ final class MeetingController {
         // 声による話者の分離（SPEC §3.14）：オンで、モデルが取得済みで、システム音声を取り込むときだけ。音は、メモリ上だけに持つ。
         var recorder: VoiceAudioRecorder?
         var voice: LiveSessionVoice?
+        var voiceNotice: String?
         if voiceSeparation, selection.system != .off, let model = voiceModel, modelStore.isInstalled(model) {
             let held = VoiceAudioRecorder()
             recorder = held
-            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore))
+            var library: VoiceprintLibrary?
+            if voiceprintsEnabled {
+                switch voiceprintStore.load() {
+                case .none: break
+                case .loaded(let loaded) where loaded.modelRevision == model.revision: library = loaded
+                case .loaded: voiceNotice = "保存した声紋は、別の版の分離モデルで作られているため、使いません（設定で削除して、覚え直してください）"
+                case .unusable(let reason): voiceNotice = "声紋を使えません: \(reason)（ファイルは消していません）"
+                }
+            }
+            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore), library: library)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
@@ -422,7 +451,7 @@ final class MeetingController {
             self.session = session
             clearNaming()
             state = .running
-            if let notice = setup.notice { self.notice = notice }
+            if let notice = [setup.notice, voiceNotice].compactMap({ $0 }).joined(separator: " ／ ").nilIfEmpty { self.notice = notice }
         } catch let error as LiveSessionError {
             if case .capture(.permissionDenied(let permission, _)) = error {
                 fail(FailureText.start(error), settings: permission.settingsURL)

@@ -95,13 +95,16 @@ public struct LiveSessionScreen: Sendable {
 }
 
 /// 声による話者の分離（SPEC §3.14）。選んだときだけ渡す。実行中は、システム音声を `recorder` にメモリ上だけで持ち、終了の処理で、`separator` で分けて、捨てる。
+/// `library`（声紋を使うときだけ）：保存した声紋（会議の開始のときに読んだ写し）。終了の処理で、分けた話者と照合して、自動の条件を満たす人に名前を付ける（SPEC §3.15）。
 public struct LiveSessionVoice: Sendable {
     public var recorder: VoiceAudioRecorder
     public var separator: any VoiceSeparating
+    public var library: VoiceprintLibrary?
 
-    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating) {
+    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating, library: VoiceprintLibrary? = nil) {
         self.recorder = recorder
         self.separator = separator
+        self.library = library
     }
 }
 
@@ -243,6 +246,15 @@ public actor LiveSession {
     /// 人間が確定した名前を、話者 N に付ける（SPEC §3.15）。会議が終わったあとだけ。記録を書き直し、`speakers` の出来事を出す。
     public func nameSpeakers(_ names: [Int: String]) -> Result<SpeakersNamed, SpeakerNamingError> { pipeline.nameSpeakers(names) }
 
+    /// 確定した名前（話者 N → 名前。声紋で自動に付いたものを含む）。
+    public func speakerNames() -> [Int: String] { pipeline.speakerNames() }
+
+    /// 声紋の候補（話者 N → 候補。類似度の高い順。自動で付かなかった話者だけ）。
+    public func speakerCandidates() -> [Int: [VoiceprintCandidate]] { pipeline.speakerCandidates() }
+
+    /// 話者 N の声の特徴（「この声を覚える」のため。メモリ上だけ）。
+    public func voiceEmbedding(of id: Int) -> [Float]? { pipeline.voiceEmbedding(of: id) }
+
     /// 状態の遷移を、**操作の最初に**行う（許されない遷移は `invalidState`）。操作の途中の待ちで、別の操作が割り込んでも、同じ遷移を 2 度は通らない。
     /// 開始・再開は、そのあとの取り込みが失敗したら、呼び出し側が、遷移の前の状態へ戻す。
     private func transition(_ change: (inout SessionLifecycle) throws -> Void) throws {
@@ -286,8 +298,9 @@ public actor LiveSession {
         guard let captured = voice.recorder.snapshot() else { return }
         let separator = voice.separator
         do {
-            let segments = try await Task.detached(priority: .userInitiated) { try await separator.separate(captured.samples) }.value
-            pipeline.applyVoices(captured.timeline.sessionSegments(from: segments))
+            let separation = try await Task.detached(priority: .userInitiated) { try await separator.separate(captured.samples) }.value
+            pipeline.applyVoices(captured.timeline.sessionSegments(from: separation.segments), embeddings: separation.embeddings)
+            if let library = voice.library { pipeline.matchVoiceprints(library) }
         } catch {
             let message = (error as? VoiceSeparationError)?.message ?? String(describing: error)
             pipeline.noteVoiceFailure(message)

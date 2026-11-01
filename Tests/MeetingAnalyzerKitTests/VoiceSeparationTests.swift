@@ -125,7 +125,7 @@ struct VoiceTranscriptTests {
 
 private struct FakeSeparator: VoiceSeparating {
     let result: Result<[VoiceSegment], VoiceSeparationError>
-    func separate(_ samples: [Float]) async throws -> [VoiceSegment] { try result.get() }
+    func separate(_ samples: [Float]) async throws -> VoiceSeparation { VoiceSeparation(segments: try result.get()) }
 }
 
 @Suite("声の分離：会議（LiveSession）の終了の手順")
