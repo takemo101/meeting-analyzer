@@ -303,7 +303,7 @@ public struct CLIRunner {
             guard let model = VoiceModelCatalog.all.first, modelStore.isInstalled(model) else {
                 throw CLIError.transcription("話者の分離のモデルが、取得されていません（\(AppInfo.name) models download \(VoiceModelCatalog.all.first?.id ?? "speaker-separation")）")
             }
-            separator = FluidVoiceSeparator(model: model, store: modelStore)
+            separator = FluidVoiceSeparator(model: model, store: modelStore, tuning: VoiceSeparationTuning(speakerCount: options.speakers))
         }
 
         let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)

@@ -78,4 +78,21 @@ struct VoiceSettingsTests {
         let loaded = CapturePreferences.load(defaults)
         #expect(loaded.voiceSeparation && !loaded.microphone && loaded == saved)
     }
+
+    @Test("話者の人数：既定は自動。2〜8 だけ指定できる（範囲外は、変えない）。覚える。範囲外・壊れた保存値は、自動へ戻す")
+    func speakerCount() throws {
+        let root = tempURL("voice-count"), defaults = defaults()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = controller(root, defaults)
+        #expect(first.voiceSpeakerCount == nil)
+        first.setVoiceSpeakerCount(3)
+        #expect(first.voiceSpeakerCount == 3 && controller(root, defaults).voiceSpeakerCount == 3, "再起動後も同じ")
+        first.setVoiceSpeakerCount(1)
+        first.setVoiceSpeakerCount(9)
+        #expect(first.voiceSpeakerCount == 3, "範囲外は、変えない")
+        first.setVoiceSpeakerCount(nil)
+        #expect(first.voiceSpeakerCount == nil && controller(root, defaults).voiceSpeakerCount == nil)
+        defaults.set(99, forKey: "capture.voiceSpeakerCount")
+        #expect(CapturePreferences.load(defaults).voiceSpeakerCount == nil, "範囲外の保存値は、自動へ戻す")
+    }
 }

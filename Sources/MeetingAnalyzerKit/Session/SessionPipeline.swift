@@ -114,6 +114,8 @@ public final class SessionPipeline: @unchecked Sendable {
         let result = VoiceAssignment.assign(spans: targets.map { ($0.startedAt, $0.endedAt ?? $0.startedAt) }, segments: segments)
         for (utterance, id) in zip(targets, result.ids) { transcript.assignVoice(id, forKey: utterance.key) }
         transcript.voiceSpeakers = result.count
+        transcript.voiceFound = Set(segments.map(\.speaker)).count
+        transcript.voiceUnassigned = result.ids.filter { $0 == nil }.count
         transcript.voiceFailure = nil
         voiceEmbeddings = [:]
         for (index, speaker) in result.speakers.enumerated() { if let embedding = embeddings[speaker] { voiceEmbeddings[index + 1] = embedding } }

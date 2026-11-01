@@ -180,6 +180,12 @@ struct SettingsView: View {
                 Toggle("声の違いで、相手の話者を分ける", isOn: Binding(get: { controller.voiceSeparation }, set: { controller.setVoiceSeparation($0) }))
                     .disabled(!controller.isInstalled(voice))
                 ModelRow(settings: model, spec: ModelRowSpec(voice, controller), locked: locked)
+                Picker("話者の人数", selection: Binding(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })) {
+                    Text("自動").tag(0)
+                    ForEach(Array(VoiceSeparationTuning.speakerCountRange), id: \.self) { count in Text("\(count) 人").tag(count) }
+                }
+                Text("声の似た人が 1 つにまとまって、人数が少なく出るときは、相手の人数（2〜8）を指定すると、その数に分けます。分かっていないときは、自動のままにします。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち（ファイルにも、ネットワークにも出しません）、分けたら捨てます。ダウンロードは、押したときだけ（Hugging Face）。")
                 .font(.caption).foregroundStyle(.secondary)

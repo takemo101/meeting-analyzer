@@ -15,6 +15,9 @@ public struct Transcript: Sendable, Equatable {
     public var actors: ActorList?
     /// 声で分けた話者の数（SPEC §3.14）。分けたときだけ。
     public var voiceSpeakers: Int?
+    /// 分離が見つけた話者の数と、声（話者 ID）が付かなかった確定した「相手」の発話の数（記録の見出しに書く。人数が少ないときの原因の切り分けのため）。
+    public var voiceFound: Int?
+    public var voiceUnassigned: Int?
     /// 声の分離に失敗したときの理由（記録に書く。分けたときは `nil`）。
     public var voiceFailure: String?
     /// 人間が確定した、話者 N の名前（SPEC §3.15）。記録の「相手（話者 N）」を「相手（名前）」にする。
@@ -107,7 +110,9 @@ public struct Transcript: Sendable, Equatable {
         if !shots.isEmpty { header.append("- 画像: \(shots.count) 枚") }
         if let actors { header.append("- アクター（ACTOR.md）: \(actors.summary)") }
         if let voiceSpeakers {
-            header.append("- 話者（声）: \(voiceSpeakers) 人")
+            var detail = ""
+            if let voiceFound, let voiceUnassigned { detail = "（分離が見つけた話者: \(voiceFound) 人・声が付かなかった発話: \(voiceUnassigned) 件）" }
+            header.append("- 話者（声）: \(voiceSpeakers) 人\(detail)")
         } else if let voiceFailure {
             header.append("- 話者（声）: 分けられませんでした（\(voiceFailure)）")
         }

@@ -54,6 +54,8 @@ public struct ReplayOptions: Equatable {
     public var actors: String?
     /// 声による話者の分離（SPEC §3.14）。再生した音声の全体を、声の違いで分けて、「相手」の発話に話者 ID を付ける。
     public var separate: Bool = false
+    /// 話者の人数（SPEC §3.14。`--separate` と一緒に。2〜8）。無指定は、自動。
+    public var speakers: Int?
 }
 
 /// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）の、名前のヒントを見せる（診断。SPEC §3.13）。
@@ -108,10 +110,10 @@ public enum CommandParser {
         static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
         static let cases = "--cases"
-        static let separate = "--separate"
+        static let separate = "--separate", speakers = "--speakers"
         /// 値を取らないオプション。
         static let flags: Set = [separate]
-        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, separate]
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, separate, speakers]
         static let actorsTry: Set = [judge, attendees, cases]
     }
 
@@ -160,13 +162,21 @@ public enum CommandParser {
         guard let speaker = Speaker(rawValue: values[Option.speaker] ?? "others") else { return .failure(.usage("--speaker は you か others です")) }
         return model(values[Option.model]).flatMap { chosen in
             if values[Option.separate] != nil, speaker != .others { return .failure(.usage("--separate は、--speaker others（相手）のときだけ使えます")) }
+            var speakerCount: Int?
+            if let text = values[Option.speakers] {
+                guard values[Option.separate] != nil else { return .failure(.usage("--speakers は、--separate と一緒に使います")) }
+                guard let count = Int(text), VoiceSeparationTuning.speakerCountRange.contains(count) else {
+                    return .failure(.usage("--speakers は \(VoiceSeparationTuning.speakerCountRange.lowerBound)〜\(VoiceSeparationTuning.speakerCountRange.upperBound) の人数です"))
+                }
+                speakerCount = count
+            }
             return seconds(Option.hold, values).flatMap { hold in
                 seconds(Option.wait, values).map { wait in
                     let file = parsed.positional[0]
                     return ReplayOptions(
                         file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
                         locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
-                        actors: values[Option.actors], separate: values[Option.separate] != nil
+                        actors: values[Option.actors], separate: values[Option.separate] != nil, speakers: speakerCount
                     )
                 }
             }

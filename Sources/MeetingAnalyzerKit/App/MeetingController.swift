@@ -39,6 +39,8 @@ final class MeetingController {
     var decisionModel: DecisionModel? { preferences.decisionModel.flatMap(DecisionModelCatalog.model(id:)) }
     /// 声による話者の分離（SPEC §3.14）。オンで、モデルが取得済みのときだけ、会議で使う。
     var voiceSeparation: Bool { preferences.voiceSeparation }
+    /// 話者の人数（SPEC §3.14）。無指定は、自動。
+    var voiceSpeakerCount: Int? { preferences.voiceSpeakerCount }
     /// 声の分離のモデル（いまは 1 つ）。
     var voiceModel: VoiceModel? { VoiceModelCatalog.all.first }
     /// 声紋を使う（SPEC §3.15）。オンで、声による話者の分離もオンのときだけ、会議で使う。
@@ -302,6 +304,12 @@ final class MeetingController {
         mutateWhenIdle { $0.voiceSeparation = enabled; if !enabled { $0.voiceprints = false } }
     }
 
+    /// 話者の人数を指定する（`nil`＝自動。2〜8。範囲外は、何もしない）。会議の実行中は、変えられない。
+    func setVoiceSpeakerCount(_ count: Int?) {
+        if let count { guard VoiceSeparationTuning.speakerCountRange.contains(count) else { return } }
+        mutateWhenIdle { $0.voiceSpeakerCount = count }
+    }
+
     /// 声の分離のモデルを、ダウンロードする（利用者が押したときだけ。小さいファイルから。途中のファイルがあれば、続きから）。取得できたら、オンにする。
     func downloadVoiceModel(_ model: VoiceModel) {
         downloads.start(id: model.id, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
@@ -441,7 +449,7 @@ final class MeetingController {
                 case .unusable(let reason): voiceNotice = "声紋を使えません: \(reason)（ファイルは消していません）"
                 }
             }
-            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore), library: library)
+            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore, tuning: VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),

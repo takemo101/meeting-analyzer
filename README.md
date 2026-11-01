@@ -169,6 +169,7 @@ $EXE transcribe sample.aiff               # 確定した結果を出す（パイ
 $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイルをセッションとして再生し、窓口を開ける
 $EXE models download speaker-separation   # 声による話者の分離のモデル（約 22 MB）を取得する
 $EXE replay meeting.wav --separate        # 音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と出す（SPEC §3.14）
+$EXE replay meeting.wav --separate --speakers 3   # 話者が少なく出るとき（声の似た人が 1 つにまとまる）、人数（2〜8）を指定する。見出しの「分離が見つけた話者」で原因を切り分ける
 $EXE actors check ACTOR.md                # ACTOR.md の書式を検査して、読み取れた内容を出す
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b "この画面の表示が遅いです"   # 診断：この ACTOR.md と判断モデルで、1 人の話者の発話として、名前のヒント（確率）を見る
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b --cases eval/cases.jsonl   # 評価：合成の件で、話者ごとのヒントの当たり方（先頭が正解・ヒントに出た）を数える（eval/README.md）
