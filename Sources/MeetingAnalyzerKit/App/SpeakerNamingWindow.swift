@@ -24,6 +24,7 @@ final class SpeakerNamingWindow {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        Task { await controller.computeNamingHints() }
     }
 }
 
@@ -79,6 +80,11 @@ struct SpeakerNamingView: View {
                 Text("声で分けた話者に、名前を付けます。「確定」を押した話者だけが、記録に反映されます（自動では確定しません）。確定した名前は、変えられません。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                switch controller.hintState {
+                case .computing: Label("名前のヒントを計算中…（名付けは、そのまま、できます）", systemImage: "hourglass").font(.callout).foregroundStyle(.secondary)
+                case .failed(let reason): Label(reason, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                case .notRequested, .ready: EmptyView()
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(controller.namingSpeakers, id: \.id) { speaker in
@@ -120,6 +126,14 @@ struct SpeakerNamingView: View {
                         }
                     }
                 }
+                if let hints = controller.namingHints[speaker.id], !hints.isEmpty {
+                    HStack {
+                        Text("名前のヒント（確定ではありません）:").font(.callout).foregroundStyle(.secondary)
+                        ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                            Button(Self.hintTitle(hint)) { model.drafts[speaker.id] = hint.name }
+                        }
+                    }
+                }
                 HStack {
                     TextField("名前", text: Binding(get: { model.drafts[speaker.id] ?? "" }, set: { model.drafts[speaker.id] = $0 }))
                         .onSubmit { model.confirm(speaker.id) }
@@ -149,5 +163,13 @@ struct SpeakerNamingView: View {
     static func duration(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.rounded()))
         return total >= 60 ? "\(total / 60) 分 \(total % 60) 秒" : "\(total) 秒"
+    }
+}
+
+extension SpeakerNamingView {
+    /// ヒントのボタンの文：「名乗りあり: 佐藤 花子」・「佐藤 花子 62%」。
+    static func hintTitle(_ hint: SpeakerHint) -> String {
+        if hint.introduced { return "名乗りあり: \(hint.name)" }
+        return "\(hint.name) \(Int(((hint.probability ?? 0) * 100).rounded()))%"
     }
 }

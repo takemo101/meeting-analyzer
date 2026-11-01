@@ -18,6 +18,21 @@ private struct StubSeparator: VoiceSeparating {
     func separate(_ samples: [Float]) async throws -> VoiceSeparation { VoiceSeparation(segments: segments, embeddings: embeddings) }
 }
 
+/// 本文で、決まった確率を返す偽の判断モデル（「最初」を含めば、佐藤 0.9。そうでなければ、田中 0.8）。
+private struct TextJudge: SpeakerJudge {
+    func judge(utterance: String, candidates: [Actor]) async throws -> SpeakerJudgement {
+        let sato = utterance.contains("最初")
+        return SpeakerJudgement(probabilities: candidates.map { candidate in
+            if candidates.count == 1 { return 1 }
+            switch candidate.name {
+            case "佐藤 花子": return sato ? 0.9 : 0.2
+            case "田中 美咲": return sato ? 0.1 : 0.8
+            default: return 0
+            }
+        }, filler: 0)
+    }
+}
+
 @Suite("話者の名付け：名前の規則・話者ごとの要約（SPEC §3.15）")
 struct SpeakerNamingRuleTests {
     @Test("名前は、前後の空白を除いて、1〜40 文字。空・長すぎる・改行や制御文字を含むものは断る")
@@ -314,6 +329,80 @@ struct SpeakerNamingControllerTests {
         #expect(FileManager.default.fileExists(atPath: file.path), "読めなくても、消さない")
         controller.deleteAllVoiceprints()
         #expect(controller.voiceprintProblem == nil && !FileManager.default.fileExists(atPath: file.path))
+    }
+
+    // MARK: 名前のヒント（SPEC §3.13）
+
+    private func installDecisionModel(in root: URL) throws {
+        let store = ModelStore(root: root), model = DecisionModelCatalog.all[0]
+        for artifact in model.artifacts {
+            try store.prepareParent(of: artifact)
+            FileManager.default.createFile(atPath: store.fileURL(artifact).path, contents: nil)
+            let handle = try FileHandle(forWritingTo: store.fileURL(artifact))
+            try handle.truncate(atOffset: UInt64(artifact.bytes))
+            try handle.close()
+            store.markVerified(artifact)
+        }
+    }
+
+    /// ACTOR.md を選び、判断モデルを選んだ、名付けの対象の会議つきのコントローラー。
+    private func hintSetup(_ root: URL, factory: @escaping @Sendable (DecisionModel, ModelStore, [Actor]) throws -> any SpeakerJudge) async throws -> MeetingController {
+        try installDecisionModel(in: root)
+        let file = root.appendingPathComponent("ACTOR.md")
+        try Data(actorSample.utf8).write(to: file)
+        let controller = voiceController(root, voiceDefaults())
+        controller.setDecisionModel(DecisionModelCatalog.all[0])
+        controller.setActorFile(file.path)
+        controller.hintJudgeFactory = factory
+        let (session, _) = try await endedSession(root)
+        controller.namingSession = session
+        controller.namingSpeakers = await session.speakerSummaries()
+        return controller
+    }
+
+    @Test("名付けの画面を開くと、名前の無い話者ごとに、ヒントを計算する（確定ではない）。1 回の名付けにつき 1 回だけ。確定済みの話者は、計算しない")
+    func hintsAreComputedOnceForUnnamedSpeakers() async throws {
+        let root = tempURL("hints-controller")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let loads = Collected<String>()
+        let controller = try await hintSetup(root) { _, _, _ in loads.add("load"); return TextJudge() }
+        controller.namedSpeakers = [2: "鈴木"]
+        #expect(controller.hintState == .notRequested)
+        await controller.computeNamingHints()
+        #expect(controller.hintState == .ready)
+        #expect(controller.namingHints[1]?.first == SpeakerHint(name: "佐藤 花子", probability: 0.9, introduced: false))
+        #expect(controller.namingHints[2] == nil, "確定済みの話者は、計算しない")
+        #expect(controller.namedSpeakers == [2: "鈴木"] && controller.canNameSpeakers, "ヒントは、名前を確定しない")
+        await controller.computeNamingHints()
+        #expect(loads.values.count == 1, "開き直しても、モデルを読み直さない")
+        controller.clearNaming()
+        #expect(controller.namingHints.isEmpty && controller.hintState == .notRequested)
+    }
+
+    @Test("判断モデルを選んでいない・ACTOR.md が無いときは、ヒントを計算しない（理由も出さない）")
+    func hintsNeedAModelAndActors() async throws {
+        let root = tempURL("hints-controller")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let loads = Collected<String>()
+        let controller = try await hintSetup(root) { _, _, _ in loads.add("load"); return TextJudge() }
+        controller.setDecisionModel(nil)
+        await controller.computeNamingHints()
+        #expect(controller.hintState == .notRequested && controller.namingHints.isEmpty && loads.values.isEmpty, "判断モデルを選んでいない")
+        controller.setDecisionModel(DecisionModelCatalog.all[0])
+        controller.setActorFile(nil)
+        await controller.computeNamingHints()
+        #expect(controller.hintState == .notRequested && loads.values.isEmpty, "ACTOR.md を選んでいない")
+    }
+
+    @Test("モデルを読み込めなければ、理由を出す。名付けは、できる")
+    func hintFailureIsReportedAndNamingStillWorks() async throws {
+        let root = tempURL("hints-controller")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = try await hintSetup(root) { _, _, _ in throw DecisionModelError.noGPU }
+        await controller.computeNamingHints()
+        guard case .failed(let reason) = controller.hintState else { Issue.record("失敗にならない"); return }
+        #expect(reason.contains("GPU") && controller.namingHints.isEmpty)
+        #expect(await controller.confirmSpeakerName(1, name: "佐藤").failure == nil, "ヒントが無くても、名付けは、できる")
     }
 }
 
