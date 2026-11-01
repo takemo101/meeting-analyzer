@@ -20,6 +20,10 @@ public struct CapturePreferences: Sendable, Equatable {
     public var voiceprints = false
     /// 声による話者の分離の、話者の人数（SPEC §3.14）。無指定（`nil`）は、自動。2〜8。声の似た人が 1 つにまとまるとき、指定する。
     public var voiceSpeakerCount: Int?
+    /// 分離の調整（SPEC §3.16）。声の特徴を、同じ人にまとめる距離の上限。無指定（`nil`）は、既定（0.6）。範囲は `VoiceSeparationTuning.clusterThresholdRange`。
+    public var voiceClusterThreshold: Double?
+    /// 分離の調整（SPEC §3.16）。これより短い区間（秒）は、声の特徴を取らない。無指定（`nil`）は、既定（1.0）。範囲は `VoiceSeparationTuning.minSegmentSecondsRange`。
+    public var voiceMinSegmentSeconds: Double?
     /// 相手（システム音声）の音声を保存する（SPEC §3.16）。既定はオフ。オンにできるのは、声による話者の分離がオンのときだけ（アプリが確かめる）。
     public var saveOthersAudio = false
     /// 最近使った `ACTOR.md`（新しい順。選んでいるものを含む。メニューで切り替える。SPEC §3.13）。
@@ -43,7 +47,7 @@ public struct CapturePreferences: Sendable, Equatable {
         if names.isEmpty { absentActors[path] = nil } else { absentActors[path] = names.sorted() }
     }
 
-    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation", voiceprints: "capture.voiceprints", voiceSpeakerCount: "capture.voiceSpeakerCount", saveOthersAudio: "capture.saveOthersAudio")
+    static let keys = (microphone: "capture.microphone", system: "capture.system", screen: "capture.screen", batchMode: "capture.batchMode", presetID: "capture.presetID", transcription: "capture.transcription", actorFile: "capture.actorFile", decisionModel: "capture.decisionModel", actorFiles: "capture.actorFiles", absentActors: "capture.absentActors", voiceSeparation: "capture.voiceSeparation", voiceprints: "capture.voiceprints", voiceSpeakerCount: "capture.voiceSpeakerCount", saveOthersAudio: "capture.saveOthersAudio", voiceClusterThreshold: "capture.voiceClusterThreshold", voiceMinSegmentSeconds: "capture.voiceMinSegmentSeconds")
 
     public static func load(_ defaults: UserDefaults = .standard) -> CapturePreferences {
         var result = CapturePreferences()
@@ -85,6 +89,8 @@ public struct CapturePreferences: Sendable, Equatable {
         if defaults.object(forKey: keys.saveOthersAudio) != nil { result.saveOthersAudio = defaults.bool(forKey: keys.saveOthersAudio) }
         // 範囲外・壊れた値は、自動（無指定）に戻す。
         if defaults.object(forKey: keys.voiceSpeakerCount) != nil, VoiceSeparationTuning.speakerCountRange.contains(defaults.integer(forKey: keys.voiceSpeakerCount)) { result.voiceSpeakerCount = defaults.integer(forKey: keys.voiceSpeakerCount) }
+        if defaults.object(forKey: keys.voiceClusterThreshold) != nil, VoiceSeparationTuning.clusterThresholdRange.contains(defaults.double(forKey: keys.voiceClusterThreshold)) { result.voiceClusterThreshold = defaults.double(forKey: keys.voiceClusterThreshold) }
+        if defaults.object(forKey: keys.voiceMinSegmentSeconds) != nil, VoiceSeparationTuning.minSegmentSecondsRange.contains(defaults.double(forKey: keys.voiceMinSegmentSeconds)) { result.voiceMinSegmentSeconds = defaults.double(forKey: keys.voiceMinSegmentSeconds) }
         return result
     }
 
@@ -111,5 +117,7 @@ public struct CapturePreferences: Sendable, Equatable {
         defaults.set(voiceprints, forKey: Self.keys.voiceprints)
         defaults.set(saveOthersAudio, forKey: Self.keys.saveOthersAudio)
         if let voiceSpeakerCount { defaults.set(voiceSpeakerCount, forKey: Self.keys.voiceSpeakerCount) } else { defaults.removeObject(forKey: Self.keys.voiceSpeakerCount) }
+        if let voiceClusterThreshold { defaults.set(voiceClusterThreshold, forKey: Self.keys.voiceClusterThreshold) } else { defaults.removeObject(forKey: Self.keys.voiceClusterThreshold) }
+        if let voiceMinSegmentSeconds { defaults.set(voiceMinSegmentSeconds, forKey: Self.keys.voiceMinSegmentSeconds) } else { defaults.removeObject(forKey: Self.keys.voiceMinSegmentSeconds) }
     }
 }
