@@ -89,12 +89,15 @@ public enum TranscriptEvent: Equatable, Sendable {
     /// 字幕のバッチ。`sequence` は 1 から連続する。`screenshot` は、前の送信から画面が変わったときの、画面の JPEG の絶対パス。
     case captions(sessionId: String, sequence: Int, updates: [CaptionUpdate], screenshot: String? = nil)
     case ended(SessionEnd)
+    /// 名付けの確定（SPEC §3.15）。`ended` のあとに、確定のたびに出る。記録は、すでに書き直されている。
+    case speakers(SpeakersNamed)
 
     public var sessionId: String {
         switch self {
         case .started(let start): return start.sessionId
         case .captions(let id, _, _, _): return id
         case .ended(let end): return end.sessionId
+        case .speakers(let named): return named.sessionId
         }
     }
 
@@ -103,6 +106,7 @@ public enum TranscriptEvent: Equatable, Sendable {
         case .started: return "started"
         case .captions: return "captions"
         case .ended: return "ended"
+        case .speakers: return "speakers"
         }
     }
 
@@ -131,6 +135,7 @@ extension TranscriptEvent: Codable {
         case "captions":
             self = .captions(sessionId: try c.decode(String.self, forKey: .sessionId), sequence: try c.decode(Int.self, forKey: .sequence), updates: try c.decode([CaptionUpdate].self, forKey: .updates), screenshot: try c.decodeIfPresent(String.self, forKey: .screenshot))
         case "ended": self = .ended(try SessionEnd(from: decoder))
+        case "speakers": self = .speakers(try SpeakersNamed(from: decoder))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "知らない kind: \(other)")
         }
@@ -145,6 +150,7 @@ extension TranscriptEvent: Codable {
             try c.encode(id, forKey: .sessionId)
             try c.encode(sequence, forKey: .sequence); try c.encode(updates, forKey: .updates); try c.encodeIfPresent(screenshot, forKey: .screenshot)
         case .ended(let end): try end.encode(to: encoder)
+        case .speakers(let named): try named.encode(to: encoder)
         }
     }
 }

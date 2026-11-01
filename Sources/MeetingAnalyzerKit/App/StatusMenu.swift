@@ -6,6 +6,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let controller: MeetingController
     private lazy var settings = SettingsWindow(controller: controller)
+    private lazy var naming = SpeakerNamingWindow(controller: controller)
 
     init(controller: MeetingController) {
         self.controller = controller
@@ -59,6 +60,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
+            // 直前の会議に、名前を付けていない話者がいるとき（次の会議を始めるまで。SPEC §3.15）。
+            if controller.canNameSpeakers { menu.addItem(action("話者の名付け…", #selector(openNaming))) }
         case .running:
             menu.addItem(action("一時停止", #selector(pause)))
             menu.addItem(action("会議を終了", #selector(endMeeting)))
@@ -204,4 +207,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func pause() { controller.pause() }
     @objc private func resume() { controller.resume() }
     @objc private func endMeeting() { controller.endFromMenu() }
+}
+
+extension StatusMenu {
+    @objc fileprivate func openNaming() { naming.show() }
 }

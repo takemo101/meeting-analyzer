@@ -17,6 +17,8 @@ public struct Transcript: Sendable, Equatable {
     public var voiceSpeakers: Int?
     /// 声の分離に失敗したときの理由（記録に書く。分けたときは `nil`）。
     public var voiceFailure: String?
+    /// 人間が確定した、話者 N の名前（SPEC §3.15）。記録の「相手（話者 N）」を「相手（名前）」にする。
+    public var voiceNames: [Int: String] = [:]
 
     public init() {}
 
@@ -30,6 +32,27 @@ public struct Transcript: Sendable, Equatable {
     /// 発話に、声の話者 ID を付ける（`key`：`Utterance.key`）。
     public mutating func assignVoice(_ voice: Int?, forKey key: String) {
         byKey[key]?.voice = voice
+    }
+
+    /// 名付けの画面に見せる、話者（話者 N）ごとの要約。確定した「相手」の発話だけ。話者 N の順。
+    public func speakerSummaries() -> [SpeakerSummary] {
+        var byVoice: [Int: [Utterance]] = [:]
+        for utterance in ordered where utterance.speaker == .others && utterance.isFinal {
+            if let voice = utterance.voice { byVoice[voice, default: []].append(utterance) }
+        }
+        return byVoice.keys.sorted().map { voice in
+            let list = byVoice[voice] ?? []
+            let seconds = list.reduce(0) { $0 + max(0, ($1.endedAt ?? $1.startedAt) - $1.startedAt) }
+            // 長い発言から 3 件（同じ長さなら、早いほう）。表示は、時刻の順。
+            let longest = list.enumerated().sorted { lhs, rhs in
+                lhs.element.text.count != rhs.element.text.count ? lhs.element.text.count > rhs.element.text.count : lhs.offset < rhs.offset
+            }.prefix(3).sorted { $0.offset < $1.offset }
+            let excerpts = longest.map { item -> String in
+                let text = item.element.text
+                return text.count > 60 ? String(text.prefix(60)) + "…" : text
+            }
+            return SpeakerSummary(id: voice, seconds: seconds, utteranceCount: list.count, excerpts: excerpts)
+        }
     }
 
     /// 撮った画面の画像を、記録へ加える（`path`：`transcript.md` のあるフォルダからの相対パス）。
@@ -85,6 +108,9 @@ public struct Transcript: Sendable, Equatable {
             : "「相手（推定: 名前）」は、発言の内容から、判断モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかった（または、判断しなかった）ものです。"
         if voiceSpeakers != nil {
             speakerNote += "「相手（話者 N）」は、声の違いから分けた、同じ声のまとまりです（人物の特定ではありません。1 人が複数の番号に分かれたり、複数人が 1 つの番号に入ったりし得ます）。"
+            if !voiceNames.isEmpty {
+                speakerNote += "「相手（名前）」は、利用者が確定した名前です。"
+            }
         }
         var blocks = [
             header.joined(separator: "\n"),
@@ -97,7 +123,7 @@ public struct Transcript: Sendable, Equatable {
                 blocks.append(image(shot))
                 pending.removeFirst()
             }
-            blocks.append("[\(Transcript.clock(utterance.startedAt))] \(utterance.speakerLabel): \(utterance.text)")
+            blocks.append("[\(Transcript.clock(utterance.startedAt))] \(utterance.speakerLabel(confirmedName: utterance.voice.flatMap { voiceNames[$0] })): \(utterance.text)")
         }
         for shot in pending { blocks.append(image(shot)) }
         return blocks.joined(separator: "\n\n") + "\n"

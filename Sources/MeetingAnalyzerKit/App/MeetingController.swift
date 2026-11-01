@@ -53,12 +53,17 @@ final class MeetingController {
 
     func observe(_ handler: @escaping () -> Void) { observers.append(handler) }
 
-    private func changed() { for handler in observers { handler() } }
+    func changed() { for handler in observers { handler() } }
 
     /// いまつながっているエージェント（`meeting-analyzer mcp`）の数。
     private(set) var agentCount = 0
 
     private var session: LiveSession?
+    /// 名付けの対象：直前の会議（声で分けた話者がいるときだけ）。**次の会議を始める・アプリを終了するまで**（SPEC §3.15）。
+    var namingSession: LiveSession?
+    /// 名付けの画面に見せる、話者ごとの要約と、確定した名前（話者 N → 名前）。
+    var namingSpeakers: [SpeakerSummary] = []
+    var namedSpeakers: [Int: String] = [:]
     private let environment: [String: String]
     /// このアプリのデータの置き場所（記録・画像・モデル・自分のプリセット）。起動のときに、1 度だけ求める。
     private let dataDirectory: URL
@@ -365,6 +370,14 @@ final class MeetingController {
                 let outcome = try await session.end(reason: reason)
                 defer { cleanRecords() }
                 notice = "終了しました（発話 \(outcome.utterances) 件）"
+                // 声で分けた話者がいれば、名付けの対象にする（次の会議の開始まで）。
+                let summaries = await session.speakerSummaries()
+                if !summaries.isEmpty {
+                    namingSession = session
+                    namingSpeakers = summaries
+                    namedSpeakers = [:]
+                    notice = "終了しました（発話 \(outcome.utterances) 件・話者 \(summaries.count) 人。メニューの「話者の名付け…」で、名前を付けられます）"
+                }
             } catch {
                 notice = "会議を終了できませんでした"
             }
@@ -407,6 +420,7 @@ final class MeetingController {
         do {
             try await session.start()
             self.session = session
+            clearNaming()
             state = .running
             if let notice = setup.notice { self.notice = notice }
         } catch let error as LiveSessionError {
