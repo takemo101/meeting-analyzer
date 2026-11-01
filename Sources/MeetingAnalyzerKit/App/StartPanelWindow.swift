@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// 「設定して開始…」（SPEC §3.1・§4）：取り込み（マイク・システム音声・画面）と、転送（まとめ方・分析のプリセット）を、その場で選んでから、開始する。
-/// 選んだ内容は、設定ウィンドウと同じ設定へ保存される（次の会議にも、そのまま使われる）。開始のたびの確認のダイアログではなく、**利用者が選んだときだけ**出す。
+/// 開始の前の設定の画面（SPEC §4）：「開始」を選ぶたびに出る。取り込み（マイク・システム音声・画面）・（声の分離がオンなら）話者の人数・転送（まとめ方・分析のプリセット）・アクター定義（ACTOR.md・出席者）を、その場で選んで、「開始」を押すと始まる。
+/// 選んだ内容は、設定ウィンドウと同じ設定へ保存される（次の会議にも、そのまま使われる）。
 @MainActor
 final class StartPanelWindow {
     private let controller: MeetingController
@@ -19,7 +19,7 @@ final class StartPanelWindow {
             model.onStart = { [weak self] in self?.window?.orderOut(nil) }
             model.onCancel = { [weak self] in self?.window?.orderOut(nil) }
             let window = NSWindow(contentViewController: NSHostingController(rootView: StartPanelView(model: model)))
-            window.title = "設定して開始"
+            window.title = "開始の設定"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.center()
@@ -32,7 +32,7 @@ final class StartPanelWindow {
     }
 }
 
-/// 「設定して開始」の表示用の状態。コントローラーの変化で、表示を更新する。起動中のアプリの一覧は、開くたびに読み直す。
+/// 開始の前の設定の表示用の状態。コントローラーの変化で、表示を更新する。起動中のアプリの一覧は、開くたびに読み直す。
 @MainActor
 final class StartPanelModel: ObservableObject {
     let controller: MeetingController
@@ -72,6 +72,16 @@ struct StartPanelView: View {
                     Section { Label("会議の実行中は、選べません。", systemImage: "lock").foregroundStyle(.secondary) }
                 }
                 CaptureChoicesView(controller: controller, apps: model.apps)
+                if controller.voiceSeparation {
+                    Section("話者の分離（声）") {
+                        Picker("話者の人数", selection: Binding(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })) {
+                            Text("自動").tag(0)
+                            ForEach(Array(VoiceSeparationTuning.speakerCountRange), id: \.self) { count in Text("\(count) 人").tag(count) }
+                        }
+                        Text("相手の人数（2〜8）が分かっているときは、指定すると、その数に分けます。声の似た人が 1 つにまとまるときに、効きます。分からなければ、自動のままにします。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 ForwardingChoicesView(controller: controller)
                 ActorChoicesView(controller: controller)
                 Section {
