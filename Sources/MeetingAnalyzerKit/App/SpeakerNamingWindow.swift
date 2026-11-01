@@ -27,7 +27,11 @@ final class SpeakerNamingWindow {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        Task { await controller.computeNamingHints() }
+        Task {
+            // 直前の会議が無ければ、音声を保存した、いちばん新しい会議を開く（SPEC §3.16「あとからの名付け」）。
+            if controller.namingSession == nil, let newest = controller.namingChoices.first { _ = await controller.openNaming(newest.id) }
+            await controller.computeNamingHints()
+        }
     }
 }
 
@@ -50,6 +54,8 @@ final class SpeakerNamingModel: ObservableObject {
     @Published var reseparateCount: Int
     /// 分け直しの確認を出しているか（確定した名前が、外れるとき）。
     @Published var confirmingReseparate = false
+    /// 会議を開けなかった理由（音声・名付けの写しが無い・読めないなど）。
+    @Published var openError: String?
 
     init(controller: MeetingController) {
         self.controller = controller
@@ -88,6 +94,18 @@ final class SpeakerNamingModel: ObservableObject {
                 warnings = [:]
                 remember = [:]
             }
+        }
+    }
+
+    /// 名付ける会議を替える（過去の会議は、名付けの写しから戻す）。入力中の名前・結果の表示は、捨てる。
+    func open(_ id: UUID) {
+        Task {
+            openError = await controller.openNaming(id)
+            drafts = [:]
+            failures = [:]
+            warnings = [:]
+            remember = [:]
+            await controller.computeNamingHints()
         }
     }
 }
@@ -131,14 +149,41 @@ struct SpeakerNamingView: View {
     // MARK: 上の部分
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 40)).foregroundStyle(.secondary)
             Text("名前を付けられる会議がありません").font(.headline)
-            Text("会議が終わったあと、次の会議を始める（またはアプリを終了する）までの間だけ、付けられます。")
+            Text("会議が終わったあと、次の会議を始める（またはアプリを終了する）までの間は、付けられます。「相手の音声を保存する」をオンにした会議は、保持期間の間、あとからも付けられます。")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if !controller.namingChoices.isEmpty { meetingBar }
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 名付ける会議の選び（直前の会議・音声を保存した過去の会議）。
+    @ViewBuilder private var meetingBar: some View {
+        let choices = controller.namingChoices
+        let current = controller.namingMeeting
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar").foregroundStyle(.secondary)
+                if choices.count > 1 || current == nil {
+                    Menu {
+                        ForEach(choices) { choice in
+                            Button { model.open(choice.id) } label: {
+                                if choice.id == current?.sessionId { Label(Self.choiceTitle(choice), systemImage: "checkmark") } else { Text(Self.choiceTitle(choice)) }
+                            }
+                        }
+                    } label: {
+                        Text(current.map { Self.meetingTitle($0) } ?? "会議を選ぶ")
+                    }
+                    .fixedSize()
+                } else if let current {
+                    Text(Self.meetingTitle(current))
+                }
+            }
+            if let error = model.openError { Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
+        }
     }
 
     private var header: some View {
@@ -153,6 +198,7 @@ struct SpeakerNamingView: View {
                         .font(.callout).foregroundStyle(done == total ? Color.green : Color.secondary)
                 }
             }
+            meetingBar
             Text("声で分けた話者ごとに、発言を確かめて、名前を付けます。**「確定」を押した話者だけ**が、記録に反映されます。確定した名前は、変えられません。")
                 .font(.callout).foregroundStyle(.secondary)
         }
@@ -339,6 +385,19 @@ struct SpeakerNamingView: View {
         if let failure = model.failures[speaker.id] {
             Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
         }
+    }
+
+    /// 会議の表示：「題名　11/1 17:34」。
+    static func meetingTitle(_ meeting: NamingMeeting) -> String {
+        "\(meeting.title)　\(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    /// 選びの 1 行：「題名　日時（直前）・話者 3 人（確定 1）」。
+    static func choiceTitle(_ choice: MeetingController.NamingChoice) -> String {
+        var text = meetingTitle(choice.meeting)
+        if choice.isPrevious { text += "（直前）" }
+        if let speakers = choice.speakers, let named = choice.named { text += "・話者 \(speakers) 人（確定 \(named)）" }
+        return text
     }
 
     /// 「12 分 3 秒」（1 分未満は「45 秒」）。

@@ -117,18 +117,21 @@ public struct LiveSessionScreen: Sendable {
 
 /// 声による話者の分離（SPEC §3.14）。選んだときだけ渡す。実行中は、システム音声を `recorder` にメモリ上だけで持ち、終了の処理で、`separator` で分けて、捨てる。
 /// `library`（声紋を使うときだけ）：保存した声紋（会議の開始のときに読んだ写し）。終了の処理で、分けた話者と照合して、自動の条件を満たす人に名前を付ける（SPEC §3.15）。
-/// `audioStore`（「相手の音声を保存する」を選んだときだけ）：捨てる代わりに、相手の音声を保存する（SPEC §3.16）。
+/// `audioStore`（「相手の音声を保存する」を選んだときだけ）：捨てる代わりに、相手の音声を保存する（SPEC §3.16）。保存できたら、あとから名付けるための写し（`speakers.json`）も書く。
+/// `modelRevision`：分離モデルの版（写しに残す。声の特徴は、同じ版でだけ使う）。
 public struct LiveSessionVoice: Sendable {
     public var recorder: VoiceAudioRecorder
     public var separator: any VoiceSeparating
     public var library: VoiceprintLibrary?
     public var audioStore: SavedAudioStore?
+    public var modelRevision: String?
 
-    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating, library: VoiceprintLibrary? = nil, audioStore: SavedAudioStore? = nil) {
+    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating, library: VoiceprintLibrary? = nil, audioStore: SavedAudioStore? = nil, modelRevision: String? = nil) {
         self.recorder = recorder
         self.separator = separator
         self.library = library
         self.audioStore = audioStore
+        self.modelRevision = modelRevision
     }
 }
 
@@ -284,27 +287,19 @@ public actor LiveSession {
     private var reseparating = false
 
     /// 保存した音声で、声の分離をやり直す（SPEC §3.16「再分離」）。会議が終わったあとだけ。**その会議の名前は、すべて外れる**（記録を書き直し、`speakers` の出来事〔`reseparated`〕を出す）。
-    /// 失敗したら、何も変えない（記録・名前は、そのまま）。
-    public func reseparate(audio: SavedAudioStore, separator: any VoiceSeparating, library: VoiceprintLibrary?) async -> Result<SpeakersNamed, ReseparationError> {
+    /// 失敗したら、何も変えない（記録・名前は、そのまま）。`modelRevision`：分離モデルの版（名付けの写しに残す）。
+    public func reseparate(audio: SavedAudioStore, separator: any VoiceSeparating, library: VoiceprintLibrary?, modelRevision: String? = nil) async -> Result<SpeakersNamed, ReseparationError> {
         guard !reseparating else { return .failure(.busy) }
         reseparating = true
         defer { reseparating = false }
-        let sessionId = pipeline.sessionId
-        let loaded = await Task.detached(priority: .userInitiated) { audio.load(sessionId: sessionId) }.value
-        let captured: (samples: [Float], timeline: AudioTimeline)
-        switch loaded {
-        case .failure(let error): return .failure(.audio(error))
-        case .success(let value): captured = value
-        }
-        let separation: VoiceSeparation
-        do {
-            separation = try await Task.detached(priority: .userInitiated) { try await separator.separate(captured.samples) }.value
-        } catch {
-            return .failure(.separation((error as? VoiceSeparationError)?.message ?? String(describing: error)))
-        }
-        switch pipeline.reapplyVoices(captured.timeline.sessionSegments(from: separation.segments), embeddings: separation.embeddings, library: library) {
-        case .success(let named): return .success(named)
-        case .failure(let error): return .failure(.naming(error))
+        let computed = await ReseparationInput.compute(audio: audio, sessionId: pipeline.sessionId, separator: separator)
+        switch computed {
+        case .failure(let error): return .failure(error)
+        case .success(let input):
+            switch pipeline.reapplyVoices(input.segments, embeddings: input.embeddings, library: library, modelRevision: modelRevision) {
+            case .success(let named): return .success(named)
+            case .failure(let error): return .failure(.naming(error))
+            }
         }
     }
 
@@ -363,7 +358,9 @@ public actor LiveSession {
         if let store = voice.audioStore {
             let sessionId = pipeline.sessionId
             let result = await Task.detached(priority: .utility) { store.save(samples: captured.samples, timeline: captured.timeline, sessionId: sessionId) }.value
-            if case .failure(let error) = result {
+            switch result {
+            case .success: pipeline.keepSnapshot(modelRevision: voice.modelRevision ?? "")
+            case .failure(let error):
                 pipeline.noteAudioNotSaved(error.message)
                 notify(.audioNotSaved(error.message))
             }

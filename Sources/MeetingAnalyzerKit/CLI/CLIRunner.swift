@@ -342,7 +342,9 @@ public struct CLIRunner {
             err(CLIView.failure(.transcription(reason), outStyle))
         }
         if saveAudio, let captured {
-            if case .failure(let failure) = SavedAudioStore(root: dataDirectory).save(samples: captured.samples, timeline: captured.timeline, sessionId: pipeline.sessionId) {
+            switch SavedAudioStore(root: dataDirectory).save(samples: captured.samples, timeline: captured.timeline, sessionId: pipeline.sessionId) {
+            case .success: pipeline.keepSnapshot(modelRevision: VoiceModelCatalog.all.first?.revision ?? "")
+            case .failure(let failure):
                 pipeline.noteAudioNotSaved(failure.message)
                 err(CLIView.failure(.transcription(failure.message), outStyle))
             }

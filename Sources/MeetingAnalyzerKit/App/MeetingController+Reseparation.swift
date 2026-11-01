@@ -19,16 +19,16 @@ extension MeetingController {
         return savedAudioStore.exists(sessionId: session.sessionId)
     }
 
-    /// 分け直せるか：音声が保存されていて、分離のモデルが取得済みで、分け直している最中でないとき。
+    /// 分け直せるか：待機中で、音声が保存されていて、分離のモデルが取得済みで、分け直している最中でないとき。
     var canReseparate: Bool {
-        guard namingAudioAvailable, reseparation != .running, let model = voiceModel else { return false }
+        guard state == .idle, namingAudioAvailable, reseparation != .running, let model = voiceModel else { return false }
         return modelStore.isInstalled(model)
     }
 
     /// 保存した音声で、声の分離をやり直す。`count`：話者の人数（`nil`＝自動。2〜8）。
     /// 成功すると、その会議の名前は、すべて外れ（記録を書き直し、`speakers` の出来事〔`reseparated`〕を出す）、声紋の照合から、やり直す。失敗したら、何も変えない。
     func reseparateSpeakers(count: Int?) async {
-        guard let session = namingSession, reseparation != .running else { return }
+        guard state == .idle, let session = namingSession, let meeting = namingMeeting, reseparation != .running else { return }
         if let count, !VoiceSeparationTuning.speakerCountRange.contains(count) { return }
         guard let model = voiceModel, modelStore.isInstalled(model) else {
             reseparation = .failed("話者の分離のモデルが、取得されていません")
@@ -40,21 +40,13 @@ extension MeetingController {
         changed()
         let loaded = voiceprintLibrary(for: model)
         let separator = voiceSeparatorFactory(model, modelStore, voiceTuning(speakerCount: count))
-        let result = await session.reseparate(audio: savedAudioStore, separator: separator, library: loaded.library)
-        // 分け直している間に、次の会議が始まった（名付けの対象が替わった）ら、捨てる。
+        let result = await session.reseparate(audio: savedAudioStore, separator: separator, library: loaded.library, modelRevision: model.revision)
+        // 分け直している間に、次の会議が始まった・別の会議へ替えた（名付けの対象が替わった）ら、捨てる。
         guard namingSession === session else { return }
         switch result {
         case .success:
-            let summaries = await session.speakerSummaries()
-            let matched = await session.speakerNames()
-            namingSpeakers = summaries
-            namedSpeakers = matched
-            voiceMatched = Set(matched.keys)
-            namingCandidates = await session.speakerCandidates()
-            namingHints = [:]
-            hintState = .notRequested
-            touchVoiceprints(Set(matched.values))
-            reseparation = .done(summaries.count)
+            await adoptNaming(session, meeting: meeting)
+            reseparation = .done(namingSpeakers.count)
             if let notice = loaded.notice { self.notice = notice }
         case .failure(let error):
             reseparation = .failed(error.message)
