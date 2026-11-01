@@ -6,6 +6,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let controller: MeetingController
     private lazy var settings = SettingsWindow(controller: controller)
+    private lazy var startPanel = StartPanelWindow(controller: controller)
     private lazy var naming = SpeakerNamingWindow(controller: controller)
 
     init(controller: MeetingController) {
@@ -16,6 +17,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         controller.observe { [weak self] in self?.refreshIcon() }
+        controller.onNamingAvailable = { [weak self] in self?.naming.show() }
         refreshIcon()
     }
 
@@ -60,6 +62,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let start = action("開始", #selector(start))
             start.isEnabled = !controller.selection.isEmpty
             menu.addItem(start)
+            // 取り込み・転送の選択（まとめ方・分析のプリセット）を、その場で確かめて、開始する。「開始」は、いまの設定で、すぐ始める。
+            menu.addItem(action("設定して開始…", #selector(openStartPanel)))
             // 直前の会議に、名前を付けていない話者がいる・分け直せるとき、または、音声を保存した過去の会議があるとき（SPEC §3.15・§3.16）。
             if controller.canOpenNaming { menu.addItem(action("話者の名付け…", #selector(openNaming))) }
         case .running:
@@ -204,6 +208,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     // MARK: 会議の操作
 
     @objc private func start() { controller.start() }
+    @objc private func openStartPanel() { startPanel.show() }
     @objc private func pause() { controller.pause() }
     @objc private func resume() { controller.resume() }
     @objc private func endMeeting() { controller.endFromMenu() }

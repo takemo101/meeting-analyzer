@@ -447,10 +447,17 @@ final class MeetingController {
         }
     }
 
+    /// 会議の終了を、メニューから頼まれたとき。終えたあと、話者を声で分けられて、名付け・分け直しができれば、名付けの画面を出す（`onNamingAvailable`。SPEC §3.15）。
     func endFromMenu() {
         guard state == .running || state == .paused else { return }
-        Task { await end(reason: .user) }
+        Task {
+            await end(reason: .user)
+            if canNameSpeakers { onNamingAvailable?() }
+        }
     }
+
+    /// 終了のあと、名付けの画面を出す部品（メニューバーの項目が、画面を持つので、そこから渡される）。
+    var onNamingAvailable: (() -> Void)?
 
     /// 会議を終える。記録を書き、エージェントへ終了の出来事を出す。
     func end(reason: EndReason) async {

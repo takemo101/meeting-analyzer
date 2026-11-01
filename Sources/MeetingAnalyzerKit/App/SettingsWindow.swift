@@ -124,32 +124,8 @@ struct SettingsView: View {
     // MARK: ページ
 
     @ViewBuilder private var captureSections: some View {
-        Section("取り込む音声") {
-            Toggle("マイク（本人）", isOn: Binding(get: { controller.selection.microphone }, set: { controller.setMicrophone($0) }))
-            Picker("システム音声（相手）", selection: Binding(get: { controller.selection.system }, set: { controller.setSystem($0) })) {
-                Text("オフ").tag(SystemSource.off)
-                Text("全体（Mac から出ている音すべて）").tag(SystemSource.all)
-                Divider()
-                ForEach(appChoices(current: controller.selection.system), id: \.bundleID) { app in
-                    Text(app.title).tag(SystemSource.app(bundleID: app.bundleID, name: app.name))
-                }
-            }
-        }
-        .disabled(locked)
-
-        Section("画面") {
-            Picker("画面の取り込み", selection: Binding(get: { controller.screen }, set: { controller.setScreen($0) })) {
-                Text("オフ").tag(ScreenSelection.off)
-                Text("画面全体（メインの画面）").tag(ScreenSelection.display)
-                Divider()
-                ForEach(appChoices(current: screenApp(controller.screen)), id: \.bundleID) { app in
-                    Text(app.title).tag(ScreenSelection.app(bundleID: app.bundleID, name: app.name))
-                }
-            }
-            Text("オフ以外では、画面に変化があったときだけ、縮小した画像を字幕に添えて渡し、記録にも入れます（画面収録の許可が要ります）。")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .disabled(locked)
+        CaptureChoicesView(controller: controller, apps: model.apps)
+            .disabled(locked)
     }
 
     @ViewBuilder private var transcriptionSections: some View {
@@ -342,18 +318,8 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var forwardingSections: some View {
-        Section("エージェントへの転送") {
-            Picker("転送のまとめ方", selection: Binding(get: { controller.batchMode }, set: { controller.setBatchMode($0) })) {
-                ForEach(BatchMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
-            }
-            Picker("分析のプリセット", selection: Binding(get: { currentPresetID }, set: { controller.setPreset($0) })) {
-                ForEach(controller.presets(), id: \.id) { preset in
-                    Text(preset.name + (preset.source == .user ? "（自分）" : "")).tag(preset.id)
-                }
-            }
-            Button("プリセットのフォルダを開く（自分のものを足す）") { controller.openPresetFolder() }
-        }
-        .disabled(locked)
+        ForwardingChoicesView(controller: controller, showsFolderButton: true)
+            .disabled(locked)
 
         Section("エージェントに頼む（リモートの skill）") {
             RemoteSkillRow(settings: model, skill: .presets)
@@ -381,22 +347,6 @@ struct SettingsView: View {
             Text("\(count) 人を読み込みました" + (hasSelf ? "" : "（「本人: はい」の人がいないので、マイクの発話は「本人」のままです）")).font(.caption).foregroundStyle(.secondary)
             ForEach(warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
         }
-    }
-
-    private var currentPresetID: String { controller.presetStore.resolve(id: controller.presetID)?.id ?? AnalysisPreset.defaultID }
-
-    private func screenApp(_ selection: ScreenSelection) -> SystemSource {
-        if case .app(let id, let name) = selection { return .app(bundleID: id, name: name) }
-        return .off
-    }
-
-    /// 起動中のアプリの選択肢。いま選んでいるアプリが、起動していなければ、「起動していません」として加える（選択を失わない）。
-    private func appChoices(current: SystemSource) -> [AppChoice] {
-        var choices = model.apps.map { AppChoice(bundleID: $0.bundleID, name: $0.name, title: $0.name) }
-        if case .app(let id, let name) = current, !choices.contains(where: { $0.bundleID == id }) {
-            choices.insert(AppChoice(bundleID: id, name: name, title: "\(name)（起動していません）"), at: 0)
-        }
-        return choices
     }
 }
 
@@ -450,12 +400,6 @@ private struct SidebarBadge: View {
             .frame(width: 26, height: 26)
             .background(RoundedRectangle(cornerRadius: 6.5, style: .continuous).fill(color.gradient))
     }
-}
-
-private struct AppChoice {
-    let bundleID: String
-    let name: String
-    let title: String
 }
 
 /// 追加でダウンロードするモデル 1 つの、表示と操作（文字起こしのモデルも、名前のヒントのモデルも、同じ行で扱う）。
