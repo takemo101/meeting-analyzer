@@ -55,6 +55,14 @@ public struct Transcript: Sendable, Equatable {
         }
     }
 
+    /// 話者 N の発話の本文（確定した「相手」の発話。長いものから最大 `limit` 件。同じ長さなら、早いほう）。名前のヒントの計算に使う。
+    public func speakerTexts(of voice: Int, limit: Int) -> [String] {
+        let list = ordered.filter { $0.speaker == .others && $0.isFinal && $0.voice == voice }
+        return list.enumerated().sorted { lhs, rhs in
+            lhs.element.text.count != rhs.element.text.count ? lhs.element.text.count > rhs.element.text.count : lhs.offset < rhs.offset
+        }.prefix(limit).map(\.element.text)
+    }
+
     /// 撮った画面の画像を、記録へ加える（`path`：`transcript.md` のあるフォルダからの相対パス）。
     public mutating func recordScreenshot(at offset: TimeInterval, path: String) {
         shots.append(Shot(offset: offset, path: path))

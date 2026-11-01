@@ -150,6 +150,9 @@ public final class SessionPipeline: @unchecked Sendable {
     /// 確定した名前（話者 N → 名前。声紋で自動に付いたものを含む）。
     public func speakerNames() -> [Int: String] { transcript.voiceNames }
 
+    /// 話者 N の発話の本文（名前のヒントの計算用。長いものから最大 `SpeakerHintMaker.maxTexts` 件）。
+    public func speakerTexts(of id: Int) -> [String] { transcript.speakerTexts(of: id, limit: SpeakerHintMaker.maxTexts) }
+
     /// 声の分離に失敗したことを、記録に書く（話者 ID は付かない）。
     public func noteVoiceFailure(_ reason: String) {
         guard !finished else { return }

@@ -73,6 +73,19 @@ final class MeetingController {
     /// 声紋の候補（話者 N → 候補。自動で名前が付かなかった話者だけ）と、声紋の一致で名前が付いた話者。
     var namingCandidates: [Int: [VoiceprintCandidate]] = [:]
     var voiceMatched: Set<Int> = []
+    /// 名前のヒント（話者 N → ヒント。確定ではない）。判断モデルを選んでいるときだけ、名付けの画面を開いたときに、画面の中で計算する（会議の最中は、計算しない。SPEC §3.13）。
+    var namingHints: [Int: [SpeakerHint]] = [:]
+    enum HintState: Equatable {
+        case notRequested, computing, ready
+        case failed(String)
+    }
+    var hintState: HintState = .notRequested
+    /// 判断モデルを読み込む部品（重い。別のスレッドで呼ぶ）。試験は、偽物へ差し替える。
+    var hintJudgeFactory: @Sendable (DecisionModel, ModelStore, [Actor]) throws -> any SpeakerJudge = { model, store, candidates in
+        let judge = try SystemOneJudge(model: model, store: store, candidates: candidates)
+        try judge.prepare()
+        return judge
+    }
     private let environment: [String: String]
     /// このアプリのデータの置き場所（記録・画像・モデル・自分のプリセット）。起動のときに、1 度だけ求める。
     private let dataDirectory: URL

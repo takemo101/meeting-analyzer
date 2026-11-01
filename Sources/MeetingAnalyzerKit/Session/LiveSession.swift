@@ -249,6 +249,9 @@ public actor LiveSession {
     /// 確定した名前（話者 N → 名前。声紋で自動に付いたものを含む）。
     public func speakerNames() -> [Int: String] { pipeline.speakerNames() }
 
+    /// 話者 N の発話の本文（名前のヒントの計算用。長いものから最大 `SpeakerHintMaker.maxTexts` 件）。
+    public func speakerTexts(of id: Int) -> [String] { pipeline.speakerTexts(of: id) }
+
     /// 声紋の候補（話者 N → 候補。類似度の高い順。自動で付かなかった話者だけ）。
     public func speakerCandidates() -> [Int: [VoiceprintCandidate]] { pipeline.speakerCandidates() }
 

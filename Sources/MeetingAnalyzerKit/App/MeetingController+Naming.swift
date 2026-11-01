@@ -36,6 +36,41 @@ extension MeetingController {
         }
     }
 
+    /// 名付けの画面を開いたとき、名前のヒントを計算する（SPEC §3.13）：**判断モデルを選んでいて、ACTOR.md を読めて、相手の側の人がいるときだけ**。
+    /// 名前の無い話者ごとに、長い発話を最大 20 件、判断モデルへ問い、確率の平均の上位 3 人を、ヒントにする（**名前は決めない**）。計算は、画面を止めない別のスレッドで行い、終わったらモデルを解放する。
+    /// 1 回の名付けにつき 1 回だけ（開き直しても、計算し直さない）。失敗は、理由を画面に出す（名付けは、できる）。
+    func computeNamingHints() async {
+        guard let session = namingSession, hintState == .notRequested, let model = decisionModel, let file = actorFile else { return }
+        guard case .success(let list) = ActorFile.load(path: file), !list.others.isEmpty else { return }
+        hintState = .computing
+        changed()
+        var texts: [Int: [String]] = [:]
+        for speaker in namingSpeakers where namedSpeakers[speaker.id] == nil { texts[speaker.id] = await session.speakerTexts(of: speaker.id) }
+        let attendance = actorSelection.attendance, store = modelStore, factory = hintJudgeFactory
+        let collected = texts
+        let result: Result<[Int: [SpeakerHint]], Error> = await Task.detached(priority: .userInitiated) {
+            do {
+                let judge = try factory(model, store, list.others)
+                let maker = SpeakerHintMaker(list: list, judge: judge, attendance: attendance)
+                var hints: [Int: [SpeakerHint]] = [:]
+                for (id, list) in collected.sorted(by: { $0.key < $1.key }) { hints[id] = try await maker.hints(for: list) }
+                return .success(hints)
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        // 計算の間に、次の会議が始まった（名付けの対象が替わった）ら、捨てる。
+        guard namingSession === session else { return }
+        switch result {
+        case .success(let hints):
+            namingHints = hints
+            hintState = .ready
+        case .failure(let error):
+            hintState = .failed("名前のヒントを出せません" + ((error as? DecisionModelError).map { "（\($0.message)）" } ?? ""))
+        }
+        changed()
+    }
+
     /// 次の会議の開始のとき、名付けの対象を手放す（話者 N のままの人は、そのまま）。
     func clearNaming() {
         guard namingSession != nil || !namingSpeakers.isEmpty else { return }
@@ -44,6 +79,8 @@ extension MeetingController {
         namedSpeakers = [:]
         namingCandidates = [:]
         voiceMatched = []
+        namingHints = [:]
+        hintState = .notRequested
         changed()
     }
 }
