@@ -17,7 +17,7 @@ public struct VoiceSegment: Sendable, Equatable {
 public enum VoiceAssignment {
     /// 発話の区間（時刻順）ごとに、**最も長く重なる**話者へ付ける。重なりが無い発話は `nil`。
     /// ID は、**発話の出現の順に 1 から**（同じ話者は、同じ ID）。重なりが同じ長さなら、区間の開始が早い話者（それも同じなら名前の順）。
-    public static func assign(spans: [(start: TimeInterval, end: TimeInterval)], segments: [VoiceSegment]) -> (ids: [Int?], count: Int) {
+    public static func assign(spans: [(start: TimeInterval, end: TimeInterval)], segments: [VoiceSegment]) -> (ids: [Int?], count: Int, speakers: [String]) {
         var order: [String: Int] = [:]
         var ids: [Int?] = []
         for span in spans {
@@ -37,7 +37,7 @@ public enum VoiceAssignment {
             if order[speaker] == nil { order[speaker] = order.count + 1 }
             ids.append(order[speaker])
         }
-        return (ids, order.count)
+        return (ids, order.count, order.sorted { $0.value < $1.value }.map(\.key))
     }
 }
 

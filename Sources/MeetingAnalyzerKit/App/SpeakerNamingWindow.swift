@@ -36,6 +36,10 @@ final class SpeakerNamingModel: ObservableObject {
     @Published var drafts: [Int: String] = [:]
     /// 話者 N → 確定に失敗した理由。
     @Published private(set) var failures: [Int: String] = [:]
+    /// 話者 N → 確定はしたが、声を覚えられなかった理由。
+    @Published private(set) var warnings: [Int: String] = [:]
+    /// 話者 N → 「この声を覚える」（既定はオン。声紋を使うときだけ見せる）。
+    @Published var remember: [Int: Bool] = [:]
     /// 確定の処理中の話者。
     @Published private(set) var working: Set<Int> = []
 
@@ -49,11 +53,13 @@ final class SpeakerNamingModel: ObservableObject {
         working.insert(id)
         failures[id] = nil
         let name = drafts[id] ?? ""
+        let remember = self.remember[id] ?? true
         Task {
-            let failure = await controller.confirmSpeakerName(id, name: name)
+            let outcome = await controller.confirmSpeakerName(id, name: name, remember: remember)
             working.remove(id)
-            failures[id] = failure
-            if failure == nil { drafts[id] = nil }
+            failures[id] = outcome.failure
+            warnings[id] = outcome.warning
+            if outcome.failure == nil { drafts[id] = nil }
         }
     }
 }
@@ -97,8 +103,23 @@ struct SpeakerNamingView: View {
                 Text("「\(excerpt)」").font(.callout).foregroundStyle(.secondary)
             }
             if let name = controller.namedSpeakers[speaker.id] {
-                Label("確定: \(name)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                if controller.voiceMatched.contains(speaker.id) {
+                    Label("声紋で一致: \(name)", systemImage: "waveform.badge.checkmark").foregroundStyle(.green)
+                } else {
+                    Label("確定: \(name)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                if let warning = model.warnings[speaker.id] {
+                    Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                }
             } else {
+                if let candidates = controller.namingCandidates[speaker.id], !candidates.isEmpty {
+                    HStack {
+                        Text("声紋の候補:").font(.callout).foregroundStyle(.secondary)
+                        ForEach(candidates, id: \.name) { candidate in
+                            Button("\(candidate.name)（類似度 \(String(format: "%.2f", candidate.similarity))）") { model.drafts[speaker.id] = candidate.name }
+                        }
+                    }
+                }
                 HStack {
                     TextField("名前", text: Binding(get: { model.drafts[speaker.id] ?? "" }, set: { model.drafts[speaker.id] = $0 }))
                         .onSubmit { model.confirm(speaker.id) }
@@ -112,6 +133,10 @@ struct SpeakerNamingView: View {
                     }
                     Button("確定") { model.confirm(speaker.id) }
                         .disabled(model.working.contains(speaker.id) || (model.drafts[speaker.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if controller.voiceprintsEnabled {
+                    Toggle("この声を覚える（次の会議から、同じ声の人に、この名前を付ける）", isOn: Binding(get: { model.remember[speaker.id] ?? true }, set: { model.remember[speaker.id] = $0 }))
+                        .font(.callout)
                 }
                 if let failure = model.failures[speaker.id] {
                     Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)

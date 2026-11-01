@@ -23,6 +23,9 @@ public final class SessionPipeline: @unchecked Sendable {
     private var lastCheckpoint: TimeInterval?
     /// 前に書いたあとに、記録が変わったか。
     private var dirty = false
+    /// 話者 ID ごとの、声の特徴と、声紋の候補（メモリ上だけ。SPEC §3.15）。
+    private var voiceEmbeddings: [Int: [Float]] = [:]
+    private var voiceCandidates: [Int: [VoiceprintCandidate]] = [:]
     /// 終了の時刻と、終了のときに書いた記録のパス（名付けで、記録を書き直すために覚える）。
     private var endedAt: Date?
     private var finalTranscriptPath: String?
@@ -103,17 +106,49 @@ public final class SessionPipeline: @unchecked Sendable {
 
     /// 声の分離の結果（会議の時刻に直した区間。SPEC §3.14）を、確定した「相手」の発話へ当てて、話者 ID を付ける。付けた話者の数を返す。
     /// 終了の手順の中（`finish` の前）で、1 回だけ呼ぶ。字幕（すでに送った出来事）は、変えない。記録（`transcript.md`）に反映される。
+    /// `embeddings`：分離器の話者の名前ごとの、声の特徴。話者 ID ごとに、メモリ上に持つ（声紋の照合と、名付けのときの「覚える」のため。ファイルへは書かない）。
     @discardableResult
-    public func applyVoices(_ segments: [VoiceSegment]) -> Int {
+    public func applyVoices(_ segments: [VoiceSegment], embeddings: [String: [Float]] = [:]) -> Int {
         guard !finished else { return 0 }
         let targets = transcript.ordered.filter { $0.speaker == .others && $0.isFinal && ($0.endedAt ?? $0.startedAt) > $0.startedAt }
         let result = VoiceAssignment.assign(spans: targets.map { ($0.startedAt, $0.endedAt ?? $0.startedAt) }, segments: segments)
         for (utterance, id) in zip(targets, result.ids) { transcript.assignVoice(id, forKey: utterance.key) }
         transcript.voiceSpeakers = result.count
         transcript.voiceFailure = nil
+        voiceEmbeddings = [:]
+        for (index, speaker) in result.speakers.enumerated() { if let embedding = embeddings[speaker] { voiceEmbeddings[index + 1] = embedding } }
         dirty = true
         return result.count
     }
+
+    /// 声紋の照合（SPEC §3.15）：話者ごとの声の特徴を、保存した声紋と比べ、**自動の条件を満たす話者に、名前を付ける**（記録は「相手（名前）」）。
+    /// 0.45 以上で、自動でない話者は、候補として覚える（名付けの画面で見せる）。名前を付けた話者 ID と名前を返す。`applyVoices` のあと・`finish` の前に呼ぶ。
+    @discardableResult
+    public func matchVoiceprints(_ library: VoiceprintLibrary) -> [Int: String] {
+        guard !finished else { return [:] }
+        var applied: [Int: String] = [:]
+        voiceCandidates = [:]
+        for (id, embedding) in voiceEmbeddings.sorted(by: { $0.key < $1.key }) {
+            let match = library.match(embedding)
+            if let automatic = match.automatic {
+                transcript.voiceNames[id] = automatic.name
+                applied[id] = automatic.name
+            } else if !match.candidates.isEmpty {
+                voiceCandidates[id] = match.candidates
+            }
+        }
+        if !applied.isEmpty { dirty = true }
+        return applied
+    }
+
+    /// 話者 N の声の特徴（「この声を覚える」のため）。分離器が返さなかった話者は `nil`。
+    public func voiceEmbedding(of id: Int) -> [Float]? { voiceEmbeddings[id] }
+
+    /// 声紋の候補（話者 N → 候補。類似度の高い順）。
+    public func speakerCandidates() -> [Int: [VoiceprintCandidate]] { voiceCandidates }
+
+    /// 確定した名前（話者 N → 名前。声紋で自動に付いたものを含む）。
+    public func speakerNames() -> [Int: String] { transcript.voiceNames }
 
     /// 声の分離に失敗したことを、記録に書く（話者 ID は付かない）。
     public func noteVoiceFailure(_ reason: String) {
