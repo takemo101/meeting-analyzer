@@ -37,6 +37,10 @@ final class MeetingController {
     private let operations = OperationGate()
     /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
     var decisionModel: DecisionModel? { preferences.decisionModel.flatMap(DecisionModelCatalog.model(id:)) }
+    /// 声による話者の分離（SPEC §3.14）。オンで、モデルが取得済みのときだけ、会議で使う。
+    var voiceSeparation: Bool { preferences.voiceSeparation }
+    /// 声の分離のモデル（いまは 1 つ）。
+    var voiceModel: VoiceModel? { VoiceModelCatalog.all.first }
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -75,6 +79,7 @@ final class MeetingController {
         // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準／「推定しない」に戻す（黙って別のものを使わないよう、設定を直す）。
         if case .local(let id) = saved.transcription, !(LocalModelCatalog.model(id: id).map { modelStore.isInstalled($0.artifact) } ?? false) { saved.transcription = .apple }
         if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
+        if saved.voiceSeparation, !(VoiceModelCatalog.all.first.map { modelStore.isInstalled($0) } ?? false) { saved.voiceSeparation = false }
         preferences = saved
         retentionDays = RecordRetentionSetting.load(defaults)
         actorSelection.restore(from: saved)
@@ -257,6 +262,35 @@ final class MeetingController {
         changed()
     }
 
+    // MARK: 話者の分離のモデル（声。SPEC §3.14）
+
+    func isInstalled(_ model: VoiceModel) -> Bool { modelStore.isInstalled(model) }
+
+    /// 声による話者の分離を、オン・オフする。オンにできるのは、モデルが取得済みのときだけ。会議の実行中は、変えられない。
+    func setVoiceSeparation(_ enabled: Bool) {
+        if enabled { guard let model = voiceModel, isInstalled(model) else { return } }
+        mutateWhenIdle { $0.voiceSeparation = enabled }
+    }
+
+    /// 声の分離のモデルを、ダウンロードする（利用者が押したときだけ。小さいファイルから。途中のファイルがあれば、続きから）。取得できたら、オンにする。
+    func downloadVoiceModel(_ model: VoiceModel) {
+        downloads.start(id: model.id, plan: ModelInstallPlan(model), received: modelStore.downloadedBytes(model)) { [self] in
+            if state == .idle { setVoiceSeparation(true) }
+            notice = "「\(model.name)」を取得しました"
+        }
+    }
+
+    /// 取得した声の分離のモデルを、削除する。オンなら、オフに戻す（会議の実行中は、使っているモデルを消せない）。
+    func deleteVoiceModel(_ model: VoiceModel) {
+        if voiceSeparation {
+            guard state == .idle else { return }
+            preferences.voiceSeparation = false
+            persist()
+        }
+        modelStore.delete(model)
+        changed()
+    }
+
     // MARK: アクター（ACTOR.md。SPEC §3.13）
 
     /// 設定ウィンドウに見せる、選んだ `ACTOR.md` の状態。
@@ -346,10 +380,18 @@ final class MeetingController {
         }
         let setup = await actorSelection.prepare(file: actorFile, usesSystemAudio: selection.system != .off, model: decisionModel, store: modelStore)
         let dataDirectory = dataDirectory
+        // 声による話者の分離（SPEC §3.14）：オンで、モデルが取得済みで、システム音声を取り込むときだけ。音は、メモリ上だけに持つ。
+        var recorder: VoiceAudioRecorder?
+        var voice: LiveSessionVoice?
+        if voiceSeparation, selection.system != .off, let model = voiceModel, modelStore.isInstalled(model) {
+            let held = VoiceAudioRecorder()
+            recorder = held
+            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore))
+        }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),
             speakers: selection.speakers,
-            inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale), transcription: transcription, models: modelStore),
+            inputs: .device(system: selection.system, locale: Locale(identifier: CommandParser.defaultLocale), transcription: transcription, models: modelStore, recorder: recorder),
             sink: hub,
             store: SessionStore(root: dataDirectory),
             options: LiveSessionOptions(
@@ -357,7 +399,8 @@ final class MeetingController {
                 preset: presetStore.resolve(id: presetID)?.info,
                 actors: setup.actors,
                 labeler: setup.labeler,
-                screen: screenSelection == .off ? nil : LiveSessionScreen(feed: ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() }, store: ScreenshotStore(root: dataDirectory))
+                screen: screenSelection == .off ? nil : LiveSessionScreen(feed: ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() }, store: ScreenshotStore(root: dataDirectory)),
+                voice: voice
             ),
             notify: notify
         )

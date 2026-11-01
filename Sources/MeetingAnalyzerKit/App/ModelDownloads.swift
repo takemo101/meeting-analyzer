@@ -70,6 +70,12 @@ final class ModelDownloads {
         didDiscard(model.id)
     }
 
+    func discardPartial(_ model: VoiceModel) {
+        guard current?.id != model.id, !store.isInstalled(model) else { return }
+        store.discardPartial(model)
+        didDiscard(model.id)
+    }
+
     private func didDiscard(_ id: String) {
         if failure?.id == id { failure = nil }
         onChange()
