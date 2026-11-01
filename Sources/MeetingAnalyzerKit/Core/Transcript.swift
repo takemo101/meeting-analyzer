@@ -20,6 +20,8 @@ public struct Transcript: Sendable, Equatable {
     public var voiceUnassigned: Int?
     /// 声の分離に失敗したときの理由（記録に書く。分けたときは `nil`）。
     public var voiceFailure: String?
+    /// 相手の音声の保存に失敗したときの理由（SPEC §3.16。記録に書く。保存したとき・保存を選ばなかったときは `nil`）。
+    public var audioNote: String?
     /// 人間が確定した、話者 N の名前（SPEC §3.15）。記録の「相手（話者 N）」を「相手（名前）」にする。
     public var voiceNames: [Int: String] = [:]
 
@@ -116,6 +118,7 @@ public struct Transcript: Sendable, Equatable {
         } else if let voiceFailure {
             header.append("- 話者（声）: 分けられませんでした（\(voiceFailure)）")
         }
+        if let audioNote { header.append("- 相手の音声: 保存できませんでした（\(audioNote)）") }
         var speakerNote = voiceSpeakers == nil ? "相手が複数人でも「相手」としか区別できません。" : ""
         if voiceSpeakers != nil {
             speakerNote += "「相手（話者 N）」は、声の違いから分けた、同じ声のまとまりです（人物の特定ではありません。1 人が複数の番号に分かれたり、複数人が 1 つの番号に入ったりし得ます）。"

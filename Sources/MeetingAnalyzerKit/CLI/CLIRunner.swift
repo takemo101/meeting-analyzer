@@ -309,7 +309,7 @@ public struct CLIRunner {
         let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
         let lastEnd = try await play(file, options, selfName: options.speaker == .you ? actorSource?.selfName : nil, into: pipeline)
-        if let separator { await separateVoices(file, with: separator, into: pipeline) }
+        if let separator { await separateVoices(file, with: separator, saveAudio: options.saveAudio, into: pipeline) }
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
         let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
         printReplaySummary(end)
@@ -317,7 +317,9 @@ public struct CLIRunner {
     }
 
     /// 再生した音声の全体を、声の違いで分けて、「相手」の発話に話者 ID を付ける（SPEC §3.14）。失敗しても、再生は終える（ID なしで、記録に理由を書く）。
-    private func separateVoices(_ file: URL, with separator: FluidVoiceSeparator, into pipeline: SessionPipeline) async {
+    /// `saveAudio`（`--save-audio`）：分けたあと（失敗したときも）、音声を、記録と同じフォルダに保存する（SPEC §3.16）。
+    private func separateVoices(_ file: URL, with separator: FluidVoiceSeparator, saveAudio: Bool, into pipeline: SessionPipeline) async {
+        var captured: (samples: [Float], timeline: AudioTimeline)?
         do {
             let recorder = VoiceAudioRecorder()
             recorder.begin()
@@ -330,13 +332,20 @@ public struct CLIRunner {
                 if buffer.frameLength == 0 { break }
                 recorder.append(buffer)
             }
-            guard let captured = recorder.snapshot() else { return }
+            captured = recorder.snapshot()
+            guard let captured else { return }
             let separation = try await separator.separate(captured.samples)
             pipeline.applyVoices(captured.timeline.sessionSegments(from: separation.segments), embeddings: separation.embeddings)
         } catch {
             let reason = (error as? VoiceSeparationError)?.message ?? "\(error)"
             pipeline.noteVoiceFailure(reason)
             err(CLIView.failure(.transcription(reason), outStyle))
+        }
+        if saveAudio, let captured {
+            if case .failure(let failure) = SavedAudioStore(root: dataDirectory).save(samples: captured.samples, timeline: captured.timeline, sessionId: pipeline.sessionId) {
+                pipeline.noteAudioNotSaved(failure.message)
+                err(CLIView.failure(.transcription(failure.message), outStyle))
+            }
         }
     }
 
