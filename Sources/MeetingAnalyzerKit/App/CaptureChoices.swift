@@ -7,7 +7,7 @@ struct AppChoice {
     let title: String
 }
 
-/// 取り込み・転送の選択の、共通の部品（設定ウィンドウと、「設定して開始…」の画面が、同じものを使う）。
+/// 取り込み・転送の選択の、共通の部品（設定ウィンドウと、開始の前の設定の画面が、同じものを使う）。
 enum CaptureChoices {
     /// 起動中のアプリの選択肢。いま選んでいるアプリが、起動していなければ、「起動していません」として加える（選択を失わない）。
     static func appChoices(apps: [CaptureApp], current: SystemSource) -> [AppChoice] {
@@ -80,7 +80,7 @@ struct ForwardingChoicesView: View {
     }
 }
 
-/// アクター定義（ACTOR.md）の選択と、今日の出席者（「設定して開始」の画面で使う。設定ウィンドウは、同じ操作を、自分のページに持つ）。
+/// アクター定義（ACTOR.md）の選択と、今日の出席者（開始の前の設定の画面で使う。設定ウィンドウは、同じ操作を、自分のページに持つ）。
 struct ActorChoicesView: View {
     let controller: MeetingController
 
