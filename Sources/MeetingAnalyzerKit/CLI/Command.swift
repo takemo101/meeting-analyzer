@@ -56,6 +56,8 @@ public struct ReplayOptions: Equatable {
     public var separate: Bool = false
     /// 話者の人数（SPEC §3.14。`--separate` と一緒に。2〜8）。無指定は、自動。
     public var speakers: Int?
+    /// 相手の音声の保存（SPEC §3.16。`--separate` と一緒に）。再生した音声を、記録と同じフォルダに保存する。
+    public var saveAudio: Bool = false
 }
 
 /// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）の、名前のヒントを見せる（診断。SPEC §3.13）。
@@ -110,10 +112,10 @@ public enum CommandParser {
         static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
         static let cases = "--cases"
-        static let separate = "--separate", speakers = "--speakers"
+        static let separate = "--separate", speakers = "--speakers", saveAudio = "--save-audio"
         /// 値を取らないオプション。
-        static let flags: Set = [separate]
-        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, separate, speakers]
+        static let flags: Set = [separate, saveAudio]
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, separate, speakers, saveAudio]
         static let actorsTry: Set = [judge, attendees, cases]
     }
 
@@ -162,6 +164,7 @@ public enum CommandParser {
         guard let speaker = Speaker(rawValue: values[Option.speaker] ?? "others") else { return .failure(.usage("--speaker は you か others です")) }
         return model(values[Option.model]).flatMap { chosen in
             if values[Option.separate] != nil, speaker != .others { return .failure(.usage("--separate は、--speaker others（相手）のときだけ使えます")) }
+            if values[Option.saveAudio] != nil, values[Option.separate] == nil { return .failure(.usage("--save-audio は、--separate と一緒に使います")) }
             var speakerCount: Int?
             if let text = values[Option.speakers] {
                 guard values[Option.separate] != nil else { return .failure(.usage("--speakers は、--separate と一緒に使います")) }
@@ -176,7 +179,7 @@ public enum CommandParser {
                     return ReplayOptions(
                         file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
                         locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
-                        actors: values[Option.actors], separate: values[Option.separate] != nil, speakers: speakerCount
+                        actors: values[Option.actors], separate: values[Option.separate] != nil, speakers: speakerCount, saveAudio: values[Option.saveAudio] != nil
                     )
                 }
             }

@@ -39,6 +39,8 @@ enum FailureText {
             return "話者の声の分離に失敗しました（記録に、話者 ID は付きません）"
         case .voiceSeparationTruncated:
             return "会議が長いため、声の分離は、最初の 3 時間だけです"
+        case .audioNotSaved:
+            return "相手の音声を保存できませんでした（記録には、理由を書きました。文字の記録は残ります）"
         }
     }
 

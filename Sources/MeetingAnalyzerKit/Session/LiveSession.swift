@@ -52,6 +52,8 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case voiceSeparationFailed(String)
     /// 会議が長く、声の分離は、最初の 3 時間だけ（音声を持てる上限）。
     case voiceSeparationTruncated
+    /// 相手の音声を保存できなかった（SPEC §3.16）。記録に、理由を書く。会議の終了は、続ける。
+    case audioNotSaved(String)
 }
 
 public struct LiveSessionOutcome: Sendable, Equatable {
@@ -94,15 +96,18 @@ public struct LiveSessionScreen: Sendable {
 
 /// 声による話者の分離（SPEC §3.14）。選んだときだけ渡す。実行中は、システム音声を `recorder` にメモリ上だけで持ち、終了の処理で、`separator` で分けて、捨てる。
 /// `library`（声紋を使うときだけ）：保存した声紋（会議の開始のときに読んだ写し）。終了の処理で、分けた話者と照合して、自動の条件を満たす人に名前を付ける（SPEC §3.15）。
+/// `audioStore`（「相手の音声を保存する」を選んだときだけ）：捨てる代わりに、相手の音声を保存する（SPEC §3.16）。
 public struct LiveSessionVoice: Sendable {
     public var recorder: VoiceAudioRecorder
     public var separator: any VoiceSeparating
     public var library: VoiceprintLibrary?
+    public var audioStore: SavedAudioStore?
 
-    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating, library: VoiceprintLibrary? = nil) {
+    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating, library: VoiceprintLibrary? = nil, audioStore: SavedAudioStore? = nil) {
         self.recorder = recorder
         self.separator = separator
         self.library = library
+        self.audioStore = audioStore
     }
 }
 
@@ -288,7 +293,7 @@ public actor LiveSession {
         }
     }
 
-    /// 声による話者の分離（SPEC §3.14）。取り込みを止めたあと・記録を書く前に、1 回だけ。持っていた音声で、分離して、確定した「相手」の発話に話者 ID を付ける。**音声は、成否にかかわらず捨てる**。
+    /// 声による話者の分離（SPEC §3.14）。取り込みを止めたあと・記録を書く前に、1 回だけ。持っていた音声で、分離して、確定した「相手」の発話に話者 ID を付ける。**音声は、成否にかかわらず捨てる**（「相手の音声を保存する」を選んだときだけ、分離のあとに、保存する。SPEC §3.16）。
     /// 失敗しても、会議の終了は続ける（ID なしで、記録を書く。失敗を、記録と知らせに出す）。
     private func separateVoices() async {
         guard let voice else { return }
@@ -304,6 +309,15 @@ public actor LiveSession {
             let message = (error as? VoiceSeparationError)?.message ?? String(describing: error)
             pipeline.noteVoiceFailure(message)
             notify(.voiceSeparationFailed(message))
+        }
+        // 分離に失敗したときも、保存する（あとで、人数を変えて、分け直せる）。
+        if let store = voice.audioStore {
+            let sessionId = pipeline.sessionId
+            let result = await Task.detached(priority: .utility) { store.save(samples: captured.samples, timeline: captured.timeline, sessionId: sessionId) }.value
+            if case .failure(let error) = result {
+                pipeline.noteAudioNotSaved(error.message)
+                notify(.audioNotSaved(error.message))
+            }
         }
     }
 

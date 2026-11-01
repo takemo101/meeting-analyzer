@@ -187,12 +187,31 @@ struct SettingsView: View {
                 Text("声の似た人が 1 つにまとまって、人数が少なく出るときは、相手の人数（2〜8）を指定すると、その数に分けます。分かっていないときは、自動のままにします。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち（ファイルにも、ネットワークにも出しません）、分けたら捨てます。ダウンロードは、押したときだけ（Hugging Face）。")
+            Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち、分けたら捨てます（下の「相手の音声を保存する」を選んだときだけ、ファイルに残します。ネットワークには出しません）。ダウンロードは、押したときだけ（Hugging Face）。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("出典：pyannote・WeSpeaker・BUT Speech@FIT のモデルを、Fluid Inference が Core ML に変換したもの（CC-BY-4.0。変換による改変あり）。ライセンスは、アプリの Resources/licenses に同梱しています。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(locked)
+
+        Section("相手の音声の保存") {
+            Toggle("相手の音声を保存する", isOn: Binding(get: { controller.saveOthersAudio }, set: { controller.setSaveOthersAudio($0) }))
+                .disabled(!controller.voiceSeparation)
+            Text("相手の声（システム音声）の録音を、この Mac に、記録と同じ期間（上の「記録の保持期間」）だけ保存します。マイク（あなた）の声は保存しません。ネットワークには出さず、エージェントへも渡しません。声による話者の分離がオンのときだけ、使えます。録音は、会議の参加者の声なので、参加者へ知らせてください。1 時間で約 115 MB です。")
+                .font(.caption).foregroundStyle(.secondary)
+            if controller.savedAudio.count > 0 {
+                Text("保存した音声：\(controller.savedAudio.count) 件（\(ByteCountFormatter.string(fromByteCount: controller.savedAudio.bytes, countStyle: .file))）").font(.caption)
+                Button("保存した音声をすべて削除", role: .destructive) { model.confirmingDelete = "saved-audio" }
+            } else {
+                Text("保存した音声は、ありません。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(locked)
+        .confirmationDialog("保存した音声をすべて削除しますか？", isPresented: Binding(get: { model.confirmingDelete == "saved-audio" }, set: { model.confirmingDelete = $0 ? "saved-audio" : nil })) {
+            Button("削除", role: .destructive) { controller.deleteSavedAudio() }
+        } message: {
+            Text("保存した相手の音声（\(controller.savedAudio.count) 件）が消えます。記録・声紋は消えません。元に戻せません。")
+        }
 
         Section("声紋（会議をまたぐ識別）") {
             Toggle("声紋を使う", isOn: Binding(get: { controller.voiceprintsEnabled }, set: { controller.setVoiceprints($0) }))

@@ -49,6 +49,11 @@ final class MeetingController {
     let voiceprintStore: VoiceprintStore
     /// 保存した声紋を読んだ結果（設定ウィンドウの一覧。変えるたびに読み直す）。
     var voiceprintState: VoiceprintLoad = .none
+    /// 相手の音声を保存する（SPEC §3.16）。オンで、声による話者の分離もオンのときだけ、会議で使う。
+    var saveOthersAudio: Bool { preferences.saveOthersAudio && preferences.voiceSeparation }
+    /// 保存した相手の音声の、件数と大きさ（設定ウィンドウに見せる。起動時・会議の開始と終了のとき・6 時間ごと・削除のときに数え直す）。
+    var savedAudio = SavedAudioSummary()
+    var savedAudioStore: SavedAudioStore { SavedAudioStore(root: dataDirectory) }
     let presetStore: PresetStore
     /// ダウンロードしたモデルの保管場所（`<データの置き場所>/models/`）。
     let modelStore: ModelStore
@@ -111,8 +116,10 @@ final class MeetingController {
         if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
         if saved.voiceSeparation, !(VoiceModelCatalog.all.first.map { modelStore.isInstalled($0) } ?? false) { saved.voiceSeparation = false }
         if saved.voiceprints, !saved.voiceSeparation { saved.voiceprints = false }
+        if saved.saveOthersAudio, !saved.voiceSeparation { saved.saveOthersAudio = false }
         preferences = saved
         voiceprintState = voiceprintStore.load()
+        savedAudio = SavedAudioStore(root: dataDirectory).summary()
         retentionDays = RecordRetentionSetting.load(defaults)
         actorSelection.restore(from: saved)
         downloads.onChange = { [weak self] in self?.changed() }
@@ -157,12 +164,17 @@ final class MeetingController {
         changed()
     }
 
-    /// 期限（`retentionDays` 日）を過ぎた記録（文字起こしと画像）を、フォルダごと消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
+    /// 期限（`retentionDays` 日）を過ぎた記録（文字起こし・画像・保存した音声）を、フォルダごと消す。起動時・会議の開始と終了のとき・6 時間ごと（常駐していても、日数が守られるように）。
+    /// そのあと、保存した音声の件数と大きさを、数え直す。
     func cleanRecords() {
-        guard let days = retentionDays else { return }
         let root = dataDirectory
         let active = session?.sessionId
-        Task.detached(priority: .utility) { RecordRetention(root: root).deleteExpired(olderThanDays: days, except: active) }
+        let days = retentionDays
+        Task.detached(priority: .utility) {
+            if let days { RecordRetention(root: root).deleteExpired(olderThanDays: days, except: active) }
+            let summary = SavedAudioStore(root: root).summary()
+            await MainActor.run { self.updateSavedAudio(summary) }
+        }
     }
 
     private func scheduleRecordCleanup() {
@@ -301,7 +313,7 @@ final class MeetingController {
     /// 声による話者の分離を、オン・オフする。オンにできるのは、モデルが取得済みのときだけ。会議の実行中は、変えられない。
     func setVoiceSeparation(_ enabled: Bool) {
         if enabled { guard let model = voiceModel, isInstalled(model) else { return } }
-        mutateWhenIdle { $0.voiceSeparation = enabled; if !enabled { $0.voiceprints = false } }
+        mutateWhenIdle { $0.voiceSeparation = enabled; if !enabled { $0.voiceprints = false; $0.saveOthersAudio = false } }
     }
 
     /// 話者の人数を指定する（`nil`＝自動。2〜8。範囲外は、何もしない）。会議の実行中は、変えられない。
@@ -324,6 +336,7 @@ final class MeetingController {
             guard state == .idle else { return }
             preferences.voiceSeparation = false
             preferences.voiceprints = false
+            preferences.saveOthersAudio = false
             persist()
         }
         modelStore.delete(model)
@@ -449,7 +462,7 @@ final class MeetingController {
                 case .unusable(let reason): voiceNotice = "声紋を使えません: \(reason)（ファイルは消していません）"
                 }
             }
-            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore, tuning: VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library)
+            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore, tuning: VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),

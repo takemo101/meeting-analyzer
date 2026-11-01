@@ -29,7 +29,7 @@ enum CLIView {
             ("transcribe <音声ファイル> [--locale L] [--model ID]", ["音声ファイルを文字にして出す（端末では読みやすく、パイプでは 1 行 1 件の JSON）。--model で、ダウンロードしたモデルを使う"]),
             ("models [download <ID>|delete <ID>]", ["ダウンロードして使えるモデル（文字起こし・名前のヒント・話者の分離）の、一覧・取得（続きから再開できる）・削除"]),
             ("replay <音声ファイル> [オプション]", ["音声ファイルをセッションとして再生し、エージェントへ渡す窓口を開く（検証用）。",
-                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>  --separate [--speakers <2〜8>]",
+                                                  "--speaker you|others  --title <名前>  --locale L  --preset <ID>  --model <ID>  --actors <ACTOR.md>  --separate [--speakers <2〜8>] [--save-audio]",
                                                   "--wait <秒>  再生の前に、エージェントがつながるのを待つ（上限）",
                                                   "--hold <秒>  再生のあと、窓口を開けておく"]),
         ], label: command))

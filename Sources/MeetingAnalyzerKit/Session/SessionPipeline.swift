@@ -163,6 +163,13 @@ public final class SessionPipeline: @unchecked Sendable {
         dirty = true
     }
 
+    /// 相手の音声を保存できなかったことを、記録に書く（SPEC §3.16）。
+    public func noteAudioNotSaved(_ reason: String) {
+        guard !finished else { return }
+        transcript.audioNote = reason
+        dirty = true
+    }
+
     /// 名付けの画面に見せる、話者（話者 N）ごとの要約（SPEC §3.15）。
     public func speakerSummaries() -> [SpeakerSummary] { transcript.speakerSummaries() }
 
