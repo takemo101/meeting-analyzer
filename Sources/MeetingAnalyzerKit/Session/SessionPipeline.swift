@@ -143,6 +143,45 @@ public final class SessionPipeline: @unchecked Sendable {
         return applied
     }
 
+    /// 会議が終わったあとに、声の分離をやり直した結果を、反映する（SPEC §3.16「再分離」）。確定した「相手」の発話へ、話者 ID を付け直し、**その会議の名前は、すべて外す**
+    /// （話者 ID の対応が変わるため。`library` があれば、声紋の照合から、やり直す）。記録を書き直し、`speakers` の出来事（`reseparated`＝これまでの `speakers` は無効。いまの名前のすべて）を出す。
+    /// **記録を書き直せなければ、何も変えない**。
+    public func reapplyVoices(_ segments: [VoiceSegment], embeddings: [String: [Float]], library: VoiceprintLibrary?) -> Result<SpeakersNamed, SpeakerNamingError> {
+        guard finished, let endedAt else { return .failure(.notFinished) }
+        var updated = transcript
+        let targets = updated.ordered.filter { $0.speaker == .others && $0.isFinal && ($0.endedAt ?? $0.startedAt) > $0.startedAt }
+        let result = VoiceAssignment.assign(spans: targets.map { ($0.startedAt, $0.endedAt ?? $0.startedAt) }, segments: segments)
+        for (utterance, id) in zip(targets, result.ids) { updated.assignVoice(id, forKey: utterance.key) }
+        updated.voiceSpeakers = result.count
+        updated.voiceFound = Set(segments.map(\.speaker)).count
+        updated.voiceUnassigned = result.ids.filter { $0 == nil }.count
+        updated.voiceFailure = nil
+        updated.voiceNames = [:]
+        var newEmbeddings: [Int: [Float]] = [:]
+        for (index, speaker) in result.speakers.enumerated() { if let embedding = embeddings[speaker] { newEmbeddings[index + 1] = embedding } }
+        var candidates: [Int: [VoiceprintCandidate]] = [:]
+        if let library {
+            for (id, embedding) in newEmbeddings.sorted(by: { $0.key < $1.key }) {
+                let match = library.match(embedding)
+                if let automatic = match.automatic { updated.voiceNames[id] = automatic.name } else if !match.candidates.isEmpty { candidates[id] = match.candidates }
+            }
+        }
+        var path = finalTranscriptPath
+        if let store {
+            switch store.writeTranscript(updated.markdown(title: title, startedAt: startedAt, endedAt: endedAt), sessionId: sessionId) {
+            case .success(let url): path = url.path
+            case .failure: return .failure(.writeFailed)
+            }
+        }
+        transcript = updated
+        voiceEmbeddings = newEmbeddings
+        voiceCandidates = candidates
+        finalTranscriptPath = path
+        let named = SpeakersNamed(sessionId: sessionId.uuidString.lowercased(), transcriptPath: path, speakers: updated.voiceNames.sorted { $0.key < $1.key }.map { SpeakerName(speaker: $0.key, name: $0.value) }, reseparated: true)
+        sink.publish(.speakers(named))
+        return .success(named)
+    }
+
     /// 話者 N の声の特徴（「この声を覚える」のため）。分離器が返さなかった話者は `nil`。
     public func voiceEmbedding(of id: Int) -> [Float]? { voiceEmbeddings[id] }
 

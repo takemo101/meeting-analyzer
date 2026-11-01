@@ -75,4 +75,16 @@ public struct AudioTimeline: Sendable, Equatable {
         }
         return result
     }
+
+    /// 会議の時刻の区間 → つなげた音声の中の、再生する区間（聞き直しのため）。区間と重なる**最初の塊**の中だけ（塊の境はまたがない）。重なる塊が無ければ `nil`。
+    /// `position`：つなげた音声の中の開始（秒）。`duration`：長さ（秒。`limit` まで）。
+    public func playback(start: TimeInterval, end: TimeInterval, limit: TimeInterval = 20) -> (position: TimeInterval, duration: TimeInterval)? {
+        var offset: TimeInterval = 0
+        for piece in pieces {
+            let lower = max(start, piece.origin), upper = min(end, piece.origin + piece.duration)
+            if upper > lower { return (offset + (lower - piece.origin), min(upper - lower, limit)) }
+            offset += piece.duration
+        }
+        return nil
+    }
 }

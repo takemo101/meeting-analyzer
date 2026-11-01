@@ -56,7 +56,8 @@ public struct Transcript: Sendable, Equatable {
                 let text = item.element.text
                 return text.count > 60 ? String(text.prefix(60)) + "…" : text
             }
-            return SpeakerSummary(id: voice, seconds: seconds, utteranceCount: list.count, excerpts: excerpts)
+            let clips = longest.map { SpeakerClip(start: $0.element.startedAt, end: max($0.element.startedAt, $0.element.endedAt ?? $0.element.startedAt)) }
+            return SpeakerSummary(id: voice, seconds: seconds, utteranceCount: list.count, excerpts: excerpts, clips: clips)
         }
     }
 

@@ -26,7 +26,7 @@ meeting-analyzer は、Mac の音声を文字にして、このセッション�
 - `started`：開始。`sources`（`you`＝マイク、`others`＝システム音声）、`preset`（上記）、`actorFile`（あるときだけ。本人が選んだ ACTOR.md の絶対パス）。
 - `captions`：発話の更新。`updates[]` は `{id, version, speaker, source, text, timestamp, isFinal}`、「本人」の発話は `actor`（ACTOR.md の本人の名前）も持つ（相手の字幕には、名前は付かない：名前は、会議のあとに、本人が確定する）。**同じ `id` は、新しい `version` が前の本文を置き換える**（upsert。追記しない）。`isFinal: false` は暫定。`screenshot`（あるときだけ）は、前の送信から**画面が変わったとき**の、画面の JPEG の絶対パス。
 - `ended`：終了（1 回）。`transcriptPath`（記録の全文のパス。無いことがある）、`reason`、長さ、発話数。
-- `speakers`：**名付けの確定**（`ended` のあとに、確定のたびに出る。`{sessionId, transcriptPath?, speakers[{speaker, name}]}`。`speaker` は、記録の「話者 N」の N）。**記録は、すでに名前つきに書き直されている**（`相手（話者 N）` → `相手（名前）`。本人が確定した名前で、推定ではない）。**すでに要約していれば、記録を読み直して、名前を反映して、要約を直す**（直した分だけ短く伝える）。
+- `speakers`：**名付けの確定**（`ended` のあとに、確定のたびに出る。`{sessionId, transcriptPath?, speakers[{speaker, name}], reseparated?}`。`speaker` は、記録の「話者 N」の N）。**記録は、すでに名前つきに書き直されている**（`相手（話者 N）` → `相手（名前）`。本人が確定した名前で、推定ではない）。**すでに要約していれば、記録を読み直して、名前を反映して、要約を直す**（直した分だけ短く伝える）。**`reseparated: true` のときは、利用者が話者を分け直した**：これまでの `speakers` は、すべて無効（話者の番号の対応が変わった）で、この `speakers` が、いまの確定した名前のすべて（空のこともある）。記録を読み直して、要約を直す。
 
 ### 画面（`screenshot`）
 
