@@ -1,11 +1,18 @@
+import AVFoundation
 import Foundation
 
 public enum SavedAudioError: Error, Sendable, Equatable {
     case writeFailed(String)
+    /// 保存した音声が、この会議に無い（保存しなかった・保持期間で消えた・削除した）。
+    case missing
+    /// 保存した音声を読めない（壊れている・時刻の対応と合わない）。
+    case unreadable(String)
 
     public var message: String {
         switch self {
         case .writeFailed(let reason): return "相手の音声を保存できませんでした（\(reason)）"
+        case .missing: return "この会議の音声が、保存されていません（保存しなかった、または、保持期間で消えました）"
+        case .unreadable(let reason): return "保存した音声を読めません（\(reason)）"
         }
     }
 }
@@ -114,6 +121,40 @@ public struct SavedAudioStore: Sendable {
             result.bytes += size.int64Value
         }
         return result
+    }
+
+    /// この会議の音声が、保存されているか。
+    public func exists(sessionId: UUID) -> Bool {
+        FileManager.default.fileExists(atPath: audioURL(sessionId: sessionId).path) && FileManager.default.fileExists(atPath: timelineURL(sessionId: sessionId).path)
+    }
+
+    /// 会議の時刻との対応だけを読む（聞き直しのため。音声は読まない）。
+    public func timeline(sessionId: UUID) -> Result<AudioTimeline, SavedAudioError> {
+        guard exists(sessionId: sessionId) else { return .failure(.missing) }
+        guard let stored = try? JSONDecoder().decode(StoredTimeline.self, from: Data(contentsOf: timelineURL(sessionId: sessionId))) else { return .failure(.unreadable("時刻の対応を読めません")) }
+        return .success(AudioTimeline(pieces: stored.pieces.map { .init(origin: $0.origin, duration: $0.duration) }))
+    }
+
+    /// 保存した音声（つなげた Float。-1〜1）と、会議の時刻との対応を読む（再分離のため。SPEC §3.16）。
+    /// 長さが、時刻の対応の合計と 1 秒以上ずれていれば、壊れているとみなす。
+    public func load(sessionId: UUID) -> Result<(samples: [Float], timeline: AudioTimeline), SavedAudioError> {
+        guard exists(sessionId: sessionId) else { return .failure(.missing) }
+        do {
+            let stored = try JSONDecoder().decode(StoredTimeline.self, from: Data(contentsOf: timelineURL(sessionId: sessionId)))
+            let timeline = AudioTimeline(pieces: stored.pieces.map { .init(origin: $0.origin, duration: $0.duration) })
+            let file = try AVAudioFile(forReading: audioURL(sessionId: sessionId))
+            guard file.fileFormat.sampleRate == VoiceAudioRecorder.sampleRate, file.fileFormat.channelCount == 1 else { return .failure(.unreadable("形式が違います")) }
+            let frames = AVAudioFrameCount(file.length)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) else { return .failure(.unreadable("メモリを確保できません")) }
+            try file.read(into: buffer)
+            guard let channel = buffer.floatChannelData?[0] else { return .failure(.unreadable("形式が違います")) }
+            let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+            let expected = timeline.pieces.reduce(0) { $0 + $1.duration }
+            guard abs(Double(samples.count) / VoiceAudioRecorder.sampleRate - expected) < 1 else { return .failure(.unreadable("長さが、時刻の対応と合いません")) }
+            return .success((samples, timeline))
+        } catch {
+            return .failure(.unreadable("ファイルを読めません"))
+        }
     }
 
     /// 保存した音声を、すべて消す（記録・声紋は残す）。消した件数を返す。**記録の保持期間の起点を動かさない**（ディレクトリの更新時刻を、戻す）。

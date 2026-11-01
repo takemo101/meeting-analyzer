@@ -56,6 +56,27 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case audioNotSaved(String)
 }
 
+/// 再分離（SPEC §3.16）を断った・失敗した理由。
+public enum ReseparationError: Error, Sendable, Equatable {
+    /// すでに、分け直している最中。
+    case busy
+    /// 保存した音声を、使えない（無い・読めない）。
+    case audio(SavedAudioError)
+    /// 分離に失敗した（理由）。
+    case separation(String)
+    /// 結果を、記録へ反映できなかった。
+    case naming(SpeakerNamingError)
+
+    public var message: String {
+        switch self {
+        case .busy: return "分け直している最中です"
+        case .audio(let error): return error.message
+        case .separation(let reason): return reason
+        case .naming(let error): return error.message
+        }
+    }
+}
+
 public struct LiveSessionOutcome: Sendable, Equatable {
     public let utterances: Int
     /// 記録（Markdown）。書けなかったときは無し。
@@ -258,6 +279,34 @@ public actor LiveSession {
 
     /// 話者 N の声の特徴（「この声を覚える」のため。メモリ上だけ）。
     public func voiceEmbedding(of id: Int) -> [Float]? { pipeline.voiceEmbedding(of: id) }
+
+    /// 再分離の途中か（同時に 2 つは走らせない）。
+    private var reseparating = false
+
+    /// 保存した音声で、声の分離をやり直す（SPEC §3.16「再分離」）。会議が終わったあとだけ。**その会議の名前は、すべて外れる**（記録を書き直し、`speakers` の出来事〔`reseparated`〕を出す）。
+    /// 失敗したら、何も変えない（記録・名前は、そのまま）。
+    public func reseparate(audio: SavedAudioStore, separator: any VoiceSeparating, library: VoiceprintLibrary?) async -> Result<SpeakersNamed, ReseparationError> {
+        guard !reseparating else { return .failure(.busy) }
+        reseparating = true
+        defer { reseparating = false }
+        let sessionId = pipeline.sessionId
+        let loaded = await Task.detached(priority: .userInitiated) { audio.load(sessionId: sessionId) }.value
+        let captured: (samples: [Float], timeline: AudioTimeline)
+        switch loaded {
+        case .failure(let error): return .failure(.audio(error))
+        case .success(let value): captured = value
+        }
+        let separation: VoiceSeparation
+        do {
+            separation = try await Task.detached(priority: .userInitiated) { try await separator.separate(captured.samples) }.value
+        } catch {
+            return .failure(.separation((error as? VoiceSeparationError)?.message ?? String(describing: error)))
+        }
+        switch pipeline.reapplyVoices(captured.timeline.sessionSegments(from: separation.segments), embeddings: separation.embeddings, library: library) {
+        case .success(let named): return .success(named)
+        case .failure(let error): return .failure(.naming(error))
+        }
+    }
 
     /// 状態の遷移を、**操作の最初に**行う（許されない遷移は `invalidState`）。操作の途中の待ちで、別の操作が割り込んでも、同じ遷移を 2 度は通らない。
     /// 開始・再開は、そのあとの取り込みが失敗したら、呼び出し側が、遷移の前の状態へ戻す。

@@ -8,9 +8,10 @@ extension MeetingController {
         var warning: String?
     }
 
-    /// 名前を付けていない話者が、1 人以上いるか（メニューの「話者の名付け…」を出す条件）。
+    /// 名前を付けていない話者が、1 人以上いるか、または、音声が保存されていて分け直せるか（メニューの「話者の名付け…」を出す条件）。
     var canNameSpeakers: Bool {
-        namingSession != nil && namingSpeakers.contains { namedSpeakers[$0.id] == nil }
+        guard namingSession != nil else { return false }
+        return namingSpeakers.contains { namedSpeakers[$0.id] == nil } || namingAudioAvailable
     }
 
     /// 名前の選択肢（出席者。ACTOR.md を選んでいなければ、空。自分で入力することもできる）。
@@ -74,6 +75,7 @@ extension MeetingController {
     /// 次の会議の開始のとき、名付けの対象を手放す（話者 N のままの人は、そのまま）。
     func clearNaming() {
         guard namingSession != nil || !namingSpeakers.isEmpty else { return }
+        stopPlayback()
         namingSession = nil
         namingSpeakers = []
         namedSpeakers = [:]
@@ -81,6 +83,8 @@ extension MeetingController {
         voiceMatched = []
         namingHints = [:]
         hintState = .notRequested
+        reseparation = .idle
+        playbackFailure = nil
         changed()
     }
 }

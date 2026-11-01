@@ -87,6 +87,22 @@ final class MeetingController {
         case failed(String)
     }
     var hintState: HintState = .notRequested
+    /// 再分離（SPEC §3.16）の状態。
+    enum ReseparationState: Equatable {
+        case idle, running
+        /// 分け直した。話者の数。
+        case done(Int)
+        case failed(String)
+    }
+    var reseparation: ReseparationState = .idle
+    /// 聞き直し（SPEC §3.16）：保存した音声の、抜粋の区間を再生する。
+    let clipPlayer = SpeakerClipPlayer()
+    /// 聞き直しで、再生できなかった理由（画面に出す）。
+    var playbackFailure: String?
+    /// 声の分離器を作る部品（会議の終了時と、分け直しで使う）。試験は、偽物へ差し替える。
+    var voiceSeparatorFactory: @Sendable (VoiceModel, ModelStore, VoiceSeparationTuning) -> any VoiceSeparating = { model, store, tuning in
+        FluidVoiceSeparator(model: model, store: store, tuning: tuning)
+    }
     /// 判断モデルを読み込む部品（重い。別のスレッドで呼ぶ）。試験は、偽物へ差し替える。
     var hintJudgeFactory: @Sendable (DecisionModel, ModelStore, [Actor]) throws -> any SpeakerJudge = { model, store, candidates in
         let judge = try SystemOneJudge(model: model, store: store, candidates: candidates)
@@ -123,6 +139,7 @@ final class MeetingController {
         retentionDays = RecordRetentionSetting.load(defaults)
         actorSelection.restore(from: saved)
         downloads.onChange = { [weak self] in self?.changed() }
+        clipPlayer.onChange = { [weak self] in self?.changed() }
     }
 
     /// 取り込みの設定を、覚えておく（再起動しても、同じ選択になる）。
@@ -417,19 +434,25 @@ final class MeetingController {
                 let outcome = try await session.end(reason: reason)
                 defer { cleanRecords() }
                 notice = "終了しました（発話 \(outcome.utterances) 件）"
-                // 声で分けた話者がいれば、名付けの対象にする（次の会議の開始まで）。声紋で名前が付いた話者は、確定済み。
+                // 声で分けた話者がいれば、または、音声を保存していて分け直せれば、名付けの対象にする（次の会議の開始まで）。声紋で名前が付いた話者は、確定済み。
                 let summaries = await session.speakerSummaries()
-                if !summaries.isEmpty {
+                let canReseparate = savedAudioStore.exists(sessionId: session.sessionId)
+                if !summaries.isEmpty || canReseparate {
                     let matched = await session.speakerNames()
                     namingSession = session
                     namingSpeakers = summaries
                     namedSpeakers = matched
                     voiceMatched = Set(matched.keys)
                     namingCandidates = await session.speakerCandidates()
+                    reseparation = .idle
                     touchVoiceprints(Set(matched.values))
                     let matchedNote = matched.isEmpty ? "" : "・声紋で \(matched.count) 人に名前が付きました"
                     let rest = summaries.filter { matched[$0.id] == nil }.count
-                    notice = "終了しました（発話 \(outcome.utterances) 件・話者 \(summaries.count) 人\(matchedNote)" + (rest > 0 ? "。メニューの「話者の名付け…」で、名前を付けられます）" : "）")
+                    if summaries.isEmpty {
+                        notice = "終了しました（発話 \(outcome.utterances) 件。話者は分けられませんでした。メニューの「話者の名付け…」から、分け直せます）"
+                    } else {
+                        notice = "終了しました（発話 \(outcome.utterances) 件・話者 \(summaries.count) 人\(matchedNote)" + (rest > 0 ? "。メニューの「話者の名付け…」で、名前を付けられます）" : "）")
+                    }
                 }
             } catch {
                 notice = "会議を終了できませんでした"
@@ -453,16 +476,10 @@ final class MeetingController {
         if voiceSeparation, selection.system != .off, let model = voiceModel, modelStore.isInstalled(model) {
             let held = VoiceAudioRecorder()
             recorder = held
-            var library: VoiceprintLibrary?
-            if voiceprintsEnabled {
-                switch voiceprintStore.load() {
-                case .none: break
-                case .loaded(let loaded) where loaded.modelRevision == model.revision: library = loaded
-                case .loaded: voiceNotice = "保存した声紋は、別の版の分離モデルで作られているため、使いません（設定で削除して、覚え直してください）"
-                case .unusable(let reason): voiceNotice = "声紋を使えません: \(reason)（ファイルは消していません）"
-                }
-            }
-            voice = LiveSessionVoice(recorder: held, separator: FluidVoiceSeparator(model: model, store: modelStore, tuning: VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
+            let loaded = voiceprintLibrary(for: model)
+            let library = loaded.library
+            voiceNotice = loaded.notice
+            voice = LiveSessionVoice(recorder: held, separator: voiceSeparatorFactory(model, modelStore, VoiceSeparationTuning(speakerCount: voiceSpeakerCount)), library: library, audioStore: saveOthersAudio ? savedAudioStore : nil)
         }
         let session = LiveSession(
             title: Self.sessionTitle(selection: selection),

@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// 話者の名付けのウィンドウ（SPEC §3.15）。直前の会議の、声で分けた話者（話者 N）ごとに、発言の抜粋を見ながら、名前を確定する。
+/// 話者の名付けのウィンドウ（SPEC §3.15）。直前の会議の、声で分けた話者（話者 N）ごとに、発言の抜粋を見て（音声が保存されていれば、聞き直して）、名前を確定する。
 /// 確定は、人間が押したときだけ（自動では確定しない）。確定すると、記録を書き直し、エージェントへ知らせる。
+/// 音声が保存されていれば、人数を指定して、分け直せる（SPEC §3.16。その会議の名前は、すべて外れる）。
 @MainActor
 final class SpeakerNamingWindow {
     private let controller: MeetingController
@@ -17,8 +18,10 @@ final class SpeakerNamingWindow {
             let hosting = NSHostingController(rootView: SpeakerNamingView(model: SpeakerNamingModel(controller: controller)))
             let window = NSWindow(contentViewController: hosting)
             window.title = "話者の名付け"
-            window.styleMask = [.titled, .closable]
+            window.styleMask = [.titled, .closable, .resizable]
             window.isReleasedWhenClosed = false
+            window.setContentSize(NSSize(width: 700, height: 680))
+            window.contentMinSize = NSSize(width: 620, height: 520)
             window.center()
             self.window = window
         }
@@ -43,9 +46,14 @@ final class SpeakerNamingModel: ObservableObject {
     @Published var remember: [Int: Bool] = [:]
     /// 確定の処理中の話者。
     @Published private(set) var working: Set<Int> = []
+    /// 分け直すときの話者の人数（0＝自動）。初めは、設定の人数。
+    @Published var reseparateCount: Int
+    /// 分け直しの確認を出しているか（確定した名前が、外れるとき）。
+    @Published var confirmingReseparate = false
 
     init(controller: MeetingController) {
         self.controller = controller
+        reseparateCount = controller.voiceSpeakerCount ?? 0
         controller.observe { [weak self] in self?.revision += 1 }
     }
 
@@ -63,6 +71,25 @@ final class SpeakerNamingModel: ObservableObject {
             if outcome.failure == nil { drafts[id] = nil }
         }
     }
+
+    /// 分け直す。確定した名前が 1 人でもいれば、先に確認を出す（外れるため）。
+    func requestReseparate() {
+        if controller.namedSpeakers.isEmpty { reseparate() } else { confirmingReseparate = true }
+    }
+
+    func reseparate() {
+        let count = reseparateCount == 0 ? nil : reseparateCount
+        Task {
+            await controller.reseparateSpeakers(count: count)
+            // 話者 N の対応が変わったので、入力中の名前・結果の表示は、捨てる。
+            if case .done = controller.reseparation {
+                drafts = [:]
+                failures = [:]
+                warnings = [:]
+                remember = [:]
+            }
+        }
+    }
 }
 
 struct SpeakerNamingView: View {
@@ -70,92 +97,247 @@ struct SpeakerNamingView: View {
 
     private var controller: MeetingController { model.controller }
 
+    private static let palette: [Color] = [.blue, .orange, .purple, .teal, .pink, .indigo, .green, .brown]
+
     var body: some View {
         let _ = model.revision
-        VStack(alignment: .leading, spacing: 12) {
+        Group {
             if controller.namingSession == nil {
-                Text("名前を付けられる会議がありません。会議が終わったあと、次の会議を始めるまでの間だけ、付けられます。")
-                    .foregroundStyle(.secondary)
+                emptyState
             } else {
-                Text("声で分けた話者に、名前を付けます。「確定」を押した話者だけが、記録に反映されます（自動では確定しません）。確定した名前は、変えられません。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                switch controller.hintState {
-                case .computing: Label("名前のヒントを計算中…（名付けは、そのまま、できます）", systemImage: "hourglass").font(.callout).foregroundStyle(.secondary)
-                case .failed(let reason): Label(reason, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                case .notRequested, .ready: EmptyView()
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    Divider()
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            reseparationPanel
+                            hintStatus
+                            if controller.namingSpeakers.isEmpty {
+                                Text("声で分けた話者は、まだいません。上の「分け直す」で、人数を指定して、分け直せます。")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            ForEach(controller.namingSpeakers, id: \.id) { speaker in
+                                card(speaker)
+                            }
+                        }
+                        .padding(20)
+                    }
                 }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(controller.namingSpeakers, id: \.id) { speaker in
-                            row(speaker)
-                            Divider()
+            }
+        }
+        .frame(minWidth: 620, idealWidth: 700, minHeight: 520, idealHeight: 680)
+    }
+
+    // MARK: 上の部分
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 40)).foregroundStyle(.secondary)
+            Text("名前を付けられる会議がありません").font(.headline)
+            Text("会議が終わったあと、次の会議を始める（またはアプリを終了する）までの間だけ、付けられます。")
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var header: some View {
+        let total = controller.namingSpeakers.count
+        let done = controller.namingSpeakers.filter { controller.namedSpeakers[$0.id] != nil }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("話者の名付け").font(.title2.bold())
+                Spacer()
+                if total > 0 {
+                    Label("\(done) / \(total) 人を確定", systemImage: done == total ? "checkmark.circle.fill" : "person.2")
+                        .font(.callout).foregroundStyle(done == total ? Color.green : Color.secondary)
+                }
+            }
+            Text("声で分けた話者ごとに、発言を確かめて、名前を付けます。**「確定」を押した話者だけ**が、記録に反映されます。確定した名前は、変えられません。")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+
+    @ViewBuilder private var hintStatus: some View {
+        switch controller.hintState {
+        case .computing: Label("名前のヒントを計算しています…（名付けは、そのまま、できます）", systemImage: "hourglass").font(.callout).foregroundStyle(.secondary)
+        case .failed(let reason): Label(reason, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+        case .notRequested, .ready: EmptyView()
+        }
+    }
+
+    // MARK: 分け直し
+
+    @ViewBuilder private var reseparationPanel: some View {
+        if controller.namingAudioAvailable {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("人数が合わないときは、分け直す", systemImage: "arrow.triangle.2.circlepath").font(.headline)
+                Text("保存した音声で、声の分離をやり直します。**付けた名前は、すべて外れます**（話者の番号が変わるため）。")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack {
+                    Picker("話者の人数", selection: $model.reseparateCount) {
+                        Text("自動").tag(0)
+                        ForEach(Array(VoiceSeparationTuning.speakerCountRange), id: \.self) { count in Text("\(count) 人").tag(count) }
+                    }
+                    .fixedSize()
+                    .disabled(controller.reseparation == .running)
+                    Button("分け直す") { model.requestReseparate() }
+                        .disabled(!controller.canReseparate)
+                    if controller.reseparation == .running {
+                        ProgressView().controlSize(.small)
+                        Text("分けています…").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                switch controller.reseparation {
+                case .done(let count): Label("分け直しました（話者 \(count) 人）", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.green)
+                case .failed(let reason): Label(reason, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+                case .idle, .running: EmptyView()
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
+            .confirmationDialog("分け直しますか？", isPresented: $model.confirmingReseparate) {
+                Button("名前を外して、分け直す", role: .destructive) { model.reseparate() }
+            } message: {
+                Text("確定した名前（\(controller.namedSpeakers.count) 人）が、すべて外れ、記録が書き直されます。")
+            }
+        } else {
+            Label("この会議の音声は、保存されていません。人数を変えて分け直したり、聞き直したりするには、設定の「相手の音声を保存する」をオンにしてください（次の会議から保存されます）。", systemImage: "info.circle")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: 話者ごと
+
+    private func color(_ id: Int) -> Color { Self.palette[(max(id, 1) - 1) % Self.palette.count] }
+
+    private func card(_ speaker: SpeakerSummary) -> some View {
+        let confirmed = controller.namedSpeakers[speaker.id]
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("\(speaker.id)").font(.headline).foregroundStyle(.white)
+                    .frame(width: 28, height: 28).background(Circle().fill(color(speaker.id)))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("話者 \(speaker.id)").font(.headline)
+                    Text("\(Self.duration(speaker.seconds))・\(speaker.utteranceCount) 発言").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                statusChip(speaker, confirmed: confirmed)
+            }
+            excerpts(speaker)
+            if confirmed == nil { namingControls(speaker) }
+            else if let warning = model.warnings[speaker.id] {
+                Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(confirmed == nil ? 0.08 : 0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(confirmed == nil ? color(speaker.id).opacity(0.5) : Color.green.opacity(0.4), lineWidth: 1))
+    }
+
+    @ViewBuilder private func statusChip(_ speaker: SpeakerSummary, confirmed: String?) -> some View {
+        if let name = confirmed {
+            if controller.voiceMatched.contains(speaker.id) {
+                Label("声紋で一致：\(name)", systemImage: "waveform.badge.checkmark").foregroundStyle(.green)
+            } else {
+                Label("確定：\(name)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+        } else {
+            Label("未確定", systemImage: "circle.dashed").foregroundStyle(.secondary)
+        }
+    }
+
+    private func excerpts(_ speaker: SpeakerSummary) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(speaker.excerpts.enumerated()), id: \.offset) { index, excerpt in
+                HStack(alignment: .top, spacing: 8) {
+                    if controller.namingAudioAvailable, speaker.clips.indices.contains(index) {
+                        let key = "\(speaker.id)-\(index)"
+                        Button { controller.toggleClip(speaker: speaker.id, index: index) } label: {
+                            Image(systemName: controller.clipPlayer.playingKey == key ? "stop.circle.fill" : "play.circle.fill").font(.title3)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(color(speaker.id))
+                        .help(controller.clipPlayer.playingKey == key ? "止める" : "この発言を聞き直す")
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("「\(excerpt)」").font(.callout).lineLimit(3)
+                        if speaker.clips.indices.contains(index) {
+                            Text(Self.clock(speaker.clips[index].start)).font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            if let failure = controller.playbackFailure, controller.namingAudioAvailable {
+                Label(failure, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder private func namingControls(_ speaker: SpeakerSummary) -> some View {
+        let candidates = controller.namingCandidates[speaker.id] ?? []
+        let hints = controller.namingHints[speaker.id] ?? []
+        if !candidates.isEmpty || !hints.isEmpty {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                if !candidates.isEmpty {
+                    Text("声が似ている人（声紋）").font(.caption).foregroundStyle(.secondary)
+                    FlowLayout(spacing: 6) {
+                        ForEach(candidates, id: \.name) { candidate in
+                            Button { model.drafts[speaker.id] = candidate.name } label: {
+                                Label("\(candidate.name)　\(String(format: "%.2f", candidate.similarity))", systemImage: "waveform")
+                            }
+                            .buttonStyle(.bordered).controlSize(.small)
+                        }
+                    }
+                }
+                if !hints.isEmpty {
+                    Text("名前のヒント（内容からの推定。確定ではありません）").font(.caption).foregroundStyle(.secondary)
+                    FlowLayout(spacing: 6) {
+                        ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                            Button { model.drafts[speaker.id] = hint.name } label: {
+                                Label(Self.hintTitle(hint), systemImage: hint.introduced ? "text.bubble" : "sparkles")
+                            }
+                            .buttonStyle(.bordered).controlSize(.small)
                         }
                     }
                 }
             }
         }
-        .padding(20)
-        .frame(width: 560, height: 480)
-    }
-
-    private func row(_ speaker: SpeakerSummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("話者 \(speaker.id)").font(.headline)
-                Text("\(Self.duration(speaker.seconds))・\(speaker.utteranceCount) 発言").foregroundStyle(.secondary)
+        Divider()
+        HStack {
+            TextField("名前を入力（例：佐藤 花子）", text: Binding(get: { model.drafts[speaker.id] ?? "" }, set: { model.drafts[speaker.id] = $0 }))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { model.confirm(speaker.id) }
+            if !controller.nameCandidates.isEmpty {
+                Menu {
+                    ForEach(controller.nameCandidates, id: \.self) { name in
+                        Button(name) { model.drafts[speaker.id] = name }
+                    }
+                } label: {
+                    Label("出席者", systemImage: "person.crop.circle")
+                }
+                .fixedSize()
             }
-            ForEach(Array(speaker.excerpts.enumerated()), id: \.offset) { _, excerpt in
-                Text("「\(excerpt)」").font(.callout).foregroundStyle(.secondary)
-            }
-            if let name = controller.namedSpeakers[speaker.id] {
-                if controller.voiceMatched.contains(speaker.id) {
-                    Label("声紋で一致: \(name)", systemImage: "waveform.badge.checkmark").foregroundStyle(.green)
-                } else {
-                    Label("確定: \(name)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                if let warning = model.warnings[speaker.id] {
-                    Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
-                }
-            } else {
-                if let candidates = controller.namingCandidates[speaker.id], !candidates.isEmpty {
-                    HStack {
-                        Text("声紋の候補:").font(.callout).foregroundStyle(.secondary)
-                        ForEach(candidates, id: \.name) { candidate in
-                            Button("\(candidate.name)（類似度 \(String(format: "%.2f", candidate.similarity))）") { model.drafts[speaker.id] = candidate.name }
-                        }
-                    }
-                }
-                if let hints = controller.namingHints[speaker.id], !hints.isEmpty {
-                    HStack {
-                        Text("名前のヒント（確定ではありません）:").font(.callout).foregroundStyle(.secondary)
-                        ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
-                            Button(Self.hintTitle(hint)) { model.drafts[speaker.id] = hint.name }
-                        }
-                    }
-                }
-                HStack {
-                    TextField("名前", text: Binding(get: { model.drafts[speaker.id] ?? "" }, set: { model.drafts[speaker.id] = $0 }))
-                        .onSubmit { model.confirm(speaker.id) }
-                    if !controller.nameCandidates.isEmpty {
-                        Menu("出席者から選ぶ") {
-                            ForEach(controller.nameCandidates, id: \.self) { name in
-                                Button(name) { model.drafts[speaker.id] = name }
-                            }
-                        }
-                        .fixedSize()
-                    }
-                    Button("確定") { model.confirm(speaker.id) }
-                        .disabled(model.working.contains(speaker.id) || (model.drafts[speaker.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                if controller.voiceprintsEnabled {
-                    Toggle("この声を覚える（次の会議から、同じ声の人に、この名前を付ける）", isOn: Binding(get: { model.remember[speaker.id] ?? true }, set: { model.remember[speaker.id] = $0 }))
-                        .font(.callout)
-                }
-                if let failure = model.failures[speaker.id] {
-                    Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+            Button("確定") { model.confirm(speaker.id) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.working.contains(speaker.id) || (model.drafts[speaker.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        if controller.voiceprintsEnabled {
+            Toggle(isOn: Binding(get: { model.remember[speaker.id] ?? true }, set: { model.remember[speaker.id] = $0 })) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("この声を覚える").font(.callout)
+                    Text("次の会議から、同じ声の人に、この名前を付けます（声の特徴だけ保存します。音声は保存しません）").font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .toggleStyle(.checkbox)
+        }
+        if let failure = model.failures[speaker.id] {
+            Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
         }
     }
 
@@ -164,12 +346,47 @@ struct SpeakerNamingView: View {
         let total = max(0, Int(seconds.rounded()))
         return total >= 60 ? "\(total / 60) 分 \(total % 60) 秒" : "\(total) 秒"
     }
+
+    /// 会議の時刻「mm:ss」（1 時間以上は「h:mm:ss」）。
+    static func clock(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, total % 3600 / 60, total % 60) : String(format: "%02d:%02d", total / 60, total % 60)
+    }
 }
 
 extension SpeakerNamingView {
-    /// ヒントのボタンの文：「名乗りあり: 佐藤 花子」・「佐藤 花子 62%」。
+    /// ヒントのボタンの文：「名乗りあり：佐藤 花子」・「佐藤 花子　62%」。
     static func hintTitle(_ hint: SpeakerHint) -> String {
-        if hint.introduced { return "名乗りあり: \(hint.name)" }
-        return "\(hint.name) \(Int(((hint.probability ?? 0) * 100).rounded()))%"
+        if hint.introduced { return "名乗りあり：\(hint.name)" }
+        return "\(hint.name)　\(Int(((hint.probability ?? 0) * 100).rounded()))%"
+    }
+}
+
+/// 行を折り返して並べる（候補のボタン用）。
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: widest, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
