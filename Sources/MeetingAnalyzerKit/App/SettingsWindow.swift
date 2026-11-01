@@ -175,6 +175,19 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var actorSections: some View {
+        Section("話者の分離（声）") {
+            if let voice = controller.voiceModel {
+                Toggle("声の違いで、相手の話者を分ける", isOn: Binding(get: { controller.voiceSeparation }, set: { controller.setVoiceSeparation($0) }))
+                    .disabled(!controller.isInstalled(voice))
+                ModelRow(settings: model, spec: ModelRowSpec(voice, controller), locked: locked)
+            }
+            Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち（ファイルにも、ネットワークにも出しません）、分けたら捨てます。ダウンロードは、押したときだけ（Hugging Face）。声の特徴の保存や、会議をまたぐ識別は、しません。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("出典：pyannote・WeSpeaker・BUT Speech@FIT のモデルを、Fluid Inference が Core ML に変換したもの（CC-BY-4.0。変換による改変あり）。ライセンスは、アプリの Resources/licenses に同梱しています。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(locked)
+
         Section("アクター定義") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -385,6 +398,17 @@ private struct ModelRowSpec {
         download = { controller.downloadDecisionModel(model) }
         discard = { controller.downloads.discardPartial(model) }
         delete = { controller.deleteDecisionModel(model) }
+    }
+
+    @MainActor init(_ model: VoiceModel, _ controller: MeetingController) {
+        id = model.id; name = model.name; summary = model.summary; bytes = model.bytes
+        installed = controller.isInstalled(model)
+        downloadedBytes = controller.modelStore.downloadedBytes(model)
+        inUse = controller.voiceSeparation
+        deleteNote = inUse ? "使っているモデルです。削除すると、声の分離をオフにします。もう一度使うには、ダウンロードし直します。" : "もう一度使うには、ダウンロードし直します。"
+        download = { controller.downloadVoiceModel(model) }
+        discard = { controller.downloads.discardPartial(model) }
+        delete = { controller.deleteVoiceModel(model) }
     }
 }
 
