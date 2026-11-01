@@ -45,12 +45,12 @@
 
 SPEC の「構成と制約」と、変更対象の詳細な要件を読み、次の 4 点を確認する。設計の原則の出典と、採用・不採用の選択は [参考にした設計原則](docs/references.md)、Module の対応は [構成説明](docs/architecture.md)。
 
-1. **変更理由と所有権**：`MeetingAnalyzerKit` は `Core`（発話・まとめ方・状態遷移・記録・話者の推定の規則）・`Transcription`（オンデバイス認識）・`Decision`（ダウンロードした判断モデルの実行。MPSGraph）・`Capture`（マイク・システム音声）・`Hub`（エージェントへ渡す窓口。Unix ドメインソケット）・`MCP`（エージェント向けのサーバー）・`Platform`（置き場所・記録の保存）・`Session`（流れの組み立て）・`CLI`・`App` に分け、**依存は下向きだけ**にする（App・CLI → Session・MCP → Transcription・Decision・Capture・Hub・Platform → Core）。`Core` は AppKit を `import` しない。時計は `Core` が持たず、引数の `now`（秒）で受ける。状態の所有者は、構成説明の表で 1 か所に決める。
+1. **変更理由と所有権**：`MeetingAnalyzerKit` は `Core`（発話・まとめ方・状態遷移・記録・名前のヒント・声紋の規則）・`Transcription`（オンデバイス認識）・`Decision`（ダウンロードした判断モデルの実行。MPSGraph）・`Capture`（マイク・システム音声）・`Hub`（エージェントへ渡す窓口。Unix ドメインソケット）・`MCP`（エージェント向けのサーバー）・`Platform`（置き場所・記録・声紋の保存）・`Session`（流れの組み立て）・`CLI`・`App` に分け、**依存は下向きだけ**にする（App・CLI → Session・MCP → Transcription・Decision・Capture・Hub・Platform → Core）。`Core` は AppKit を `import` しない。時計は `Core` が持たず、引数の `now`（秒）で受ける。状態の所有者は、構成説明の表で 1 か所に決める。
 2. **型付きの境界**：外部（引数・ファイル・OS・窓口の 1 行・MCP の JSON-RPC）からの値を、必要な境界で一度だけ検査・変換して型にする（`CommandParser.parse`、`HubWire.decode`、`TranscriptEvent` の `Codable`）。内側で再検証しない。
 3. **独立して検証できる規則**：まとめ方・状態遷移・記録・出来事の JSON の形・窓口・MCP は、音声・画面から分けて確かめられる形に保つ（`./scripts/test.sh`。XCTest は使えないので Swift Testing。素の `swift test` は、マクロプラグインのパスが渡らず失敗することがある）。
 4. **明示的な失敗**：失敗・取消・古い操作・資源寿命を区別し、何を継続・停止・保持するかを明確にする。回復できる失敗は `Result`・`throws` と小さな `enum` で返し、利用者への見せ方（メッセージ・終了コード）を決めるのは境界（CLI・UI）だけにする。エラーを握り潰したり、成功に見える代用品へ置き換えたりしない。**失敗した再生・取り込みを、正常な終了として、エージェントへ知らせない**（文字起こしが失敗したら、記録も `ended` も出さない）。
 
-- Apple の標準フレームワークだけを使う。外部の Swift パッケージ・ネットワークを足さない。**例外（利用者の判断。SPEC §2・§3.12・§3.13・§3.14）**：ダウンロードしたモデルを動かす transcribe.cpp（固定した commit を、`scripts/build-native.sh` で静的に取り込む）。**声による話者の分離の FluidAudio**（Swift パッケージ。固定した版を SwiftPM で取り込む。**Diarizer のトレイトだけ**。FluidAudio を使うのは `Separation/` の 1 ファイルだけで、通信は `ModelHub.offlineMode` で止める）。利用者が「ダウンロード」を押したときの、モデルのファイルの取得（文字起こし・話者の推定・話者の分離のモデル。Hugging Face。版・SHA-256 を固定して検証する）。話者の推定のモデルは、Apple 標準の MPSGraph で動かす（外部のコードを足さない）。OS による言語モデルの取得も除く。窓口は Unix ドメインソケット。音声・文字・画像は、ネットワークへ出さない。
+- Apple の標準フレームワークだけを使う。外部の Swift パッケージ・ネットワークを足さない。**例外（利用者の判断。SPEC §2・§3.12・§3.13・§3.14）**：ダウンロードしたモデルを動かす transcribe.cpp（固定した commit を、`scripts/build-native.sh` で静的に取り込む）。**声による話者の分離の FluidAudio**（Swift パッケージ。固定した版を SwiftPM で取り込む。**Diarizer のトレイトだけ**。FluidAudio を使うのは `Separation/` の 1 ファイルだけで、通信は `ModelHub.offlineMode` で止める）。利用者が「ダウンロード」を押したときの、モデルのファイルの取得（文字起こし・名前のヒント・話者の分離のモデル。Hugging Face。版・SHA-256 を固定して検証する）。名前のヒントのモデルは、Apple 標準の MPSGraph で動かす（外部のコードを足さない）。OS による言語モデルの取得も除く。窓口は Unix ドメインソケット。音声・文字・画像は、ネットワークへ出さない。
 - 不要な確保・コピー・計算を避ける。常駐アプリなので、会議が実行中でないときに CPU を使わない。
 - 一律の層構成、DDD、CQRS、不要な Repository、全操作の protocol 化を先回りで導入しない。
 - 依存のバージョンと配備下限は SPEC §2 と `Package.swift`・`Resources/Info.plist` を確認する。

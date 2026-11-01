@@ -153,16 +153,10 @@ struct DecisionModelStoreTests {
     }
 }
 
-@Suite("CLI：--judge と、判断モデルの models")
+@Suite("CLI：判断モデルの models")
 struct DecisionCommandTests {
-    @Test("--judge は、一覧にある判断モデルの ID だけ。無指定は、推定しない。models download/delete は、判断モデルの ID も受ける")
+    @Test("models download/delete は、判断モデルの ID も受ける。知らない ID は、使い方の誤り")
     func parses() {
-        guard case .success(.replay(let with)) = CommandParser.parse(["replay", "a.wav", "--actors", "A.md", "--judge", "tiny-jev-0.6b"]) else { Issue.record("parse failed"); return }
-        #expect(with.judge == "tiny-jev-0.6b")
-        guard case .success(.replay(let without)) = CommandParser.parse(["replay", "a.wav", "--actors", "A.md"]) else { Issue.record("parse failed"); return }
-        #expect(without.judge == nil)
-        guard case .failure(.usage(let message)) = CommandParser.parse(["replay", "a.wav", "--judge", "gpt"]) else { Issue.record("知らない判断モデルを断らない"); return }
-        #expect(message.contains("gpt") && message.contains("tiny-jev-0.6b"))
         #expect(CommandParser.parse(["models", "download", "tiny-jev-0.6b"]) == .success(.models(.download(id: "tiny-jev-0.6b"))))
         #expect(CommandParser.parse(["models", "delete", "tiny-jev-0.6b"]) == .success(.models(.delete(id: "tiny-jev-0.6b"))))
         guard case .failure(.usage) = CommandParser.parse(["models", "download", "nope"]) else { Issue.record("知らない ID を断らない"); return }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MeetingAnalyzerKit
 
-@Suite("CLI：actors check と replay --actors")
+@Suite("CLI：actors check・actors try と replay --actors")
 struct ActorCommandTests {
     @Test("引数を一度だけ検査する")
     func parses() {
@@ -14,19 +14,14 @@ struct ActorCommandTests {
         #expect(options.actors == "ACTOR.md")
     }
 
-    @Test("--attendees：名前を、「,」「、」で区切って渡す。--actors と一緒でなければ断る。ACTOR.md の相手の側に無い名前は、再生の前に断る（終了コード 2）")
-    func attendees() async throws {
-        guard case .success(.replay(let options)) = CommandParser.parse(["replay", "a.wav", "--actors", "ACTOR.md", "--attendees", "佐藤 花子、田中 美咲, "]) else { Issue.record("parse failed"); return }
-        #expect(options.attendees == ["佐藤 花子", "田中 美咲"])
-        guard case .success(.replay(let plain)) = CommandParser.parse(["replay", "a.wav", "--actors", "ACTOR.md"]) else { Issue.record("parse failed"); return }
-        #expect(plain.attendees == nil)
-        guard case .failure(.usage) = CommandParser.parse(["replay", "a.wav", "--attendees", "佐藤 花子"]) else { Issue.record("--actors なしを断らない"); return }
-
+    @Test("actors try --attendees：ACTOR.md の相手の側に無い名前は、モデルを読む前に断る（終了コード 2。有る名前の一覧を示す）")
+    func attendeesMustBeKnown() async throws {
         let actors = tempURL("attendees-actors", ext: "md")
         try Data(actorSample.utf8).write(to: actors)
+        defer { try? FileManager.default.removeItem(at: actors) }
         let err = Collected<String>()
-        let run = ReplayOptions(file: actors.path, speaker: .others, title: "m", locale: "ja_JP", hold: 0, wait: 0, actors: actors.path, attendees: ["高橋 健", "山田 太郎"])
-        let code = await CLIRunner(environment: ["MEETING_ANALYZER_DATA_DIR": tempURL("attendees-data").path], out: { _ in }, err: { err.add($0) }).run(.replay(run))
+        let options = ActorsTryOptions(file: actors.path, judge: "tiny-jev-0.6b", attendees: ["高橋 健", "山田 太郎"], input: .text("来週の予定を確認します"))
+        let code = await CLIRunner(environment: ["MEETING_ANALYZER_DATA_DIR": tempURL("attendees-data").path], out: { _ in }, err: { err.add($0) }).run(.actorsTry(options))
         #expect(code == 2 && (err.values.first ?? "").contains("高橋 健") && (err.values.first ?? "").contains("山田 太郎"), "\(err.values)")
     }
 }

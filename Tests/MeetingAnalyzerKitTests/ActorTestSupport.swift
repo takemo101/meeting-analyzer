@@ -59,7 +59,7 @@ struct KeywordJudge: SpeakerJudge {
     }
 }
 
-/// 決まった名前を付ける偽の部品で、会議（`LiveSession`）の流れを通す。
+/// ACTOR.md を使う会議（`LiveSession`）の流れを通す。
 struct ActorRig {
     let fake = FakeInputs()
     let sink = RecordingSink()
@@ -67,13 +67,11 @@ struct ActorRig {
     let notices = Collected<LiveSessionNotice>()
     let store = SessionStore(root: tempURL("actors"))
 
-    func session(labeler: SpeakerLabeler?, actors: ActorSource? = nil) -> LiveSession {
+    func session(actors: ActorSource? = nil) -> LiveSession {
         let clock = self.clock, notices = self.notices
         return LiveSession(
             title: "テスト会議", speakers: [.you, .others], inputs: fake.inputs, sink: sink, store: store,
-            options: LiveSessionOptions(actors: actors, labeler: labeler, timing: LiveSessionTiming(clock: { clock.now }, tickInterval: .seconds(60))), notify: { notices.add($0) }
+            options: LiveSessionOptions(actors: actors, timing: LiveSessionTiming(clock: { clock.now }, tickInterval: .seconds(60))), notify: { notices.add($0) }
         )
     }
 }
-
-enum SpeakerTestError: Error { case modelFailed }

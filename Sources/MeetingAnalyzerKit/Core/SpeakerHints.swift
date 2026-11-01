@@ -47,7 +47,7 @@ public struct SpeakerHintMaker: Sendable {
         var introduced: [Int: Int] = [:]
         let usable = texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { $0.count >= Self.minimumLength }.prefix(Self.maxTexts)
         for text in usable {
-            let found = SpeakerGuesser.mentions(of: others, in: text)
+            let found = Self.mentions(of: others, in: text)
             if found.introduced.count == 1, let only = found.introduced.first {
                 introduced[only, default: 0] += 1
                 continue
@@ -68,5 +68,33 @@ public struct SpeakerHintMaker: Sendable {
             .prefix(Self.topCount)
             .map { SpeakerHint(name: others[$0.index].name, probability: $0.average, introduced: false) }
         return named + ranked
+    }
+
+    private static let introductions = ["です", "と申します", "といいます", "と言います", "でございます"]
+
+    /// 発言に名前が出た人（`others` の位置）。`introduced`：名乗り（「山田です」）だけで出てきた人。`mentioned`：呼びかけ・言及で出た人（名乗りだけの人は含まない）。
+    /// 2 人以上に共通の語（同じ姓など）は、誰のことか決まらないので、使わない。
+    static func mentions(of actors: [Actor], in text: String) -> (mentioned: Set<Int>, introduced: Set<Int>) {
+        var owners: [String: Set<Int>] = [:]
+        for (index, actor) in actors.enumerated() {
+            for term in actor.mentionTerms { owners[term.lowercased(), default: []].insert(index) }
+        }
+        var mentioned = Set<Int>(), introduced = Set<Int>()
+        let lowered = text.lowercased()
+        for (term, who) in owners where who.count == 1 {
+            guard let index = who.first else { continue }
+            let honorific = Actor.honorifics.contains { term.hasSuffix($0) }
+            var from = lowered.startIndex
+            var plain = false, introducing = false
+            while let range = lowered.range(of: term, range: from..<lowered.endIndex) {
+                let after = lowered[range.upperBound...]
+                if !honorific, introductions.contains(where: { after.hasPrefix($0) }) { introducing = true } else { plain = true }
+                from = range.upperBound
+            }
+            if plain { mentioned.insert(index) } else if introducing { introduced.insert(index) }
+        }
+        // 呼びかけ・言及と、名乗りの両方に出る人は、言及を優先する（名乗りだけで決めない）。
+        introduced.subtract(mentioned)
+        return (mentioned, introduced)
     }
 }

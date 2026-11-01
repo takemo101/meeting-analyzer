@@ -111,9 +111,7 @@ public struct Transcript: Sendable, Equatable {
         } else if let voiceFailure {
             header.append("- 話者（声）: 分けられませんでした（\(voiceFailure)）")
         }
-        var speakerNote = actors == nil
-            ? (voiceSpeakers == nil ? "相手が複数人でも「相手」としか区別できません。" : "")
-            : "「相手（推定: 名前）」は、発言の内容から、判断モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかった（または、判断しなかった）ものです。"
+        var speakerNote = voiceSpeakers == nil ? "相手が複数人でも「相手」としか区別できません。" : ""
         if voiceSpeakers != nil {
             speakerNote += "「相手（話者 N）」は、声の違いから分けた、同じ声のまとまりです（人物の特定ではありません。1 人が複数の番号に分かれたり、複数人が 1 つの番号に入ったりし得ます）。"
             if !voiceNames.isEmpty {

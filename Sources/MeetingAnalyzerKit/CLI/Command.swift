@@ -52,20 +52,14 @@ public struct ReplayOptions: Equatable {
     public var model: TranscriptionChoice = .apple
     /// 使う `ACTOR.md` のパス（SPEC §3.13）。無指定なら、アクターを使わない。
     public var actors: String?
-    /// 話者の推定に使う判断モデルの ID（`DecisionModelCatalog`。SPEC §3.13）。無指定なら、推定しない（「相手」のまま）。
-    public var judge: String?
-    /// 出席者の名前（相手の側の人。SPEC §3.13）。無指定なら、ACTOR.md の全員。
-    public var attendees: [String]?
-    /// 話者の判断の単位（SPEC §3.13）。既定は、文ごと。
-    public var unit: JudgmentUnit = .default
     /// 声による話者の分離（SPEC §3.14）。再生した音声の全体を、声の違いで分けて、「相手」の発話に話者 ID を付ける。
     public var separate: Bool = false
 }
 
-/// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）を、判断して見せる（SPEC §3.13）。
+/// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）の、名前のヒントを見せる（診断。SPEC §3.13）。
 public struct ActorsTryOptions: Equatable {
     public enum Input: Equatable {
-        /// 本文 1 つ。
+        /// 本文 1 つ（1 人の話者の発話として、ヒントを出す）。
         case text(String)
         /// 評価の件のファイル（JSON Lines。`SpeakerEvalCase`）。
         case cases(String)
@@ -74,11 +68,7 @@ public struct ActorsTryOptions: Equatable {
     public var file: String
     /// 判断モデルの ID（`DecisionModelCatalog`）。
     public var judge: String
-    /// 試す判断の単位（`both` なら、両方を、同じ入力で比べる）。
-    public var units: [JudgmentUnit]
     public var attendees: [String]?
-    /// 名前を付けてよいかの条件（`--min-confidence`・`--max-filler`・`--rival`。無指定は、会議と同じ既定）。
-    public var gate: SpeakerGate = SpeakerGate()
     public var input: Input
 }
 
@@ -117,13 +107,12 @@ public enum CommandParser {
     private enum Option {
         static let speaker = "--speaker", title = "--title", locale = "--locale", hold = "--hold", wait = "--wait"
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
-        static let unit = "--unit", cases = "--cases"
-        static let minConfidence = "--min-confidence", maxFiller = "--max-filler", rival = "--rival"
+        static let cases = "--cases"
         static let separate = "--separate"
         /// 値を取らないオプション。
         static let flags: Set = [separate]
-        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees, unit, separate]
-        static let actorsTry: Set = [judge, attendees, unit, cases, minConfidence, maxFiller, rival]
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, separate]
+        static let actorsTry: Set = [judge, attendees, cases]
     }
 
     /// 引数を一度だけ検査して、型にする。知らないコマンド・オプション、足りない値、重複は、使い方の誤りとして断る。
@@ -137,7 +126,7 @@ public enum CommandParser {
             return options(rest, allowed: [], positional: 0).map { _ in .presets }
         case "actors":
             if rest.first == "try" { return actorsTryOptions(Array(rest.dropFirst())).map { .actorsTry($0) } }
-            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md> | actors try <ACTOR.md> --judge <ID> [--unit sentence|utterance|both] [--attendees 名前,名前] [--min-confidence 0〜1] [--max-filler 0〜1] [--rival 0〜1] (<本文> | --cases <ファイル>)")) }
+            guard rest.count == 2, rest[0] == "check" else { return .failure(.usage("actors の使い方: actors check <ACTOR.md> | actors try <ACTOR.md> --judge <ID> [--attendees 名前,名前] (<本文> | --cases <ファイル>)")) }
             return .success(.actorsCheck(file: rest[1]))
         case "doctor":
             return options(rest, allowed: [Option.locale], positional: 0).map { .doctor(locale: $0.values[Option.locale] ?? defaultLocale) }
@@ -165,20 +154,11 @@ public enum CommandParser {
         }
     }
 
-    /// `replay` の値を、一度だけ検査して、型にする（検査の順：話者 → モデル → 判断モデル → 出席者 → 秒数）。
+    /// `replay` の値を、一度だけ検査して、型にする（検査の順：話者 → モデル → 秒数）。
     private static func replayOptions(_ parsed: Parsed) -> Result<ReplayOptions, CLIError> {
         let values = parsed.values
         guard let speaker = Speaker(rawValue: values[Option.speaker] ?? "others") else { return .failure(.usage("--speaker は you か others です")) }
         return model(values[Option.model]).flatMap { chosen in
-            let unit: JudgmentUnit
-            switch units(values[Option.unit], allowBoth: false) {
-            case .success(let value): unit = value[0]
-            case .failure(let error): return .failure(error)
-            }
-            if let judge = values[Option.judge], DecisionModelCatalog.model(id: judge) == nil {
-                return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
-            }
-            if values[Option.attendees] != nil, values[Option.actors] == nil { return .failure(.usage("--attendees は、--actors と一緒に使います")) }
             if values[Option.separate] != nil, speaker != .others { return .failure(.usage("--separate は、--speaker others（相手）のときだけ使えます")) }
             return seconds(Option.hold, values).flatMap { hold in
                 seconds(Option.wait, values).map { wait in
@@ -186,8 +166,7 @@ public enum CommandParser {
                     return ReplayOptions(
                         file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
                         locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
-                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names), unit: unit,
-                        separate: values[Option.separate] != nil
+                        actors: values[Option.actors], separate: values[Option.separate] != nil
                     )
                 }
             }
@@ -201,34 +180,11 @@ public enum CommandParser {
             let values = parsed.values
             guard let judge = values[Option.judge] else { return .failure(.usage("--judge が必要です（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
             guard DecisionModelCatalog.model(id: judge) != nil else { return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）")) }
-            return units(values[Option.unit], allowBoth: true).flatMap { units in
-                gate(values).map { gate in
-                    ActorsTryOptions(
-                        file: parsed.positional[0], judge: judge, units: units, attendees: values[Option.attendees].map(names), gate: gate,
-                        input: values[Option.cases].map { .cases($0) } ?? .text(parsed.positional[1])
-                    )
-                }
-            }
+            return .success(ActorsTryOptions(
+                file: parsed.positional[0], judge: judge, attendees: values[Option.attendees].map(names),
+                input: values[Option.cases].map { .cases($0) } ?? .text(parsed.positional[1])
+            ))
         }
-    }
-
-    /// 名前を付けてよいかの条件（0〜1。無指定は、`SpeakerGate` の既定）。
-    private static func gate(_ values: [String: String]) -> Result<SpeakerGate, CLIError> {
-        var gate = SpeakerGate()
-        for (name, keyPath) in [(Option.minConfidence, \SpeakerGate.minimumConfidence), (Option.maxFiller, \SpeakerGate.maximumFiller), (Option.rival, \SpeakerGate.rivalConfidence)] {
-            guard let text = values[name] else { continue }
-            guard let value = Double(text), value >= 0, value <= 1 else { return .failure(.usage("\(name) は 0〜1 の確率です")) }
-            gate[keyPath: keyPath] = value
-        }
-        return .success(gate)
-    }
-
-    /// `--unit` の値（`sentence`・`utterance`。`allowBoth` なら `both`＝両方）。無指定は、既定（文ごと）。
-    private static func units(_ value: String?, allowBoth: Bool) -> Result<[JudgmentUnit], CLIError> {
-        guard let value else { return .success([.default]) }
-        if allowBoth, value == "both" { return .success(JudgmentUnit.allCases) }
-        guard let unit = JudgmentUnit(rawValue: value) else { return .failure(.usage("--unit は \((JudgmentUnit.allCases.map(\.rawValue) + (allowBoth ? ["both"] : [])).joined(separator: "・")) のどれかです")) }
-        return .success([unit])
     }
 
     /// 秒数のオプション（0〜3600）。無指定は 0。

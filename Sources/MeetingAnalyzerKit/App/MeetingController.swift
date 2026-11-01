@@ -35,7 +35,7 @@ final class MeetingController {
     let actorSelection = ActorSelection()
     /// 一時停止・再開・終了の、進行中の操作（同時に 1 つだけ）。
     private let operations = OperationGate()
-    /// 話者の推定に使う判断モデル（System One 型。取得済みのものだけ）。無ければ、推定しない（「相手」のまま。SPEC §3.13）。
+    /// 名前のヒントに使う判断モデル（System One 型。取得済みのものだけ）。無ければ、ヒントを出さない（SPEC §3.13）。名前は、人間が確定する。
     var decisionModel: DecisionModel? { preferences.decisionModel.flatMap(DecisionModelCatalog.model(id:)) }
     /// 声による話者の分離（SPEC §3.14）。オンで、モデルが取得済みのときだけ、会議で使う。
     var voiceSeparation: Bool { preferences.voiceSeparation }
@@ -104,7 +104,7 @@ final class MeetingController {
         var saved = CapturePreferences.load(defaults)
         // 保存したプリセットが、もう無ければ（自分のフォルダから消した）、既定に戻す。
         if presetStore.resolve(id: saved.presetID) == nil { saved.presetID = AnalysisPreset.defaultID }
-        // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準／「推定しない」に戻す（黙って別のものを使わないよう、設定を直す）。
+        // 保存したモデルが、取得されていなければ（削除した・別の Mac から移した）、Mac 標準／「ヒントを出さない」に戻す（黙って別のものを使わないよう、設定を直す）。
         if case .local(let id) = saved.transcription, !(LocalModelCatalog.model(id: id).map { modelStore.isInstalled($0.artifact) } ?? false) { saved.transcription = .apple }
         if let id = saved.decisionModel, !(DecisionModelCatalog.model(id: id).map { modelStore.isInstalled($0) } ?? false) { saved.decisionModel = nil }
         if saved.voiceSeparation, !(VoiceModelCatalog.all.first.map { modelStore.isInstalled($0) } ?? false) { saved.voiceSeparation = false }
@@ -263,11 +263,11 @@ final class MeetingController {
         changed()
     }
 
-    // MARK: 話者の推定のモデル（SPEC §3.13）
+    // MARK: 名前のヒントのモデル（SPEC §3.13）
 
     func isInstalled(_ model: DecisionModel) -> Bool { modelStore.isInstalled(model) }
 
-    /// 話者の推定に使う判断モデルを選ぶ（`nil`＝推定しない）。取得済みのものだけ選べる。会議の実行中は、変えられない。
+    /// 名前のヒントに使う判断モデルを選ぶ（`nil`＝ヒントを出さない）。取得済みのものだけ選べる。会議の実行中は、変えられない。
     func setDecisionModel(_ model: DecisionModel?) {
         if let model { guard isInstalled(model) else { return } }
         mutateWhenIdle { $0.decisionModel = model?.id }
@@ -281,7 +281,7 @@ final class MeetingController {
         }
     }
 
-    /// 取得した判断モデルを、削除する。使っているモデルなら、「推定しない」に戻す（会議の実行中は、使っているモデルを消せない）。
+    /// 取得した判断モデルを、削除する。使っているモデルなら、「ヒントを出さない」に戻す（会議の実行中は、使っているモデルを消せない）。
     func deleteDecisionModel(_ model: DecisionModel) {
         if decisionModel == model {
             guard state == .idle else { return }
@@ -423,7 +423,7 @@ final class MeetingController {
         let notify: @Sendable (LiveSessionNotice) -> Void = { [weak self] notice in
             Task { @MainActor in self?.notice = FailureText.notice(notice) }
         }
-        let setup = await actorSelection.prepare(file: actorFile, usesSystemAudio: selection.system != .off, model: decisionModel, store: modelStore)
+        let setup = actorSelection.prepare(file: actorFile)
         let dataDirectory = dataDirectory
         // 声による話者の分離（SPEC §3.14）：オンで、モデルが取得済みで、システム音声を取り込むときだけ。音は、メモリ上だけに持つ。
         var recorder: VoiceAudioRecorder?
@@ -453,7 +453,6 @@ final class MeetingController {
                 policy: batchMode.policy,
                 preset: presetStore.resolve(id: presetID)?.info,
                 actors: setup.actors,
-                labeler: setup.labeler,
                 screen: screenSelection == .off ? nil : LiveSessionScreen(feed: ScreenFeed { try await ScreenSnapshotter(selection: screenSelection).snapshot() }, store: ScreenshotStore(root: dataDirectory)),
                 voice: voice
             ),
