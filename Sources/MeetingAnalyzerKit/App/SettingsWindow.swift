@@ -38,6 +38,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var revision = 0
     /// 削除の確認を出しているモデルの ID（`@State` のマクロは、Command Line Tools だけの環境で使えないため、ここに持つ）。
     @Published var confirmingDelete: String?
+    /// 「詳細（分離の調整）」を開いているか（題名の行のどこを押しても、開閉できるように、`DisclosureGroup` でなく、自前の行を使う）。
+    @Published var tuningExpanded = false
     /// サイドバーで選んでいるページ（`@State` を使えないので、ここに持つ）。
     @Published var page: SettingsPage = .capture
     /// 指示をコピーした直後の skill（ボタンに「コピーしました」を見せる。少しして戻す）。
@@ -186,7 +188,16 @@ struct SettingsView: View {
                 }
                 Text("声の似た人が 1 つにまとまって、人数が少なく出るときは、相手の人数（2〜8）を指定すると、その数に分けます。分かっていないときは、自動のままにします。")
                     .font(.caption).foregroundStyle(.secondary)
-                DisclosureGroup("詳細（分離の調整）") {
+                Button { model.tuningExpanded.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: model.tuningExpanded ? "chevron.down" : "chevron.right").font(.caption.weight(.semibold)).frame(width: 12)
+                        Text("詳細（分離の調整）")
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if model.tuningExpanded {
                     VStack(alignment: .leading, spacing: 12) {
                         tuningSlider(
                             title: "同じ人とみなす距離の上限", value: controller.voiceClusterThreshold, defaultValue: VoiceSeparationTuning.defaultClusterThreshold,
@@ -206,7 +217,7 @@ struct SettingsView: View {
                         Text("次の会議の終了から（名付けの画面の「分け直す」にも）効きます。実会議での最適な値は、確かめていません。迷ったときは、既定のままにします。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    .padding(.top, 6)
+                    .padding(.top, 2)
                 }
             }
             Text("会議の終了のときに、システム音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と入れます。会議の間、システム音声を、メモリの中だけに持ち、分けたら捨てます（下の「相手の音声を保存する」を選んだときだけ、ファイルに残します。ネットワークには出しません）。ダウンロードは、押したときだけ（Hugging Face）。")
