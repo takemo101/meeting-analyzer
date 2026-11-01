@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 extension HubError {
@@ -314,13 +315,46 @@ public struct CLIRunner {
         defer { hub.stop() }
         await waitForAgent(on: hub, upTo: options.wait)
 
+        var separator: FluidVoiceSeparator?
+        if options.separate {
+            guard let model = VoiceModelCatalog.all.first, modelStore.isInstalled(model) else {
+                throw CLIError.transcription("話者の分離のモデルが、取得されていません（\(AppInfo.name) models download \(VoiceModelCatalog.all.first?.id ?? "speaker-separation")）")
+            }
+            separator = FluidVoiceSeparator(model: model, store: modelStore)
+        }
+
         let pipeline = SessionPipeline(title: options.title, sink: hub, store: SessionStore(root: dataDirectory), preset: preset, actors: actorSource)
         pipeline.begin(sources: [options.speaker])
         let lastEnd = try await play(file, options, labeler: labeler, into: pipeline)
+        if let separator { await separateVoices(file, with: separator, into: pipeline) }
         // 再生なので、セッションの長さは、処理にかかった時間でなく、音声の長さにする。
         let end = pipeline.finish(reason: .user, endedAt: pipeline.startedAt.addingTimeInterval(lastEnd), at: lastEnd)
         printReplaySummary(end)
         if options.hold > 0 { try? await Task.sleep(for: .seconds(options.hold)) }
+    }
+
+    /// 再生した音声の全体を、声の違いで分けて、「相手」の発話に話者 ID を付ける（SPEC §3.14）。失敗しても、再生は終える（ID なしで、記録に理由を書く）。
+    private func separateVoices(_ file: URL, with separator: FluidVoiceSeparator, into pipeline: SessionPipeline) async {
+        do {
+            let recorder = VoiceAudioRecorder()
+            recorder.begin()
+            recorder.setOrigin(0)
+            let audio = try AVAudioFile(forReading: file)
+            let capacity: AVAudioFrameCount = 16_384
+            while audio.framePosition < audio.length {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: capacity) else { break }
+                try audio.read(into: buffer, frameCount: capacity)
+                if buffer.frameLength == 0 { break }
+                recorder.append(buffer)
+            }
+            guard let captured = recorder.snapshot() else { return }
+            let segments = try await separator.separate(captured.samples)
+            pipeline.applyVoices(captured.timeline.sessionSegments(from: segments))
+        } catch {
+            let reason = (error as? VoiceSeparationError)?.message ?? "\(error)"
+            pipeline.noteVoiceFailure(reason)
+            err(CLIView.failure(.transcription(reason), outStyle))
+        }
     }
 
     /// 開始の出来事で渡すプリセット。指定があれば、その ID（無ければ、断る）。無指定なら、既定。
@@ -392,9 +426,9 @@ public struct CLIRunner {
 
     private func printReplaySummary(_ end: SessionEnd) {
         if outIsTerminal {
-            out(CLIView.replaySummary(sessionId: end.sessionId, utterances: end.utterances, batches: end.batches, duration: TimeInterval(end.durationSeconds), path: end.transcriptPath, outStyle))
+            out(CLIView.replaySummary(sessionId: end.sessionId, utterances: end.utterances, batches: end.batches, duration: TimeInterval(end.durationSeconds), path: end.transcriptPath, speakers: end.speakers, outStyle))
         } else {
-            out(CLIOutput.json(CLIOutput.ReplaySummary(sessionId: end.sessionId, batches: end.batches, utterances: end.utterances, durationSeconds: end.durationSeconds, transcriptPath: end.transcriptPath)))
+            out(CLIOutput.json(CLIOutput.ReplaySummary(sessionId: end.sessionId, batches: end.batches, utterances: end.utterances, durationSeconds: end.durationSeconds, transcriptPath: end.transcriptPath, speakers: end.speakers)))
         }
     }
 }

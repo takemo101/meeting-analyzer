@@ -50,6 +50,10 @@ public enum LiveSessionNotice: Sendable, Equatable {
     case possibleEcho
     /// 話者の推定が失敗した（モデルを使えない・応答しない、など）。以後、「相手」への名前の推定を止め、文字起こしと転送は続ける。セッションにつき 1 回。
     case speakerGuessFailed
+    /// 声による話者の分離（会議の終了時）に失敗した。記録に、話者 ID は付かない（理由は、記録の見出しにも書く）。
+    case voiceSeparationFailed(String)
+    /// 会議が長く、声の分離は、最初の 3 時間だけ（音声を持てる上限）。
+    case voiceSeparationTruncated
 }
 
 public struct LiveSessionOutcome: Sendable, Equatable {
@@ -90,7 +94,18 @@ public struct LiveSessionScreen: Sendable {
     }
 }
 
-/// 会議の設定：まとめ方・分析のしかた・アクター・時間・画面。すべて既定値つき（何も渡さなければ、実機の既定）。
+/// 声による話者の分離（SPEC §3.14）。選んだときだけ渡す。実行中は、システム音声を `recorder` にメモリ上だけで持ち、終了の処理で、`separator` で分けて、捨てる。
+public struct LiveSessionVoice: Sendable {
+    public var recorder: VoiceAudioRecorder
+    public var separator: any VoiceSeparating
+
+    public init(recorder: VoiceAudioRecorder, separator: any VoiceSeparating) {
+        self.recorder = recorder
+        self.separator = separator
+    }
+}
+
+/// 会議の設定：まとめ方・分析のしかた・アクター・時間・画面・声の分離。すべて既定値つき（何も渡さなければ、実機の既定）。
 public struct LiveSessionOptions: Sendable {
     public var policy: BatchingPolicy
     public var preset: PresetInfo?
@@ -98,14 +113,16 @@ public struct LiveSessionOptions: Sendable {
     public var labeler: SpeakerLabeler?
     public var timing: LiveSessionTiming
     public var screen: LiveSessionScreen?
+    public var voice: LiveSessionVoice?
 
-    public init(policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil, timing: LiveSessionTiming = LiveSessionTiming(), screen: LiveSessionScreen? = nil) {
+    public init(policy: BatchingPolicy = .standard, preset: PresetInfo? = nil, actors: ActorSource? = nil, labeler: SpeakerLabeler? = nil, timing: LiveSessionTiming = LiveSessionTiming(), screen: LiveSessionScreen? = nil, voice: LiveSessionVoice? = nil) {
         self.policy = policy
         self.preset = preset
         self.actors = actors
         self.labeler = labeler
         self.timing = timing
         self.screen = screen
+        self.voice = voice
     }
 }
 
@@ -136,6 +153,7 @@ public actor LiveSession {
     private var echoReported = false
     private let labeler: SpeakerLabeler?
     private var labelingFailed = false
+    private let voice: LiveSessionVoice?
 
     private struct Running {
         let stream: LiveInputStream
@@ -156,6 +174,7 @@ public actor LiveSession {
         self.finalizeTimeout = options.timing.finalizeTimeout
         self.notify = notify
         self.labeler = options.labeler
+        self.voice = options.voice
         self.screenRecorder = options.screen.map { screen in
             ScreenRecorder(feed: screen.feed, store: screen.store, sessionId: sessionId, interval: screen.interval, minGap: screen.minGap, elapsed: { clock().timeIntervalSince(startedAt) }, notify: notify)
         }
@@ -211,6 +230,7 @@ public actor LiveSession {
         stopTicker()
         await screenRecorder?.stopPeriodic()
         await endSegment()
+        await separateVoices()
         let now = clock()
         let end = pipeline.finish(reason: reason, endedAt: now, at: now.timeIntervalSince(startedAt))
         // 画像は、記録（`transcript.md`）と同じフォルダに残る（同じ寿命で、アプリが消す。SPEC §3.8）。
@@ -234,7 +254,10 @@ public actor LiveSession {
             for speaker in speakers {
                 let stream = try await inputs.open(speaker)
                 // 音声の秒数の原点は、取り込みが始まった時刻（セッションの開始からの経過）。一時停止をはさんでも、時刻が続く。
-                opened[speaker] = (stream, elapsed())
+                let origin = elapsed()
+                opened[speaker] = (stream, origin)
+                // 声の分離：この塊の最初の音の、会議の時刻（認識の時刻の原点と同じ）。音は、取り込みの口（`DeviceInputs`）が、`recorder` へ足す。
+                if speaker == .others { voice?.recorder.setOrigin(origin) }
             }
         } catch {
             for (stream, _) in opened.values { await stream.stop() }
@@ -245,6 +268,24 @@ public actor LiveSession {
         for (speaker, (stream, origin)) in opened {
             let task = Task { await self.consume(stream, speaker: speaker, origin: origin) }
             segment[speaker] = Running(stream: stream, task: task)
+        }
+    }
+
+    /// 声による話者の分離（SPEC §3.14）。取り込みを止めたあと・記録を書く前に、1 回だけ。持っていた音声で、分離して、確定した「相手」の発話に話者 ID を付ける。**音声は、成否にかかわらず捨てる**。
+    /// 失敗しても、会議の終了は続ける（ID なしで、記録を書く。失敗を、記録と知らせに出す）。
+    private func separateVoices() async {
+        guard let voice else { return }
+        defer { voice.recorder.reset() }
+        if voice.recorder.isTruncated { notify(.voiceSeparationTruncated) }
+        guard let captured = voice.recorder.snapshot() else { return }
+        let separator = voice.separator
+        do {
+            let segments = try await Task.detached(priority: .userInitiated) { try await separator.separate(captured.samples) }.value
+            pipeline.applyVoices(captured.timeline.sessionSegments(from: segments))
+        } catch {
+            let message = (error as? VoiceSeparationError)?.message ?? String(describing: error)
+            pipeline.noteVoiceFailure(message)
+            notify(.voiceSeparationFailed(message))
         }
     }
 

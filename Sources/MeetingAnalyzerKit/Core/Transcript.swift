@@ -13,6 +13,10 @@ public struct Transcript: Sendable, Equatable {
 
     /// 会議で使った `ACTOR.md` のアクター（SPEC §3.13）。あれば、記録の見出しに書く。
     public var actors: ActorList?
+    /// 声で分けた話者の数（SPEC §3.14）。分けたときだけ。
+    public var voiceSpeakers: Int?
+    /// 声の分離に失敗したときの理由（記録に書く。分けたときは `nil`）。
+    public var voiceFailure: String?
 
     public init() {}
 
@@ -21,6 +25,11 @@ public struct Transcript: Sendable, Equatable {
 
     public mutating func record(_ utterance: Utterance) {
         byKey[utterance.key] = utterance
+    }
+
+    /// 発話に、声の話者 ID を付ける（`key`：`Utterance.key`）。
+    public mutating func assignVoice(_ voice: Int?, forKey key: String) {
+        byKey[key]?.voice = voice
     }
 
     /// 撮った画面の画像を、記録へ加える（`path`：`transcript.md` のあるフォルダからの相対パス）。
@@ -66,9 +75,17 @@ public struct Transcript: Sendable, Equatable {
         header.append("- 発話数: \(utteranceCount)")
         if !shots.isEmpty { header.append("- 画像: \(shots.count) 枚") }
         if let actors { header.append("- アクター（ACTOR.md）: \(actors.summary)") }
-        let speakerNote = actors == nil
-            ? "相手が複数人でも「相手」としか区別できません。"
+        if let voiceSpeakers {
+            header.append("- 話者（声）: \(voiceSpeakers) 人")
+        } else if let voiceFailure {
+            header.append("- 話者（声）: 分けられませんでした（\(voiceFailure)）")
+        }
+        var speakerNote = actors == nil
+            ? (voiceSpeakers == nil ? "相手が複数人でも「相手」としか区別できません。" : "")
             : "「相手（推定: 名前）」は、発言の内容から、判断モデルが選んだ推定で、間違い得ます。「相手」のままの発言は、誰か決められなかった（または、判断しなかった）ものです。"
+        if voiceSpeakers != nil {
+            speakerNote += "「相手（話者 N）」は、声の違いから分けた、同じ声のまとまりです（人物の特定ではありません。1 人が複数の番号に分かれたり、複数人が 1 つの番号に入ったりし得ます）。"
+        }
         var blocks = [
             header.joined(separator: "\n"),
             "> 音声認識の自動出力です。誤変換・欠落・聞き取れなかった箇所を含みます。専門用語や固有名詞、数値は特に不確かです。\(speakerNote)",

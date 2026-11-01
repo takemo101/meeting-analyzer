@@ -13,8 +13,12 @@ public struct Utterance: Sendable, Equatable {
     public var version: Int
     /// `ACTOR.md` のアクター。無ければ `nil`（「本人」「相手」のまま）。
     public var actor: ActorLabel?
+    /// セッションの開始からの秒数（発話の終わり）。分からないときは `nil`。
+    public var endedAt: TimeInterval?
+    /// 声の分離が付けた、話者 ID（1, 2, …。SPEC §3.14）。会議の終了のときに、確定した「相手」の発話へ付く。無ければ `nil`。
+    public var voice: Int?
 
-    public init(id: Int, speaker: Speaker, text: String, isFinal: Bool, startedAt: TimeInterval, version: Int = 1, actor: ActorLabel? = nil) {
+    public init(id: Int, speaker: Speaker, text: String, isFinal: Bool, startedAt: TimeInterval, version: Int = 1, actor: ActorLabel? = nil, endedAt: TimeInterval? = nil, voice: Int? = nil) {
         self.id = id
         self.speaker = speaker
         self.text = text
@@ -22,12 +26,16 @@ public struct Utterance: Sendable, Equatable {
         self.startedAt = startedAt
         self.version = version
         self.actor = actor
+        self.endedAt = endedAt
+        self.voice = voice
     }
 
-    /// 発言者の表示：「相手」・「相手（推定: 佐藤 花子）」・「本人（山田 太郎）」。
+    /// 発言者の表示：「相手」・「相手（推定: 佐藤 花子）」・「本人（山田 太郎）」。声で分けたときは、「相手（話者 2）」・「相手（話者 2・推定: 佐藤 花子）」。
     public var speakerLabel: String {
-        guard let actor else { return speaker.displayName }
-        return actor.guessed ? "\(speaker.displayName)（推定: \(actor.name)）" : "\(speaker.displayName)（\(actor.name)）"
+        var parts: [String] = []
+        if let voice { parts.append("話者 \(voice)") }
+        if let actor { parts.append(actor.guessed ? "推定: \(actor.name)" : actor.name) }
+        return parts.isEmpty ? speaker.displayName : "\(speaker.displayName)（\(parts.joined(separator: "・"))）"
     }
 
     /// 発言者と番号で一意。バッチ・記録の更新（upsert）に使う。

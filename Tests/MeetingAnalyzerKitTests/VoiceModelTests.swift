@@ -37,7 +37,7 @@ struct VoiceModelTests {
         }
         #expect(names.contains("plda-parameters.json"))
         #expect(Set(model.artifacts.compactMap(\.storedAs)).count == model.artifacts.count, "保管の場所が重複している")
-        let prefix = "voice/\(model.revision.prefix(12))/\(model.repository.split(separator: "/").last!)/"
+        let prefix = "voice/\(model.revision.prefix(12))/speaker-diarization/"   // FluidAudio が探すフォルダの名前（リポジトリの名前から -coreml を除いたもの）
         for artifact in model.artifacts {
             #expect(artifact.storedAs == prefix + artifact.filename)
             #expect(artifact.sha256.count == 64 && artifact.sha256.allSatisfy { "0123456789abcdef".contains($0) })
@@ -63,7 +63,7 @@ struct VoiceModelTests {
         #expect(store.isInstalled(model))
         #expect(store.ensureVerified(model))
 
-        let folder = store.folder(model).appendingPathComponent(model.repository.split(separator: "/").last.map(String.init)!)
+        let folder = store.folder(model).appendingPathComponent(VoiceModel.folderName(of: model.repository))
         #expect(try Data(contentsOf: folder.appendingPathComponent("Embedding.mlmodelc/weights/weight.bin")) == files["Embedding.mlmodelc/weights/weight.bin"])
         for sub in ["", "Embedding.mlmodelc", "Embedding.mlmodelc/weights"] {
             let directory = sub.isEmpty ? folder : folder.appendingPathComponent(sub)

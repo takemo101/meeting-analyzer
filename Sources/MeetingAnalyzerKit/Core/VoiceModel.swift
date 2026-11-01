@@ -2,7 +2,7 @@ import Foundation
 
 /// 追加でダウンロードして使える、声による話者の分離のモデル（SPEC §3.14）。
 /// 1 つのモデルは、**複数のファイル**（Core ML の `.mlmodelc` が、ディレクトリ）。**すべてのファイルが、そろってはじめて「取得済み」**。
-/// 保管は、`models/voice/<版の先頭 12 桁>/<リポジトリの名前>/…`（FluidAudio が、読み込むときの並びと同じ。FluidAudio 自身の取得は、使わない）。
+/// 保管は、`models/voice/<版の先頭 12 桁>/<フォルダ名>/…`。**フォルダ名は、FluidAudio が読むときの名前**（リポジトリの名前から `-coreml` を除いたもの。`speaker-diarization`）。FluidAudio 自身の取得は、使わない。
 public struct VoiceModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String
@@ -18,7 +18,7 @@ public struct VoiceModel: Sendable, Equatable, Identifiable {
         self.summary = summary
         self.repository = repository
         self.revision = revision
-        let folder = "voice/\(revision.prefix(12))/\(repository.split(separator: "/").last.map(String.init) ?? repository)"
+        let folder = "voice/\(revision.prefix(12))/\(Self.folderName(of: repository))"
         self.artifacts = files.map {
             ModelArtifact(repository: repository, revision: revision, filename: $0.path, bytes: $0.bytes, sha256: $0.sha256, storedAs: "\(folder)/\($0.path)")
         }
@@ -30,7 +30,12 @@ public struct VoiceModel: Sendable, Equatable, Identifiable {
 
     public var bytes: Int64 { artifacts.reduce(0) { $0 + $1.bytes } }
 
-    /// FluidAudio の `OfflineDiarizerModels.load(from:)` へ渡すディレクトリ（この下に、`<リポジトリの名前>/` がある）。
+    /// FluidAudio が、モデルを探すフォルダの名前（リポジトリの名前から `-coreml` を除く）。
+    static func folderName(of repository: String) -> String {
+        (repository.split(separator: "/").last.map(String.init) ?? repository).replacingOccurrences(of: "-coreml", with: "")
+    }
+
+    /// FluidAudio の `OfflineDiarizerModels.load(from:)` へ渡すディレクトリ（この下に、`<フォルダ名>/` がある）。
     public var storageFolder: String { "voice/\(revision.prefix(12))" }
 }
 

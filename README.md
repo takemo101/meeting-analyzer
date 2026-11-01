@@ -27,7 +27,7 @@ Mac の**音声**（マイクと、Mac から出ている音）を、Mac の中�
 
 ## 必要なもの
 
-- macOS 26 以降、Apple silicon。Swift 6（Xcode または Command Line Tools）。外部の Swift パッケージはない。**文字起こしのモデルを動かす transcribe.cpp（C++・ggml）だけは、ビルドのとき（`scripts/build-native.sh`。`build`・`test` が先に呼ぶ）に、固定した版を GitHub から取得して、静的ライブラリとしてビルドする**（git が要る。cmake が無ければ、`build/native/venv` に pip で入れる。初回は 20〜30 秒。以後は何もしない）。
+- macOS 26 以降、Apple silicon。Swift 6.2 以降（Xcode または Command Line Tools）。外部の Swift パッケージは、**声による話者の分離の FluidAudio だけ**（固定した版。初回のビルドで、SwiftPM が取得する）。**文字起こしのモデルを動かす transcribe.cpp（C++・ggml）は、ビルドのとき（`scripts/build-native.sh`。`build`・`test` が先に呼ぶ）に、固定した版を GitHub から取得して、静的ライブラリとしてビルドする**（git が要る。cmake が無ければ、`build/native/venv` に pip で入れる。初回は 20〜30 秒。以後は何もしない）。
 - 開発用：`just`（任意。なければ `scripts/` を直接実行）。E2E には、`say` の日本語の声 Kyoko も使う。
 
 ## ダウンロード（リリースの DMG）
@@ -164,6 +164,8 @@ $EXE mcp [--channel]                      # エージェント向けの MCP サ�
 $EXE doctor                               # この Mac で、その言語のオンデバイス認識が使えるか
 $EXE transcribe sample.aiff               # 確定した結果を出す（パイプなら 1 行 1 件の JSON）
 $EXE replay sample.aiff --wait 30 --hold 60   # 検証用：音声ファイルをセッションとして再生し、窓口を開ける
+$EXE models download speaker-separation   # 声による話者の分離のモデル（約 22 MB）を取得する
+$EXE replay meeting.wav --separate        # 音声の全体を、声の違いで分けて、記録に「相手（話者 1）」「相手（話者 2）」と出す（SPEC §3.14）
 $EXE actors check ACTOR.md                # ACTOR.md の書式を検査して、読み取れた内容を出す
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b "この画面の表示が遅いです"   # 診断：この ACTOR.md と判断モデルで、誰に付くか・確率・付けない理由を見る
 $EXE actors try ACTOR.md --judge tiny-jev-0.6b --unit both --cases eval/cases.jsonl   # 評価：合成の件で、判断の単位ごとの正解・間違いを数える（eval/README.md）

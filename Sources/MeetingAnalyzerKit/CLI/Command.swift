@@ -58,6 +58,8 @@ public struct ReplayOptions: Equatable {
     public var attendees: [String]?
     /// 話者の判断の単位（SPEC §3.13）。既定は、文ごと。
     public var unit: JudgmentUnit = .default
+    /// 声による話者の分離（SPEC §3.14）。再生した音声の全体を、声の違いで分けて、「相手」の発話に話者 ID を付ける。
+    public var separate: Bool = false
 }
 
 /// `actors try` のオプション：ACTOR.md と判断モデルで、1 つの本文、または、評価の件（`--cases`）を、判断して見せる（SPEC §3.13）。
@@ -117,7 +119,10 @@ public enum CommandParser {
         static let preset = "--preset", model = "--model", actors = "--actors", judge = "--judge", attendees = "--attendees"
         static let unit = "--unit", cases = "--cases"
         static let minConfidence = "--min-confidence", maxFiller = "--max-filler", rival = "--rival"
-        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees, unit]
+        static let separate = "--separate"
+        /// 値を取らないオプション。
+        static let flags: Set = [separate]
+        static let replay: Set = [speaker, title, locale, hold, wait, preset, model, actors, judge, attendees, unit, separate]
         static let actorsTry: Set = [judge, attendees, unit, cases, minConfidence, maxFiller, rival]
     }
 
@@ -174,13 +179,15 @@ public enum CommandParser {
                 return .failure(.usage("知らない判断モデルです: \(judge)（\(DecisionModelCatalog.all.map(\.id).joined(separator: "・"))）"))
             }
             if values[Option.attendees] != nil, values[Option.actors] == nil { return .failure(.usage("--attendees は、--actors と一緒に使います")) }
+            if values[Option.separate] != nil, speaker != .others { return .failure(.usage("--separate は、--speaker others（相手）のときだけ使えます")) }
             return seconds(Option.hold, values).flatMap { hold in
                 seconds(Option.wait, values).map { wait in
                     let file = parsed.positional[0]
                     return ReplayOptions(
                         file: file, speaker: speaker, title: values[Option.title] ?? "replay-" + URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent,
                         locale: values[Option.locale] ?? defaultLocale, hold: hold, wait: wait, preset: values[Option.preset], model: chosen,
-                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names), unit: unit
+                        actors: values[Option.actors], judge: values[Option.judge], attendees: values[Option.attendees].map(names), unit: unit,
+                        separate: values[Option.separate] != nil
                     )
                 }
             }
@@ -260,8 +267,13 @@ public enum CommandParser {
             let argument = arguments[index]
             if argument.hasPrefix("--") {
                 guard allowed.contains(argument) else { return .failure(.usage("知らないオプションです: \(argument)")) }
-                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else { return .failure(.usage("\(argument) には値が必要です")) }
                 guard parsed.values[argument] == nil else { return .failure(.usage("\(argument) が重複しています")) }
+                if Option.flags.contains(argument) {
+                    parsed.values[argument] = "true"
+                    index += 1
+                    continue
+                }
+                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else { return .failure(.usage("\(argument) には値が必要です")) }
                 parsed.values[argument] = arguments[index + 1]
                 index += 2
             } else {

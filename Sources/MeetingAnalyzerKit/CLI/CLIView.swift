@@ -209,12 +209,13 @@ enum CLIView {
         style.dim("\(clock(start)) → \(clock(end))") + "  " + text
     }
 
-    static func replaySummary(sessionId: String, utterances: Int, batches: Int, duration: TimeInterval, path: String?, _ style: TerminalStyle) -> String {
+    static func replaySummary(sessionId: String, utterances: Int, batches: Int, duration: TimeInterval, path: String?, speakers: Int? = nil, _ style: TerminalStyle) -> String {
         var rows: [(name: String, text: [String])] = [
             ("セッション", [sessionId]),
             ("発話", ["\(utterances) 件（\(batches) バッチ）"]),
             ("長さ", [clock(duration)]),
         ]
+        if let speakers { rows.append(("話者（声）", ["\(speakers) 人"])) }
         if let path { rows.append(("記録", [path])) }
         return ([style.success("再生が終わりました")] + style.table(rows, label: style.dim).map { "  " + $0 }).joined(separator: "\n")
     }
