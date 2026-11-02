@@ -77,23 +77,11 @@ struct StartPanelView: View {
                     Text("記録の見出しと、エージェントへの開始の出来事に入ります。あとから名付けるとき、会議を見分けやすくなります。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                CaptureChoicesView(controller: controller, apps: model.apps)
-                if controller.voiceSeparation {
-                    Section("話者の分離（声）") {
-                        Picker("話者の人数", selection: speakerCountBinding) {
-                            Text("自動").tag(0)
-                            ForEach(Self.speakerCounts, id: \.self) { count in Text("\(count) 人").tag(count) }
-                        }
-                        Text("相手の人数（2〜8）が分かっているときは、指定すると、その数に分けます。声の似た人が 1 つにまとまるときに、効きます。分からなければ、自動のままにします。")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("相手の音声を保存する", isOn: Binding(get: { controller.saveOthersAudio }, set: { controller.setSaveOthersAudio($0) }))
-                        Text("相手の声（システム音声）の録音を、この Mac に、記録と同じ期間だけ保存します。マイク（あなた）の声は保存しません。保存すると、あとから、分け直し・聞き直し・名付けができます。録音は、参加者の声なので、参加者へ知らせてください。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                ForwardingChoicesView(controller: controller)
-                ActorChoicesView(controller: controller)
-                StartStatusSection(controller: controller)
+                CaptureChoicesView(controller: controller, revision: model.revision, apps: model.apps)
+                StartVoiceSection(controller: controller, revision: model.revision)
+                ForwardingChoicesView(controller: controller, revision: model.revision)
+                ActorChoicesView(controller: controller, revision: model.revision)
+                StartStatusSection(controller: controller, revision: model.revision)
             }
             .formStyle(.grouped)
             .disabled(!idle)
@@ -118,17 +106,13 @@ struct StartPanelView: View {
     private var titleBinding: Binding<String> {
         Binding<String>(get: { controller.meetingTitle }, set: { controller.setMeetingTitle($0) })
     }
-
-    private static let speakerCounts: [Int] = Array(VoiceSeparationTuning.speakerCountRange)
-
-    private var speakerCountBinding: Binding<Int> {
-        Binding<Int>(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })
-    }
 }
 
 /// 開始の前の、接続と許可の状況（読むだけ）。許可は、確認だけで、要求しない（要求は、開始のときに OS が行う）。
 struct StartStatusSection: View {
     let controller: MeetingController
+    /// 画面の更新の合図（`CaptureChoicesView.revision` と同じ理由）。
+    let revision: Int
 
     var body: some View {
         Section("状況") {
@@ -150,6 +134,46 @@ struct StartStatusSection: View {
             Label(okText, systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout)
         } else {
             Label(ngText, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+        }
+    }
+}
+
+/// 開始の前の、話者の分離（声）の選択。声の分離のオン／オフ（モデルが取得済みのときだけ）・話者の人数・相手の音声の保存・声紋を使う。モデルの取得・削除と、分離の調整（詳細）は、設定ウィンドウ。
+struct StartVoiceSection: View {
+    let controller: MeetingController
+    /// 画面の更新の合図（`CaptureChoicesView.revision` と同じ理由）。
+    let revision: Int
+
+    private static let speakerCounts: [Int] = Array(VoiceSeparationTuning.speakerCountRange)
+
+    private var speakerCountBinding: Binding<Int> {
+        Binding<Int>(get: { controller.voiceSpeakerCount ?? 0 }, set: { controller.setVoiceSpeakerCount($0 == 0 ? nil : $0) })
+    }
+
+    var body: some View {
+        Section("話者の分離（声）") {
+            if let voice = controller.voiceModel {
+                Toggle("声の違いで、相手の話者を分ける", isOn: Binding(get: { controller.voiceSeparation }, set: { controller.setVoiceSeparation($0) }))
+                    .disabled(!controller.isInstalled(voice))
+                if !controller.isInstalled(voice) {
+                    Text("分離のモデル（約 22 MB）が、まだ取得されていません。設定ウィンドウの「話者（アクター）」で、ダウンロードしてください。")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            if controller.voiceSeparation {
+                Picker("話者の人数", selection: speakerCountBinding) {
+                    Text("自動").tag(0)
+                    ForEach(Self.speakerCounts, id: \.self) { count in Text("\(count) 人").tag(count) }
+                }
+                Text("相手の人数（2〜8）が分かっているときは、指定すると、その数に分けます。声の似た人が 1 つにまとまるときに、効きます。分からなければ、自動のままにします。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("相手の音声を保存する", isOn: Binding(get: { controller.saveOthersAudio }, set: { controller.setSaveOthersAudio($0) }))
+                Text("相手の声（システム音声）の録音を、この Mac に、記録と同じ期間だけ保存します。マイク（あなた）の声は保存しません。保存すると、あとから、分け直し・聞き直し・名付けができます。録音は、参加者の声なので、参加者へ知らせてください。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("声紋を使う", isOn: Binding(get: { controller.voiceprintsEnabled }, set: { controller.setVoiceprints($0) }))
+                Text("名付けで「この声を覚える」を選んだ人の、声の特徴（音声ではありません）だけを、この Mac に保存し、次の会議で、同じ声の人に、同じ名前を付けます。参加者へ知らせる責任は、利用者にあります。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

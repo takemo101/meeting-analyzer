@@ -27,6 +27,8 @@ enum CaptureChoices {
 /// 取り込む音声（マイク・システム音声）と、画面の選択。
 struct CaptureChoicesView: View {
     let controller: MeetingController
+    /// 画面の更新の合図（呼び出し側の `revision`）。`controller` は参照で、変わらないので、これが無いと、SwiftUI が、この部品の本文を作り直さず、選んだ内容が、画面に出ない。
+    let revision: Int
     let apps: [CaptureApp]
 
     var body: some View {
@@ -60,6 +62,8 @@ struct CaptureChoicesView: View {
 /// エージェントへの転送の選択（転送のまとめ方・分析のプリセット）。
 struct ForwardingChoicesView: View {
     let controller: MeetingController
+    /// 画面の更新の合図（`CaptureChoicesView.revision` と同じ理由）。
+    let revision: Int
     /// 設定ウィンドウでは、自分のプリセットを足すフォルダを開くボタンも出す。
     var showsFolderButton = false
 
@@ -83,6 +87,8 @@ struct ForwardingChoicesView: View {
 /// アクター定義（ACTOR.md）の選択と、今日の出席者（開始の前の設定の画面で使う。設定ウィンドウは、同じ操作を、自分のページに持つ）。
 struct ActorChoicesView: View {
     let controller: MeetingController
+    /// 画面の更新の合図（`CaptureChoicesView.revision` と同じ理由）。
+    let revision: Int
 
     /// 選べるファイル：最近使ったもの（いまも存在するもの）と、いま選んでいるもの。
     private var files: [String] {
