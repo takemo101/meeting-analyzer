@@ -124,7 +124,7 @@ struct SettingsView: View {
     // MARK: ページ
 
     @ViewBuilder private var captureSections: some View {
-        CaptureChoicesView(controller: controller, apps: model.apps)
+        CaptureChoicesView(controller: controller, revision: model.revision, apps: model.apps)
             .disabled(locked)
     }
 
@@ -318,7 +318,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var forwardingSections: some View {
-        ForwardingChoicesView(controller: controller, showsFolderButton: true)
+        ForwardingChoicesView(controller: controller, revision: model.revision, showsFolderButton: true)
             .disabled(locked)
 
         Section("エージェントに頼む（リモートの skill）") {
